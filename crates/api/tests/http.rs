@@ -141,6 +141,92 @@ async fn signal_type_filter_is_applied() {
 }
 
 #[tokio::test]
+async fn every_signal_carries_a_human_narrative() {
+    let base = serve().await;
+    let (status, page) = get_json(&base, "/signals?limit=50").await;
+    assert_eq!(status, 200);
+    let items = page["items"].as_array().expect("items");
+    assert!(!items.is_empty(), "expected signals: {page}");
+
+    for signal in items {
+        let narrative = &signal["narrative"];
+        assert!(
+            narrative.is_object(),
+            "signal has no narrative object: {signal}"
+        );
+        let headline = narrative["headline"].as_str().unwrap_or("");
+        assert!(!headline.is_empty(), "empty headline: {signal}");
+        // The headline is the human title, and it must not be the old machine
+        // form. This is the product-level promise: detection output is language.
+        assert!(
+            !headline.starts_with("Anomaly:")
+                && !headline.starts_with("Early signal:")
+                && !headline.contains("_"),
+            "headline is machine jargon: {headline}"
+        );
+        assert_eq!(
+            signal["title"].as_str().unwrap(),
+            headline,
+            "title must equal the narrative headline"
+        );
+        assert!(
+            !narrative["unknowns"].as_array().unwrap().is_empty(),
+            "every signal must state its unknowns"
+        );
+        assert!(
+            signal["status"].is_string(),
+            "signal has no status: {signal}"
+        );
+        // This suite runs on the synthetic world, so the origin is reported as
+        // such and the narrative says so rather than implying a live feed.
+        assert_eq!(signal["data_origin"], "SYNTHETIC");
+        assert!(
+            narrative["unknowns"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|u| u.as_str().unwrap_or("").contains("synthetic")),
+            "synthetic data must be disclosed: {narrative}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_status_filter_is_applied() {
+    let base = serve().await;
+    let (status, page) = get_json(&base, "/signals?status=confirmed").await;
+    assert_eq!(status, 200);
+    for signal in page["items"].as_array().unwrap() {
+        assert_eq!(signal["status"], "Confirmed", "leaked: {signal}");
+    }
+    let (status, _) = get_json(&base, "/signals?status=not_a_status").await;
+    assert_eq!(status, 400);
+}
+
+#[tokio::test]
+async fn the_world_summary_answers_what_is_changing() {
+    let base = serve().await;
+    let (status, world) = get_json(&base, "/world").await;
+    assert_eq!(status, 200);
+    assert!(
+        world["active_signals"].as_u64().unwrap() > 0,
+        "world summary should report active signals: {world}"
+    );
+    assert!(world["observations_total"].as_u64().unwrap() > 0);
+    assert_eq!(world["sources_total"], 1);
+    // The NOW strip carries the same human signals the feed does.
+    let now = world["now"].as_array().expect("now strip");
+    assert!(!now.is_empty(), "NOW strip should not be empty: {world}");
+    assert!(
+        now[0]["narrative"]["headline"].as_str().is_some(),
+        "NOW strip entries must be described for people"
+    );
+    // The type breakdown covers every type, even at zero.
+    let by_type = world["by_type"].as_array().unwrap();
+    assert_eq!(by_type.len(), 5, "all five signal types must be reported");
+}
+
+#[tokio::test]
 async fn drill_down_reaches_raw_data() {
     let base = serve().await;
     let (_, page) = get_json(&base, "/signals?limit=1").await;

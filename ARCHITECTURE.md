@@ -53,6 +53,7 @@ The workspace is split so each stage can be tested on its own.
 | `wse-detection` | Change, anomaly and early-signal detection. Produces candidates. |
 | `wse-correlation` | Cross-source convergence detection. |
 | `wse-signals` | Event formation, signal generation, lifecycle, quality dimensions. |
+| `wse-presentation` | The human-language layer: turning a signal's machine facts into a readable narrative (headline, what changed, magnitude, unknowns) and its lifecycle status. No detection, no I/O. |
 | `wse-engine` | Wires the above into one cycle: `Engine::run_collector`, `ingest_observations`. |
 | `wse-scheduler` | Collection scheduling and the live/replay clocks. |
 | `wse-api` | The REST API and the static web UI. |

@@ -10,6 +10,7 @@ members = [
     "crates/correlation",
     "crates/config",
     "crates/signals",
+    "crates/presentation",
     "crates/scheduler",
     "crates/engine",
     "crates/api",

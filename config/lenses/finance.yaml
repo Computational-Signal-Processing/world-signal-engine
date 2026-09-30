@@ -4,6 +4,7 @@
 # shipped anyway.
 id: lens_finance
 name: FINANCE
+description: "Money and markets: prices, rates and flows. No connected source feeds it yet."
 categories:
   - finance
   - markets

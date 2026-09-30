@@ -107,6 +107,8 @@ pub fn detect_anomaly_with(
     candidate.latitude = tracker.latitude();
     candidate.longitude = tracker.longitude();
     candidate.duration_seconds = 0;
+    candidate.identity = tracker.latest_identity().map(str::to_string);
+    candidate.record_label = tracker.latest_record_label().map(str::to_string);
 
     vec![candidate]
 }

@@ -30,14 +30,17 @@
 
     <div class="controls">
       <label class="field" id="lens-field">
-        <span class="field-label">Lens</span>
+        <span class="field-label" data-i18n="field.lens">Lens</span>
         <select id="lens-select" aria-label="Filter the world by lens">
           <option value="">all</option>
         </select>
       </label>
 
+      <button class="btn lang-toggle" id="lang-toggle" type="button"
+              aria-label="Change language" title="Change language">TR</button>
+
       <label class="field" id="key-field">
-        <span class="field-label">Key</span>
+        <span class="field-label" data-i18n="field.key">Key</span>
         <input id="api-key" type="password" autocomplete="off" spellcheck="false"
                placeholder="API key" aria-label="API key" />
       </label>

@@ -6,6 +6,7 @@
 # count, so a lens that shows nothing is visible rather than silently dead.
 id: lens_energy
 name: ENERGY
+description: "Energy supply and its market: prices, shipping, port activity and grid load. No connected source feeds it yet."
 categories:
   - energy
   - markets

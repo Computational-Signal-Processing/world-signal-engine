@@ -195,6 +195,7 @@ impl SignalStore for InMemoryStore {
                         .as_ref()
                         .is_none_or(|e| s.entities.iter().any(|se| se.as_str() == e))
                     && query.signal_type.is_none_or(|t| s.types.contains(&t))
+                    && query.status.is_none_or(|st| s.status == st)
                     && query
                         .lens_id
                         .as_ref()
@@ -523,6 +524,9 @@ mod tests {
             observed_at: at(0),
             value: 1.0,
             deviation_sigma: Some(4.1),
+            baseline: None,
+            identity: None,
+            record_label: None,
         });
         store.put_signal(s.clone()).unwrap();
         let got = store.get_signal(&s.id).unwrap().unwrap();

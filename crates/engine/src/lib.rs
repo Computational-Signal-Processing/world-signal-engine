@@ -370,12 +370,7 @@ impl<S: Store> Engine<S> {
             let tracker = self.trackers.entry(series_key.clone()).or_insert_with(|| {
                 SeriesTracker::from_observation(&observation, self.config.detector.clone())
             });
-            tracker.push(
-                observation.observed_at,
-                observation.value,
-                observation.id.clone(),
-                observation.source_id.clone(),
-            );
+            tracker.push_observation(&observation);
 
             candidates.extend(wse_detection::anomaly::detect_anomaly(tracker));
             candidates.extend(wse_detection::early::detect_early_signal(tracker));
@@ -420,7 +415,7 @@ impl<S: Store> Engine<S> {
         let mut persisted = Vec::with_capacity(signals.len());
         for signal in signals {
             let merged = match self.store.get_signal(&signal.id) {
-                Ok(Some(existing)) => merge_signals(existing, signal),
+                Ok(Some(existing)) => merge_signals(existing, signal, now),
                 _ => signal,
             };
             if let Err(err) = self.store.put_signal(merged.clone()) {
@@ -552,12 +547,11 @@ fn short_error(err: &wse_collector::CollectorError) -> String {
 /// The signal keeps its original `first_seen` and its type set only grows, so
 /// "how long has this been going on?" stays answerable. Evidence is unioned by
 /// observation id so the trail to raw data never loses a link.
-fn merge_signals(mut existing: Signal, fresh: Signal) -> Signal {
+fn merge_signals(mut existing: Signal, fresh: Signal, now: DateTime<Utc>) -> Signal {
     existing.last_updated = existing.last_updated.max(fresh.last_updated);
     existing.duration_seconds = (existing.last_updated - existing.first_seen)
         .num_seconds()
         .max(0);
-    existing.title = fresh.title;
     existing.summary = fresh.summary;
     existing.reasons = fresh.reasons;
     existing.confidence = fresh.confidence;
@@ -599,5 +593,19 @@ fn merge_signals(mut existing: Signal, fresh: Signal) -> Signal {
     // The summary describes the accumulated span, so recompute it after the
     // union rather than keeping the single-cycle version.
     existing.summary = wse_signals::summarize(&existing);
+    // Re-derive the human-facing fields from the grown record. The narrative
+    // must describe the whole span the signal now covers, and the status must
+    // move with it, or a signal that has been running for hours would keep
+    // reading as if it had just appeared.
+    existing.data_origin = fresh.data_origin;
+    wse_presentation::describe(&mut existing);
+    existing.title = existing.narrative.headline.clone();
+    existing.status = wse_presentation::status_for(
+        existing.first_seen,
+        existing.last_updated,
+        now,
+        existing.distinct_sources(),
+        existing.duration_seconds,
+    );
     existing
 }

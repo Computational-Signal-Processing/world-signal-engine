@@ -16,6 +16,7 @@ wse-collector = { path = "../collector" }
 wse-normalize = { path = "../normalize" }
 wse-correlation = { path = "../correlation" }
 wse-signals = { path = "../signals" }
+wse-presentation = { path = "../presentation" }
 wse-scheduler = { path = "../scheduler" }
 serde = { workspace = true }
 chrono = { workspace = true }

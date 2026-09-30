@@ -34,7 +34,10 @@ pub use ids::{fnv1a_hex, AnomalyId, EntityId, EventId, LensId, ObservationId, Si
 pub use lens::Lens;
 pub use observation::{series_key, Observation, RawReference};
 pub use quality::{DataPresence, Quality, QualityFlag};
-pub use signal::{Direction, Evidence, Signal, SignalQuality, SignalType};
+pub use signal::{
+    DataOrigin, Direction, Evidence, Signal, SignalNarrative, SignalQuality, SignalStatus,
+    SignalType,
+};
 pub use source::{
     AuthKind, Cadence, Cost, DataFormat, FailureKind, HealthStatus, Protocol, Source, SourceHealth,
 };

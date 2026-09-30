@@ -375,10 +375,95 @@ a { color: inherit; text-decoration: none; }
 .timeline-svg .point { fill: var(--now); }
 .timeline-svg text { fill: var(--text-faint); font-family: var(--mono); font-size: 9px; }
 
+/* ------------------------------------------------------ human language -- */
+
+/* The NOW strip: the freshest signals as one glanceable row, before the feed.
+ * Each item keeps the same type accent and shape as its card, so the strip and
+ * the feed describe the same thing the same way. */
+.now-strip {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.now-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.now-label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+  color: var(--now); text-transform: uppercase;
+}
+.now-hint { font-size: 11px; color: var(--text-faint); }
+.now-row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 1fr); gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.now-item {
+  text-align: left; cursor: pointer; font: inherit; color: inherit;
+  border: 1px solid var(--line); border-left: 3px solid var(--accent, var(--now));
+  border-radius: var(--radius-sm); background: var(--bg-sunken);
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 4px;
+}
+.now-item:hover { border-color: var(--line-strong); }
+.now-item[data-primary="NOW"] { --accent: var(--now); }
+.now-item[data-primary="ANOMALY"] { --accent: var(--anomaly); }
+.now-item[data-primary="EARLY_SIGNAL"] { --accent: var(--early); }
+.now-item[data-primary="CONVERGENCE"] { --accent: var(--convergence); }
+.now-item[data-primary="IMPACT"] { --accent: var(--impact); }
+.now-title { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.now-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+
+/* The world header: how much is changing, of what kind, and source health. */
+.world-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.stat-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg-raised); padding: 5px 12px;
+  font-size: 12px; color: var(--text-dim);
+}
+.stat-chip b { color: var(--text); font-family: var(--mono); font-size: 13px; }
+.stat-chip[data-type="NOW"] { border-color: var(--now); }
+.stat-chip[data-type="ANOMALY"] { border-color: var(--anomaly); }
+.stat-chip[data-type="EARLY_SIGNAL"] { border-color: var(--early); }
+.stat-chip[data-type="CONVERGENCE"] { border-color: var(--convergence); }
+.stat-chip[data-type="IMPACT"] { border-color: var(--impact); }
+.world-health { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+/* Lifecycle status: a plain word, in the reader's language. Never a bare
+ * colour — the word is the carrier, the tint only supports it. */
+.status-pill {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 2px 9px; font-size: 10px; letter-spacing: .04em;
+  font-family: var(--mono); color: var(--text-dim); text-transform: uppercase;
+}
+.status-pill[data-status="NEW"] { border-color: var(--now); color: var(--now); }
+.status-pill[data-status="CONFIRMED"] { border-color: var(--ok); color: var(--ok); }
+.status-pill[data-status="FADING"] { border-color: var(--warn); color: var(--warn); }
+.status-pill[data-status="RESOLVED"] { opacity: .6; }
+
+/* The card's "what we do not know" line: present on every signal, quiet. */
+.sig-unknown {
+  margin: 0 0 10px; font-size: 12px; color: var(--text-faint);
+  border-left: 2px solid var(--line-strong); padding-left: 9px;
+}
+
+/* The narrative panel on the signal page: the engine's answer, in order. */
+.narrative-headline { font-size: 19px; font-weight: 600; margin: 0 0 14px; line-height: 1.3; }
+.narrative-kv { grid-template-columns: 130px 1fr; }
+.narrative-kv dt { color: var(--text-faint); }
+.narrative-kv dd { color: var(--text); }
+.unknown-panel { border-color: var(--line-strong); }
+.unknown-panel .reasons li { color: var(--text-faint); }
+.ev-record { font-size: 13px; color: var(--text); font-weight: 500; }
+
+.lang-toggle { padding: 6px 10px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+
 @media (max-width: 720px) {
   .topbar { flex-wrap: wrap; }
   .nav { order: 3; width: 100%; overflow-x: auto; }
-  .controls { margin-left: auto; }
+  .controls { margin-left: auto; flex-wrap: wrap; }
   .kv { grid-template-columns: 1fr; }
   .quality { grid-template-columns: repeat(4, 1fr); }
+  .world-health { margin-left: 0; }
+  .now-row { grid-auto-columns: minmax(200px, 82%); }
+  .narrative-kv { grid-template-columns: 1fr; }
+  .sig-title { font-size: 15px; }
+  .narrative-headline { font-size: 17px; }
 }

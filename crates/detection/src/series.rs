@@ -25,6 +25,12 @@ pub struct SeriesTracker {
     longitude: Option<f64>,
     latest_observation: Option<ObservationId>,
     latest_at: Option<DateTime<Utc>>,
+    /// The per-record discriminator and human name of the latest point.
+    ///
+    /// Carried so a candidate — and the signal built from it — can name the
+    /// record it is about (a story, a repository) instead of only its metric.
+    latest_identity: Option<String>,
+    latest_record_label: Option<String>,
     points_seen: u64,
 }
 
@@ -48,6 +54,8 @@ impl SeriesTracker {
             longitude: None,
             latest_observation: None,
             latest_at: None,
+            latest_identity: None,
+            latest_record_label: None,
             points_seen: 0,
         }
     }
@@ -61,6 +69,8 @@ impl SeriesTracker {
         tracker.unit = obs.unit.clone();
         tracker.latitude = obs.latitude;
         tracker.longitude = obs.longitude;
+        tracker.latest_identity = obs.identity.clone();
+        tracker.latest_record_label = obs.record_label();
         tracker
     }
 
@@ -100,6 +110,16 @@ impl SeriesTracker {
         self.latest_observation.as_ref()
     }
 
+    /// The per-record discriminator of the latest point, when the source set one.
+    pub fn latest_identity(&self) -> Option<&str> {
+        self.latest_identity.as_deref()
+    }
+
+    /// The human name of the latest point's record, when the source supplied one.
+    pub fn latest_record_label(&self) -> Option<&str> {
+        self.latest_record_label.as_deref()
+    }
+
     pub fn latest_at(&self) -> Option<DateTime<Utc>> {
         self.latest_at
     }
@@ -130,6 +150,21 @@ impl SeriesTracker {
         if self.source_id.as_str().is_empty() {
             self.source_id = source_id;
         }
+    }
+
+    /// Feed a point while also refreshing the record metadata detectors expose.
+    ///
+    /// Used by the ingest path, where the observation is available; `push`
+    /// stays for callers that only have a value (tests, rehydration).
+    pub fn push_observation(&mut self, observation: &Observation) {
+        self.push(
+            observation.observed_at,
+            observation.value,
+            observation.id.clone(),
+            observation.source_id.clone(),
+        );
+        self.latest_identity = observation.identity.clone();
+        self.latest_record_label = observation.record_label();
     }
 
     pub fn latest_value(&self) -> Option<f64> {

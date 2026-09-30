@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use wse_correlation::{ConvergenceConfig, ConvergenceGroup};
 use wse_model::lens::Lens;
 use wse_model::{
-    CandidateDirection, CandidateKind, Event, Evidence, Signal, SignalQuality, SignalType,
+    CandidateDirection, CandidateKind, DataOrigin, Event, Evidence, Signal, SignalQuality,
+    SignalType,
 };
 
 use crate::event::EventEngine;
@@ -145,6 +146,20 @@ impl SignalEngine {
             signal.reasons = reasons_for(&signal, &event_candidates);
             self.assign_lens_matches(&mut signal);
             signal.quality = quality_for(&signal, &event_candidates);
+            // The human-facing layer. It reads the signal's own record, so it
+            // is filled here and re-derived after a merge rather than being
+            // assembled from scratch in the UI. The data origin is set first
+            // because the narrative discloses it.
+            signal.data_origin = data_origin_for(&signal.series_key);
+            wse_presentation::describe(&mut signal);
+            signal.title = signal.narrative.headline.clone();
+            signal.status = wse_presentation::status_for(
+                signal.first_seen,
+                signal.last_updated,
+                now,
+                signal.distinct_sources(),
+                signal.duration_seconds,
+            );
             signals.push(signal);
         }
         signals
@@ -268,10 +283,27 @@ fn evidence_for(candidates: &[&wse_model::AnomalyCandidate]) -> Vec<Evidence> {
             observed_at: c.observed_at,
             value: c.current,
             deviation_sigma: Some(c.robust_z()),
+            baseline: Some(c.baseline.clone()),
+            identity: c.identity.clone(),
+            record_label: c.record_label.clone(),
         })
         .collect();
     evidence.sort_by_key(|e| e.observed_at);
     evidence
+}
+
+/// Whether a signal's data came from a live source or the synthetic world.
+///
+/// The synthetic collector names its sources `synthetic_*`, so the origin is
+/// derived from the series key the signal already carries rather than needing a
+/// second lookup.
+fn data_origin_for(series_key: &str) -> DataOrigin {
+    let source = series_key.split("::").next().unwrap_or("");
+    if source.starts_with("synthetic") {
+        DataOrigin::Synthetic
+    } else {
+        DataOrigin::Live
+    }
 }
 
 /// A human-readable, quantitative statement about one candidate.
@@ -321,6 +353,11 @@ fn mean_confidence(candidates: &[&wse_model::AnomalyCandidate]) -> f64 {
     candidates.iter().map(|c| c.confidence).sum::<f64>() / candidates.len() as f64
 }
 
+/// The signal's title.
+///
+/// The human headline is written after this by `wse-presentation`; this is the
+/// interim, machine-facing value used for the event text and as a fallback when
+/// a signal has no evidence yet. It is never what a person is shown.
 fn title_for(signal: &Signal, event: &Event) -> String {
     let kind = if signal.has_type(SignalType::EarlySignal) && !signal.has_type(SignalType::Anomaly)
     {
@@ -546,7 +583,15 @@ mod tests {
         assert_eq!(s.evidence.len(), 1);
         assert!(s.evidence[0].statement.contains("4.1σ"));
         assert!(!s.reasons.is_empty());
-        assert!(s.title.starts_with("Anomaly"));
+        // The title is human language now, not "Anomaly: <metric> rising".
+        assert!(!s.title.contains("Anomaly"), "title: {}", s.title);
+        assert!(
+            s.narrative.headline.contains("Price"),
+            "{}",
+            s.narrative.headline
+        );
+        assert!(s.narrative.evidence_sources >= 1);
+        assert!(!s.narrative.unknowns.is_empty());
     }
 
     #[test]
@@ -566,7 +611,7 @@ mod tests {
         assert_eq!(signals.len(), 1);
         assert!(signals[0].has_type(SignalType::EarlySignal));
         assert!(!signals[0].has_type(SignalType::Anomaly));
-        assert!(signals[0].title.starts_with("Early signal"));
+        assert!(signals[0].narrative.headline.contains("Temp"));
     }
 
     #[test]

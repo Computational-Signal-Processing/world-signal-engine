@@ -788,6 +788,12 @@ impl SignalStore for SqliteStore {
             );
             args.push(Box::new(lens.clone()));
         }
+        if let Some(status) = query.status {
+            // The lifecycle status lives inside the serialized signal, like the
+            // type set, so it stays a JSON probe rather than a mirrored column.
+            sql.push_str(" AND s.json LIKE ?");
+            args.push(Box::new(format!("%\"status\":\"{}\"%", status.as_str())));
+        }
         if query.active_only {
             // "Active" means the event behind the signal has not been resolved.
             // A signal whose event is gone is history, not something to
@@ -1503,6 +1509,9 @@ mod tests {
             observed_at: at(0),
             value: 1.0,
             deviation_sigma: Some(4.1),
+            baseline: None,
+            identity: None,
+            record_label: None,
         });
         store.put_signal(signal.clone()).unwrap();
         let got = store.get_signal(&signal.id).unwrap().unwrap();

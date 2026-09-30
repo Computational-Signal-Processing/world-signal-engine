@@ -4,6 +4,7 @@
 # emit, so this lens shows real signals today.
 id: lens_software
 name: SOFTWARE
+description: "The software world: developer attention, releases and ecosystem activity, from Hacker News and GitHub."
 categories:
   - technology
 keywords:

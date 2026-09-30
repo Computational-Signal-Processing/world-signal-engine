@@ -157,6 +157,8 @@ pub fn detect_early_signal_with(
     candidate.confidence = early_confidence(run_len, config, magnitude, run_sigmas);
     candidate.latitude = tracker.latitude();
     candidate.longitude = tracker.longitude();
+    candidate.identity = tracker.latest_identity().map(str::to_string);
+    candidate.record_label = tracker.latest_record_label().map(str::to_string);
     vec![candidate]
 }
 

@@ -201,7 +201,7 @@ operator drove it. This pass made it self-running and operable:
   place of a single opaque importance score.
 
 Re-verified after this pass: `cargo fmt --all --check`, `cargo clippy --workspace
---all-targets`, `cargo test --workspace` (335 tests), the no-SQLite build, a live
+--all-targets`, `cargo test --workspace` (347 tests), the no-SQLite build, a live
 `serve --collect` run against the real sources (USGS/NASA/HN/GitHub healthy,
 GDELT rate-limited and recorded as such), and the full drill-down over `curl`
 plus the browser UI.

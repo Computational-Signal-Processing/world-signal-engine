@@ -3,5 +3,6 @@
 # `global_events` is the category the GDELT collector emits.
 id: lens_global_events
 name: GLOBAL EVENTS
+description: "World events as covered by the news, from the GDELT feed."
 categories:
   - global_events

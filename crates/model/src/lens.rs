@@ -23,6 +23,13 @@ use crate::ids::LensId;
 pub struct Lens {
     pub id: LensId,
     pub name: String,
+    /// A sentence a person can read, explaining what this lens shows.
+    ///
+    /// Without it the lens list is a set of bare labels ("ENERGY", "SPACE")
+    /// that mean nothing to someone who has not read the config. The UI shows
+    /// this instead of the raw filter fields.
+    #[serde(default)]
+    pub description: Option<String>,
     /// Categories to include; empty means "all categories".
     #[serde(default)]
     pub categories: Vec<String>,
@@ -45,12 +52,19 @@ impl Lens {
         Self {
             id,
             name: name.into(),
+            description: None,
             categories: Vec::new(),
             entities: Vec::new(),
             keywords: Vec::new(),
             bbox: None,
             weights: BTreeMap::new(),
         }
+    }
+
+    /// Set the human-readable description.
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 
     /// Whether a signal (described by its category/entity/keyword/location

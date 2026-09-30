@@ -4,6 +4,7 @@
 # shipped anyway.
 id: lens_agriculture
 name: AGRICULTURE
+description: "Food, water and growing conditions: drought, harvest and yield signals. No connected source feeds it yet, so it shows nothing today."
 categories:
   - agriculture
   - environment

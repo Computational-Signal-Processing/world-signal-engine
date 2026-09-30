@@ -26,6 +26,7 @@ crates/baseline     rolling/robust statistics
 crates/detection    change, anomaly, early signal → AnomalyCandidate
 crates/correlation  convergence across sources
 crates/signals      events, signals, lifecycle, quality
+crates/presentation human language: signal facts → readable narrative + status
 crates/engine       the cycle: Engine::run_collector / ingest_observations
 crates/scheduler    cadence + live/replay clocks
 crates/api          REST API + static UI
@@ -38,7 +39,7 @@ docs/decisions/     architecture decision records
 ## Commands
 
 ```bash
-cargo test --workspace                                   # 323 tests, offline
+cargo test --workspace                                   # 347 tests, offline
 cargo fmt --all && cargo clippy --workspace --all-targets
 cargo run -p wse-cli -- demo                             # synthetic acceptance world
 cargo run -p wse-cli -- sources                          # print the catalog

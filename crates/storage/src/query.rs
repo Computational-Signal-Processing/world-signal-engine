@@ -103,6 +103,8 @@ pub struct SignalQuery {
     pub signal_type: Option<wse_model::SignalType>,
     pub lens_id: Option<String>,
     pub active_only: bool,
+    /// Restrict to signals at a given point in their life. `None` means any.
+    pub status: Option<wse_model::SignalStatus>,
     pub range: Option<TimeRange>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,

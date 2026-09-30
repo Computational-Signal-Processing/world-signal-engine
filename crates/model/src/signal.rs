@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::anomaly::CandidateDirection;
+use crate::anomaly::{BaselineSnapshot, CandidateDirection};
 use crate::geo::Location;
 use crate::ids::{EntityId, EventId, LensId, ObservationId, SignalId, SourceId};
 
@@ -42,6 +42,89 @@ impl SignalType {
 /// Backwards-compatible alias; direction lives with candidates.
 pub type Direction = CandidateDirection;
 
+/// Where a signal is in its life.
+///
+/// This is deliberately separate from [`SignalType`]. A type says *what kind of
+/// change* this is; the status says *how far along it is*. The UI needs both:
+/// a signal can be an `ANOMALY` that is `CONFIRMED`, or an `EARLY_SIGNAL` that
+/// is still `NEW`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SignalStatus {
+    /// Seen for the first time in the most recent cycle.
+    New,
+    /// Observed across more than one cycle and still changing.
+    Developing,
+    /// Corroborated: more than one independent source, or a sustained span.
+    Confirmed,
+    /// No longer changing, but not yet over.
+    Stable,
+    /// Past its peak and receding toward normal.
+    Fading,
+    /// Back to normal.
+    Resolved,
+}
+
+impl SignalStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SignalStatus::New => "NEW",
+            SignalStatus::Developing => "DEVELOPING",
+            SignalStatus::Confirmed => "CONFIRMED",
+            SignalStatus::Stable => "STABLE",
+            SignalStatus::Fading => "FADING",
+            SignalStatus::Resolved => "RESOLVED",
+        }
+    }
+}
+
+/// Whether a signal's backing data comes from a live source or a synthetic one.
+///
+/// The brief is explicit that a person must never mistake seeded/demo data for
+/// the real world. The flag is carried on the signal so the UI can label it,
+/// rather than being inferred from a source id by convention.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum DataOrigin {
+    /// Collected from a real, external source.
+    #[default]
+    Live,
+    /// Produced by the deterministic synthetic world (demo, tests, replay of
+    /// captured fixtures).
+    Synthetic,
+}
+
+/// A human-readable answer to "what changed, in the world's terms".
+///
+/// Detection speaks in series keys and sigma. Nobody reads those. This is the
+/// translation, kept as data (not prose baked into the UI) so the API, the web
+/// client and any future client all say the same thing, and so the mapping can
+/// be tested like any other logic.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct SignalNarrative {
+    /// One sentence a person can read: "Software attention is rising sharply".
+    pub headline: String,
+    /// What changed, named in human terms ("Attention on Hacker News stories").
+    pub subject: String,
+    /// Where, when the data actually supports a place. `None` when it does not.
+    pub where_text: Option<String>,
+    /// What the metric did, phrased for a person: "rose 8.4% to 623 points".
+    pub what_changed: String,
+    /// The direction as a person reads it: "rising", "falling", "accelerating".
+    pub direction_text: String,
+    /// A sentence describing the magnitude without a raw sigma.
+    pub magnitude_text: String,
+    /// One line on why the engine surfaced it — still evidence, not a verdict.
+    pub why_signal: String,
+    /// How many independent sources stand behind it.
+    pub evidence_sources: usize,
+    /// What the engine does *not* know. Always populated.
+    ///
+    /// The brief asks the system to know what it does not know. This is where
+    /// that is stated plainly instead of left to the reader to infer.
+    pub unknowns: Vec<String>,
+}
+
 /// One piece of supporting evidence, always traceable to an observation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Evidence {
@@ -55,6 +138,31 @@ pub struct Evidence {
     pub value: f64,
     /// Robust z-score or equivalent deviation measure, when available.
     pub deviation_sigma: Option<f64>,
+    /// What the series looked like immediately before this point.
+    ///
+    /// Carried on the evidence so the reader can compare "what it was" with
+    /// "what it is" without a second request, and so a replayed or restored
+    /// signal explains itself from its own record rather than from the current
+    /// state of the store.
+    #[serde(default)]
+    pub baseline: Option<BaselineSnapshot>,
+    /// The observation's per-record discriminator, when the source set one.
+    ///
+    /// This is where a human name for the record lives for sources that emit
+    /// many records per series — a Hacker News story title, a repository name.
+    /// It is what lets the UI say "the story *X* is getting unusual attention"
+    /// instead of naming the metric `story_score`.
+    #[serde(default)]
+    pub identity: Option<String>,
+    /// A human name for the specific record this observation measured.
+    ///
+    /// For a source that emits many records per series, this is the thing the
+    /// reader recognises — a story title, a repository name, an asteroid name.
+    /// It is filled from the observation's attributes, so the signal can say
+    /// *which* story is getting attention rather than only that "attention"
+    /// moved.
+    #[serde(default)]
+    pub record_label: Option<String>,
 }
 
 /// Multi-dimensional quality. The UI renders these separately rather than
@@ -129,6 +237,23 @@ pub struct Signal {
     /// signal's identity, which is what makes a signal *persistent* across
     /// collection cycles rather than a new one every minute.
     pub series_key: String,
+    /// Where this signal is in its life.
+    ///
+    /// Recomputed on every merge from how long the signal has been observed and
+    /// how many independent sources back it, so the feed does not show a
+    /// three-day-old change as if it were new.
+    #[serde(default = "default_status")]
+    pub status: SignalStatus,
+    /// Whether the data behind this signal is live or synthetic.
+    #[serde(default)]
+    pub data_origin: DataOrigin,
+    /// The human-readable translation of the detection output.
+    #[serde(default)]
+    pub narrative: SignalNarrative,
+}
+
+fn default_status() -> SignalStatus {
+    SignalStatus::Developing
 }
 
 impl Signal {
@@ -152,6 +277,9 @@ impl Signal {
             direction: CandidateDirection::Flat,
             reasons: Vec::new(),
             series_key: String::new(),
+            status: SignalStatus::Developing,
+            data_origin: DataOrigin::Live,
+            narrative: SignalNarrative::default(),
         }
     }
 
@@ -220,6 +348,9 @@ mod tests {
                 observed_at: Utc::now(),
                 value: 0.0,
                 deviation_sigma: None,
+                baseline: None,
+                identity: None,
+                record_label: None,
             });
         }
         assert_eq!(s.distinct_sources(), 2);

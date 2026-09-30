@@ -4,3 +4,4 @@
 # another lens widens rather than narrows.
 id: lens_global
 name: WORLD
+description: "Everything the engine observes, unfiltered. The default view."

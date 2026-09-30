@@ -4,6 +4,7 @@
 # shipped anyway.
 id: lens_science
 name: SCIENCE
+description: "Research output and scientific activity. No connected source feeds it yet."
 categories:
   - science
   - research

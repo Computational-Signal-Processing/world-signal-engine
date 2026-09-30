@@ -108,6 +108,14 @@ pub struct AnomalyCandidate {
     pub confidence: f64,
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
+    /// The observation's per-record discriminator, carried through so a signal
+    /// can name the record it is about (a story title, a repository).
+    #[serde(default)]
+    pub identity: Option<String>,
+    /// A human name for the record this candidate measured, when the source
+    /// supplied one.
+    #[serde(default)]
+    pub record_label: Option<String>,
 }
 
 impl AnomalyCandidate {
@@ -138,6 +146,8 @@ impl AnomalyCandidate {
             confidence: 0.0,
             latitude: None,
             longitude: None,
+            identity: None,
+            record_label: None,
         }
     }
 

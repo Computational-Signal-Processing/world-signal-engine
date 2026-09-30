@@ -221,12 +221,202 @@ const TYPE_GLYPH = {
   IMPACT: "◆",
 };
 
+/* --------------------------------------------------------------- language --
+ *
+ * The engine now describes its signals in human language (see
+ * crates/presentation). What remains the client's job is naming the *kinds* of
+ * change — the five signal types, the lifecycle statuses, the direction words —
+ * and doing it in the reader's language. Those words are not detection output;
+ * they are labels, and labels are translated here.
+ *
+ * The default is English. Turkish is selected by the browser, or by ?lang=tr,
+ * or by the toggle in the header. Detection itself is untouched by this: only
+ * presentation changes.
+ */
+
+const I18N = {
+  en: {
+    lang: "en",
+    nav: { world: "World", sources: "Sources", lenses: "Lenses", map: "Map", system: "System" },
+    field: { lens: "Lens", key: "Key" },
+    conn: { connecting: "connecting", live: "live", reconnecting: "reconnecting", error: "auth required", offline: "offline" },
+    type: {
+      NOW: "NOW", ANOMALY: "ANOMALY", EARLY_SIGNAL: "EARLY SIGNAL",
+      CONVERGENCE: "CONVERGENCE", IMPACT: "IMPACT",
+    },
+    typeHint: {
+      NOW: "a meaningful change happening right now",
+      ANOMALY: "a clear departure from normal behaviour",
+      EARLY_SIGNAL: "small but persistent and still growing",
+      CONVERGENCE: "independent sources pointing at the same change",
+      IMPACT: "a change that touches a scope you follow",
+    },
+    status: {
+      NEW: "new", DEVELOPING: "developing", CONFIRMED: "confirmed",
+      STABLE: "stable", FADING: "fading", RESOLVED: "resolved",
+    },
+    direction: { Up: "rising", Down: "falling", Flat: "sideways", up: "rising", down: "falling", flat: "sideways" },
+    origin: { LIVE: "live data", SYNTHETIC: "synthetic data" },
+    world: {
+      title: "World",
+      subtitle: "Every active signal the engine is currently surfacing. Each one says what changed, how far it departed from normal, and for how long.",
+      subtitleLens: (name) => `Active signals visible through the ${name} lens. A lens changes what is shown, never what is detected.`,
+      emptyTitle: "Nothing is changing beyond normal",
+      empty: "No signals right now. The engine is observing; when something departs from normal, it will appear here.",
+      emptyLens: (name) => `No signals through ${name} right now.`,
+      now: "NOW",
+      nowHint: "the freshest signals, best first",
+      statuses: "by status",
+      openSystem: "Open system status",
+      sourcesHealthy: (up, total) => `${up}/${total} sources healthy`,
+      observed: "observed",
+    },
+    signal: {
+      why: "Why this signal exists",
+      where: "Where",
+      whatChanged: "What changed",
+      magnitude: "How large",
+      whatWeDontKnow: "What we do not know",
+      evidence: (n) => `Evidence (${n}) — each traces to an observation`,
+      evidenceEmpty: "No evidence is attached to this signal yet.",
+      timeline: "Timeline",
+      details: "Signal",
+      quality: "Quality (seven separate dimensions, not one score)",
+      firstSeen: "first seen", lastUpdate: "last update", duration: "duration",
+      direction: "direction", series: "series", entities: "entities",
+      categories: "categories", lenses: "lenses", status: "status", origin: "data",
+      evidenceSources: (n) => `${n} source${n === 1 ? "" : "s"}`,
+      investigate: "Investigate",
+      openTimeline: "NORMAL ──╮ ╰──● NOW",
+    },
+    facts: { deviation: "deviation", persistence: "persistence", sources: "sources", evidence: "evidence" },
+    lenses: {
+      title: "Lenses", subtitle: "A lens changes what is visible, never what is detected. The dataset underneath is one.",
+      empty: "No lenses configured.", signals: "signals", id: "id", noDescription: "No description configured.",
+    },
+    map: {
+      title: "Map", subtitle: "Signals and events only. Raw observations are never piled onto the map.",
+      empty: "No active signal currently carries a location. Location appears when a source reports it — the engine will not invent one.",
+      count: (n) => `${n} located signal${n === 1 ? "" : "s"}`,
+    },
+    system: { title: "System" },
+  },
+  tr: {
+    lang: "tr",
+    nav: { world: "Dünya", sources: "Kaynaklar", lenses: "Lensler", map: "Harita", system: "Sistem" },
+    field: { lens: "Lens", key: "Anahtar" },
+    conn: { connecting: "bağlanıyor", live: "canlı", reconnecting: "yeniden bağlanıyor", error: "anahtar gerekli", offline: "çevrimdışı" },
+    type: {
+      NOW: "ŞİMDİ", ANOMALY: "ANOMALİ", EARLY_SIGNAL: "ERKEN SİNYAL",
+      CONVERGENCE: "YAKINSAMA", IMPACT: "ETKİ",
+    },
+    typeHint: {
+      NOW: "şu anda gerçekleşen anlamlı bir değişim",
+      ANOMALY: "normal davranıştan belirgin bir sapma",
+      EARLY_SIGNAL: "küçük ama sürekli ve hâlâ büyüyen",
+      CONVERGENCE: "bağımsız kaynaklar aynı değişime işaret ediyor",
+      IMPACT: "takip ettiğiniz bir alana dokunan bir değişim",
+    },
+    status: {
+      NEW: "yeni", DEVELOPING: "gelişiyor", CONFIRMED: "doğrulandı",
+      STABLE: "durağan", FADING: "sönümleniyor", RESOLVED: "sona erdi",
+    },
+    direction: { Up: "yükseliyor", Down: "düşüyor", Flat: "yatay", up: "yükseliyor", down: "düşüyor", flat: "yatay" },
+    origin: { LIVE: "canlı veri", SYNTHETIC: "sentetik veri" },
+    world: {
+      title: "Dünya",
+      subtitle: "Motorun şu anda öne çıkardığı tüm aktif sinyaller. Her biri neyin değiştiğini, normalden ne kadar saptığını ve ne kadar süredir sürdüğünü söyler.",
+      subtitleLens: (name) => `${name} lensinden görünen aktif sinyaller. Lens yalnızca görüneni değiştirir, tespit edileni asla.`,
+      emptyTitle: "Normalin dışında bir değişim yok",
+      empty: "Şu anda sinyal yok. Motor gözlemliyor; bir şey normalden saparsa burada görünecek.",
+      emptyLens: (name) => `${name} lensinden şu anda sinyal yok.`,
+      now: "ŞİMDİ",
+      nowHint: "en taze sinyaller, en iyisi başta",
+      statuses: "duruma göre",
+      openSystem: "Sistem durumunu aç",
+      sourcesHealthy: (up, total) => `${total} kaynağın ${up} tanesi sağlıklı`,
+      observed: "gözlem",
+    },
+    signal: {
+      why: "Bu sinyal neden var",
+      where: "Nerede",
+      whatChanged: "Ne değişti",
+      magnitude: "Ne kadar büyük",
+      whatWeDontKnow: "Bilmediklerimiz",
+      evidence: (n) => `Kanıt (${n}) — her biri bir gözleme kadar izlenebilir`,
+      evidenceEmpty: "Bu sinyale henüz kanıt bağlı değil.",
+      timeline: "Zaman çizelgesi",
+      details: "Sinyal",
+      quality: "Kalite (tek bir puan değil, yedi ayrı boyut)",
+      firstSeen: "ilk görülme", lastUpdate: "son güncelleme", duration: "süre",
+      direction: "yön", series: "seri", entities: "varlıklar",
+      categories: "kategoriler", lenses: "lensler", status: "durum", origin: "veri",
+      evidenceSources: (n) => `${n} kaynak`,
+      investigate: "İncele",
+      openTimeline: "NORMAL ──╮ ╰──● ŞİMDİ",
+    },
+    facts: { deviation: "sapma", persistence: "süreklilik", sources: "kaynak", evidence: "kanıt" },
+    lenses: {
+      title: "Lensler", subtitle: "Lens yalnızca görüneni değiştirir, tespit edileni asla. Altta yatan veri kümesi birdir.",
+      empty: "Yapılandırılmış lens yok.", signals: "sinyal", id: "kimlik", noDescription: "Açıklama yapılandırılmamış.",
+    },
+    map: {
+      title: "Harita", subtitle: "Yalnızca sinyaller ve olaylar. Ham gözlemler haritaya asla yığılmaz.",
+      empty: "Şu anda konum taşıyan aktif sinyal yok. Konum, bir kaynak bildirdiğinde görünür — motor konum uydurmaz.",
+      count: (n) => `${n} konumlu sinyal`,
+    },
+    system: { title: "Sistem" },
+  },
+};
+
+function detectLang() {
+  const q = new URLSearchParams(window.location.search).get("lang");
+  if (q && I18N[q]) return q;
+  try {
+    const stored = localStorage.getItem("wse-lang");
+    if (stored && I18N[stored]) return stored;
+  } catch (_) { /* private mode */ }
+  const nav = (navigator.language || "en").toLowerCase();
+  return nav.startsWith("tr") ? "tr" : "en";
+}
+
+let LANG = "en";
+function t() { return I18N[LANG] || I18N.en; }
+function setLang(lang) {
+  if (!I18N[lang]) return;
+  LANG = lang;
+  try { localStorage.setItem("wse-lang", lang); } catch (_) { /* ignore */ }
+  document.documentElement.lang = lang;
+  applyChrome();
+}
+
+/** The localized label for a signal type. */
+function typeLabel(type) { return (t().type[type] || type).replace(/_/g, " "); }
+/** The localized one-line meaning of a signal type. */
+function typeHint(type) { return t().typeHint[type] || ""; }
+function statusLabel(status) { return t().status[status] || String(status || "").toLowerCase(); }
+function directionLabel(d) { return t().direction[d] || t().direction[String(d || "").toLowerCase()] || d; }
+function originLabel(o) { return t().origin[o] || o; }
+
 /** Type is carried by icon + label + shape, never by colour alone. */
 function typeBadge(type) {
-  return el("span", { class: "type-badge", "data-type": type }, [
+  return el("span", { class: "type-badge", "data-type": type, title: typeHint(type) }, [
     el("span", { class: "glyph", "aria-hidden": "true", text: TYPE_GLYPH[type] || "•" }),
-    type.replace("_", " "),
+    typeLabel(type),
   ]);
+}
+
+/** A small pill for a lifecycle status, in the reader's language. */
+function statusPill(status) {
+  if (!status) return null;
+  return el("span", { class: "status-pill", "data-status": status }, [statusLabel(status)]);
+}
+
+/** A one-line summary of a signal's human narrative, for the feed card. */
+function narrativeLine(signal) {
+  const n = signal.narrative;
+  if (!n) return signal.summary || "";
+  return n.what_changed || n.magnitude_text || signal.summary || "";
 }
 
 /** The "primary" type drives the card's shape accent; it is not a ranking. */
@@ -314,12 +504,12 @@ function signalFacts(signal) {
   const facts = [];
   if (dev) {
     const sigma = dev.deviation_sigma;
-    facts.push(["deviation", `${sigma >= 0 ? "+" : ""}${sigma.toFixed(1)}σ`]);
+    facts.push([t().facts.deviation, `${sigma >= 0 ? "+" : ""}${sigma.toFixed(1)}σ`]);
   }
-  facts.push(["persistence", fmtDuration(signal.duration_seconds)]);
+  facts.push([t().facts.persistence, fmtDuration(signal.duration_seconds)]);
   const sources = new Set(signal.evidence.map((e) => e.source_id));
-  facts.push(["sources", String(sources.size)]);
-  facts.push(["evidence", String(signal.evidence.length)]);
+  facts.push([t().facts.sources, String(sources.size)]);
+  facts.push([t().facts.evidence, String(signal.evidence.length)]);
   return el("div", { class: "sig-facts" }, facts.map(([k, v]) =>
     el("span", { class: "fact" }, [el("b", { text: k }), el("span", { text: v })])
   ));
@@ -365,28 +555,69 @@ function errorView(err) {
 
 async function worldView() {
   const lens = activeLens();
+  const world = await api("/world").catch(() => null);
   const query = lens ? `&lens=${encodeURIComponent(lens)}` : "";
   const page = await api(`/signals?limit=100${query}`);
   const signals = page.items || [];
   const lenses = await loadLenses();
 
   const subtitle = lens
-    ? `Active signals visible through the ${lensName(lens, lenses)} lens. A lens changes what is shown, never what is detected.`
-    : "Every active signal the engine is currently surfacing. Each one explains what changed, how far it deviated, and for how long.";
+    ? t().world.subtitleLens(lensName(lens, lenses))
+    : t().world.subtitle;
 
   if (signals.length === 0) {
-    render("world", "World", subtitle,
+    render("world", t().world.title, subtitle,
       el("div", { class: "empty" }, [
-        el("h3", { text: "Nothing is changing beyond normal" }),
-        el("p", { text: lens
-          ? `No signals through ${lensName(lens, lenses)} right now.`
-          : "No signals right now. The engine is observing; when something departs from normal, it will appear here." }),
+        el("h3", { text: t().world.emptyTitle }),
+        el("p", { text: lens ? t().world.emptyLens(lensName(lens, lenses)) : t().world.empty }),
         el("div", { class: "link-row", style: "justify-content:center" }, [
-          el("a", { class: "btn", href: "#/system", text: "Open system status" }),
+          el("a", { class: "btn", href: "#/system", text: t().world.openSystem }),
         ]),
       ])
     );
     return;
+  }
+
+  const nodes = [];
+
+  // The NOW strip: what is changing, in one glance, before the long feed.
+  // It only appears on the unfiltered view — a lens is already a filter.
+  if (!lens && world && (world.now || []).length) {
+    nodes.push(el("div", { class: "now-strip" }, [
+      el("div", { class: "now-head" }, [
+        el("span", { class: "now-label", text: t().world.now }),
+        el("span", { class: "now-hint", text: t().world.nowHint }),
+      ]),
+      el("div", { class: "now-row" }, world.now.map((signal) =>
+        el("button", {
+          class: "now-item",
+          type: "button",
+          "data-primary": primaryType(signal.types),
+          onclick: () => { window.location.hash = withLens(`#/signal/${signal.id}`); },
+        }, [
+          el("span", { class: "now-title", text: signal.narrative?.headline || signal.title }),
+          el("span", { class: "now-meta" }, [
+            signal.narrative?.magnitude_text
+              ? el("span", { text: signal.narrative.magnitude_text.split(".")[0] })
+              : null,
+            statusPill(signal.status),
+          ]),
+        ])
+      )),
+    ]));
+  }
+
+  // A compact, factual header: how much is changing, of what kind, and whether
+  // the sources behind it are healthy. This is the answer to "is the engine
+  // seeing anything, and can I trust it?" before reading a single card.
+  if (world) {
+    nodes.push(el("div", { class: "world-stats" }, [
+      statChip(String(world.active_signals), t().world.title.toLowerCase(), null),
+      ...world.by_type.filter((x) => x.count > 0).map((x) =>
+        statChip(String(x.count), typeLabel(x.type), x.type)
+      ),
+      el("span", { class: "world-health", text: t().world.sourcesHealthy(world.sources_healthy, world.sources_total) }),
+    ]));
   }
 
   const cards = signals.map((signal) =>
@@ -397,91 +628,132 @@ async function worldView() {
     }, [
       el("div", { class: "sig-head" }, [
         el("div", { class: "sig-types" }, (signal.types || []).map(typeBadge)),
+        statusPill(signal.status),
         el("span", { class: "fact" }, [
-          el("b", { text: "last update" }),
+          el("b", { text: t().signal.lastUpdate }),
           el("span", { text: fmtClock(signal.last_updated) }),
         ]),
       ]),
-      el("h2", { class: "sig-title", text: signal.title }),
-      el("p", { class: "sig-summary", text: signal.summary }),
+      el("h2", { class: "sig-title", text: signal.narrative?.headline || signal.title }),
+      el("p", { class: "sig-summary", text: narrativeLine(signal) }),
+      signal.narrative?.unknowns?.length
+        ? el("p", { class: "sig-unknown", text: signal.narrative.unknowns[0] })
+        : null,
       signalFacts(signal),
       signal.series_key
         ? el("a", {
             class: "btn",
             href: withLens(`#/timeline/${encodeURIComponent(signal.series_key)}`),
-            text: "Timeline",
+            text: t().signal.timeline,
             onclick: (e) => e.stopPropagation(),
           })
         : null,
     ])
   );
 
-  render("world", "World", subtitle, el("div", { class: "feed" }, cards));
+  nodes.push(el("div", { class: "feed" }, cards));
+  render("world", t().world.title, subtitle, nodes);
+}
+
+/** A small count chip for the world header. */
+function statChip(count, label, type) {
+  return el("span", { class: "stat-chip", "data-type": type || "" }, [
+    el("b", { text: count }),
+    el("span", { text: label }),
+  ]);
 }
 
 /* --------------------------------------------------------------- SIGNAL -- */
 
 async function signalView(id) {
   const signal = await api(`/signals/${encodeURIComponent(id)}`);
+  const n = signal.narrative || {};
 
   const evidence = el("div", { class: "evidence" },
-    (signal.evidence || []).map((item) =>
-      el("div", { class: "ev" }, [
-        el("div", { class: "ev-top" }, [
-          el("span", { class: "ev-metric", text: `${item.metric} = ${item.value} ${item.unit}` }),
-          item.deviation_sigma !== null && item.deviation_sigma !== undefined
-            ? el("span", { class: "ev-sigma", text: `${item.deviation_sigma >= 0 ? "+" : ""}${item.deviation_sigma.toFixed(2)}σ` })
-            : null,
-        ]),
-        el("div", { class: "ev-statement", text: item.statement }),
-        el("div", { class: "ev-links" }, [
-          el("a", { href: `#/observation/${item.observation_id}`, text: "observation" }),
-          el("a", { href: `#/source/${item.source_id}`, text: "source" }),
-          el("a", { href: `/observations/${encodeURIComponent(item.observation_id)}/raw`, target: "_blank", rel: "noreferrer", text: "raw data" }),
-          el("span", { text: fmtTime(item.observed_at) }),
-        ]),
-      ])
-    )
+    (signal.evidence || []).length
+      ? (signal.evidence || []).map((item) =>
+          el("div", { class: "ev" }, [
+            el("div", { class: "ev-top" }, [
+              el("span", { class: "ev-metric", text: `${item.metric} = ${item.value} ${item.unit}` }),
+              item.deviation_sigma !== null && item.deviation_sigma !== undefined
+                ? el("span", { class: "ev-sigma", text: `${item.deviation_sigma >= 0 ? "+" : ""}${item.deviation_sigma.toFixed(2)}σ` })
+                : null,
+            ]),
+            item.record_label
+              ? el("div", { class: "ev-record", text: item.record_label })
+              : null,
+            el("div", { class: "ev-statement", text: item.statement }),
+            el("div", { class: "ev-links" }, [
+              el("a", { href: `#/observation/${item.observation_id}`, text: "observation" }),
+              el("a", { href: `#/source/${item.source_id}`, text: "source" }),
+              el("a", { href: `/observations/${encodeURIComponent(item.observation_id)}/raw`, target: "_blank", rel: "noreferrer", text: "raw data" }),
+              el("span", { text: fmtTime(item.observed_at) }),
+            ]),
+          ])
+        )
+      : el("p", { class: "page-sub", text: t().signal.evidenceEmpty })
   );
 
-  render("world", signal.title, signal.summary, [
+  // The narrative panel is the whole point: the engine's answer, in order —
+  // what changed, where, how large, why it was surfaced, and what is unknown.
+  const narrative = el("div", { class: "narrative" }, [
+    n.headline ? el("h2", { class: "narrative-headline", text: n.headline }) : null,
+    el("dl", { class: "kv narrative-kv" }, [
+      n.what_changed ? el("dt", { text: t().signal.whatChanged }) : null,
+      n.what_changed ? el("dd", { text: n.what_changed }) : null,
+      n.where_text ? el("dt", { text: t().signal.where }) : null,
+      n.where_text ? el("dd", { text: n.where_text }) : null,
+      n.magnitude_text ? el("dt", { text: t().signal.magnitude }) : null,
+      n.magnitude_text ? el("dd", { text: n.magnitude_text }) : null,
+      n.why_signal ? el("dt", { text: t().signal.why }) : null,
+      n.why_signal ? el("dd", { text: n.why_signal }) : null,
+    ]),
+  ]);
+
+  render("world", signal.narrative?.headline || signal.title, n.what_changed || signal.summary, [
     crumbs([
-      { label: "WORLD", href: withLens("#/world") },
+      { label: t().world.title.toUpperCase(), href: withLens("#/world") },
       { label: `SIGNAL ${signal.id.slice(0, 10)}…` },
       { label: `EVENT ${signal.event_id.slice(0, 10)}…`, href: `#/event/${signal.event_id}` },
     ]),
-    el("div", { class: "sig-types", style: "margin-bottom:14px" }, (signal.types || []).map(typeBadge)),
+    el("div", { class: "sig-types", style: "margin-bottom:14px" },
+      [...(signal.types || []).map(typeBadge), statusPill(signal.status)].filter(Boolean)),
+    el("div", { class: "panel" }, [narrative]),
+    n.unknowns?.length
+      ? el("div", { class: "panel unknown-panel" }, [
+          el("h2", { class: "panel-title", text: t().signal.whatWeDontKnow }),
+          el("ul", { class: "reasons" }, n.unknowns.map((u) => el("li", { text: u }))),
+        ])
+      : null,
     el("div", { class: "panel" }, [
-      el("h2", { class: "panel-title", text: "Why this signal exists" }),
-      el("ul", { class: "reasons" }, (signal.reasons || []).map((r) => el("li", { text: r }))),
-    ]),
-    el("div", { class: "panel" }, [
-      el("h2", { class: "panel-title", text: `Evidence (${(signal.evidence || []).length}) — each traces to an observation` }),
+      el("h2", { class: "panel-title", text: t().signal.evidence((signal.evidence || []).length) }),
       evidence,
     ]),
     signal.series_key
       ? el("div", { class: "panel" }, [
-          el("h2", { class: "panel-title", text: "Timeline" }),
+          el("h2", { class: "panel-title", text: t().signal.timeline }),
           el("div", { class: "link-row" }, [
-            el("a", { class: "btn primary", href: withLens(`#/timeline/${encodeURIComponent(signal.series_key)}`), text: "NORMAL ──╮ ╰──● NOW" }),
+            el("a", { class: "btn primary", href: withLens(`#/timeline/${encodeURIComponent(signal.series_key)}`), text: t().signal.openTimeline }),
           ]),
         ])
       : null,
     el("div", { class: "panel" }, [
-      el("h2", { class: "panel-title", text: "Signal" }),
+      el("h2", { class: "panel-title", text: t().signal.details }),
       el("dl", { class: "kv" }, [
-        el("dt", { text: "first seen" }), el("dd", { text: fmtTime(signal.first_seen) }),
-        el("dt", { text: "last update" }), el("dd", { text: fmtTime(signal.last_updated) }),
-        el("dt", { text: "duration" }), el("dd", { text: fmtDuration(signal.duration_seconds) }),
-        el("dt", { text: "direction" }), el("dd", { text: signal.direction }),
-        el("dt", { text: "series" }), el("dd", { class: "mono", text: signal.series_key || "—" }),
-        el("dt", { text: "entities" }), el("dd", { text: (signal.entities || []).join(", ") || "—" }),
-        el("dt", { text: "categories" }), el("dd", { text: (signal.categories || []).join(", ") || "—" }),
-        el("dt", { text: "lenses" }), el("dd", { text: (signal.lens_matches || []).join(", ") || "—" }),
+        el("dt", { text: t().signal.status }), el("dd", { text: statusLabel(signal.status) }),
+        el("dt", { text: t().signal.firstSeen }), el("dd", { text: fmtTime(signal.first_seen) }),
+        el("dt", { text: t().signal.lastUpdate }), el("dd", { text: fmtTime(signal.last_updated) }),
+        el("dt", { text: t().signal.duration }), el("dd", { text: fmtDuration(signal.duration_seconds) }),
+        el("dt", { text: t().signal.direction }), el("dd", { text: directionLabel(signal.direction) }),
+        el("dt", { text: t().signal.origin }), el("dd", { text: originLabel(signal.data_origin) }),
+        el("dt", { text: t().signal.series }), el("dd", { class: "mono", text: signal.series_key || "—" }),
+        el("dt", { text: t().signal.entities }), el("dd", { text: (signal.entities || []).join(", ") || "—" }),
+        el("dt", { text: t().signal.categories }), el("dd", { text: (signal.categories || []).join(", ") || "—" }),
+        el("dt", { text: t().signal.lenses }), el("dd", { text: (signal.lens_matches || []).join(", ") || "—" }),
       ]),
     ]),
     el("div", { class: "panel" }, [
-      el("h2", { class: "panel-title", text: "Quality (seven separate dimensions, not one score)" }),
+      el("h2", { class: "panel-title", text: t().signal.quality }),
       qualityBars(signal.quality),
     ]),
   ]);
@@ -664,28 +936,31 @@ async function sourcesIndex() {
 async function lensesView() {
   const lenses = await loadLenses();
   if (lenses.length === 0) {
-    render("lenses", "Lenses", null, el("div", { class: "empty", text: "No lenses configured." }));
+    render("lenses", t().lenses.title, null, el("div", { class: "empty", text: t().lenses.empty }));
     return;
   }
   const describe = (lens) => {
+    // Prefer the human description from the config. The filter fields are a
+    // fallback for a lens that predates descriptions, not the primary text.
+    if (lens.description) return lens.description;
     const parts = [];
     if (lens.categories?.length) parts.push(`categories: ${lens.categories.join(", ")}`);
     if (lens.entities?.length) parts.push(`entities: ${lens.entities.join(", ")}`);
     if (lens.keywords?.length) parts.push(`keywords: ${lens.keywords.join(", ")}`);
     if (lens.bbox) parts.push("a bounding box");
-    return parts.length ? parts.join(" · ") : "everything — no filter";
+    return parts.length ? parts.join(" · ") : t().lenses.noDescription;
   };
   const cards = lenses.map((lens) =>
     el("a", { class: "sig", href: `#/world?lens=${encodeURIComponent(lens.id)}`, "data-primary": "NOW" }, [
       el("h2", { class: "sig-title", text: lens.name }),
       el("p", { class: "sig-summary", text: describe(lens) }),
       el("div", { class: "sig-facts" }, [
-        el("span", { class: "fact" }, [el("b", { text: "signals" }), el("span", { text: String(lens.matching_signals ?? 0) })]),
-        el("span", { class: "fact" }, [el("b", { text: "id" }), el("span", { text: lens.id })]),
+        el("span", { class: "fact" }, [el("b", { text: t().lenses.signals }), el("span", { text: String(lens.matching_signals ?? 0) })]),
+        el("span", { class: "fact" }, [el("b", { text: t().lenses.id }), el("span", { text: lens.id })]),
       ]),
     ])
   );
-  render("lenses", "Lenses", "A lens changes what is visible, never what is detected. The dataset underneath is one.", el("div", { class: "feed" }, cards));
+  render("lenses", t().lenses.title, t().lenses.subtitle, el("div", { class: "feed" }, cards));
 }
 
 /* ------------------------------------------------------------- TIMELINE -- */
@@ -774,15 +1049,17 @@ async function mapView() {
     });
     marker.addEventListener("click", () => { window.location.hash = `#/signal/${signal.id}`; });
     const title = svgEl("title");
-    title.textContent = `${signal.title} — ${signal.summary}`;
+    title.textContent = `${signal.narrative?.headline || signal.title} — ${narrativeLine(signal)}`;
     marker.append(title);
     svg.append(marker);
   }
-  render("map", "Map", "Signal and event level geography only. Raw observations are not scattered on the map.", [
+  render("map", t().map.title, t().map.subtitle, [
     el("div", { class: "panel" }, [
-      el("div", { class: "map-wrap" }, [svg]),
+      located.length
+        ? el("div", { class: "map-wrap" }, [svg])
+        : el("div", { class: "empty", text: t().map.empty }),
       el("div", { class: "legend" }, [
-        el("span", { class: "item", text: `${located.length} located signal(s)` }),
+        el("span", { class: "item", text: t().map.count(located.length) }),
       ]),
     ]),
   ]);
@@ -939,15 +1216,15 @@ async function runStream(controller) {
       const key = apiKey();
       if (key) headers["Authorization"] = `Bearer ${key}`;
       const response = await fetch("/events", { headers, signal: controller.signal });
-      if (response.status === 401) { revealKeyField(); setConn("error", "auth required"); return; }
+      if (response.status === 401) { revealKeyField(); setConn("error"); return; }
       if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-      setConn("live", "live");
+      setConn("live");
       backoff = 1000;
       await readStream(response.body, controller.signal);
-      setConn("reconnecting", "reconnecting");
+      setConn("reconnecting");
     } catch (err) {
       if (controller.signal.aborted) return;
-      setConn("reconnecting", "reconnecting");
+      setConn("reconnecting");
     }
     await new Promise((r) => setTimeout(r, backoff));
     backoff = Math.min(backoff * 2, 15000);
@@ -992,7 +1269,26 @@ function parseSseFrame(frame) {
 
 function setConn(state, text) {
   if (connEl) connEl.dataset.state = state;
-  if (connText) connText.textContent = text;
+  if (connText) connText.textContent = text || t().conn[state] || state;
+}
+
+/** Apply the current language to the static chrome (nav, labels, footer). */
+function applyChrome() {
+  document.documentElement.lang = t().lang;
+  document.querySelectorAll("[data-nav]").forEach((a) => {
+    const key = a.dataset.nav;
+    if (t().nav[key]) a.textContent = t().nav[key];
+  });
+  document.querySelectorAll("[data-i18n]").forEach((node) => {
+    const path = node.dataset.i18n.split(".");
+    let value = t();
+    for (const part of path) value = value?.[part];
+    if (typeof value === "string") node.textContent = value;
+  });
+  const toggle = document.getElementById("lang-toggle");
+  if (toggle) toggle.textContent = LANG === "en" ? "TR" : "EN";
+  const conn = document.getElementById("conn");
+  if (conn) connText.textContent = t().conn[conn.dataset.state || "connecting"] || connText.textContent;
 }
 
 /* --------------------------------------------------------------- ROUTER -- */
@@ -1055,7 +1351,18 @@ if (lensSelect) {
     window.location.href = withLens(window.location.hash || "#/world", event.target.value);
   });
 }
+const langToggle = document.getElementById("lang-toggle");
+if (langToggle) {
+  langToggle.addEventListener("click", () => {
+    setLang(LANG === "en" ? "tr" : "en");
+    route();
+  });
+}
 window.addEventListener("DOMContentLoaded", () => {
+  LANG = detectLang();
+  applyChrome();
+  // The connection indicator must not claim "live" before anything is open.
+  setConn("offline");
   route();
   refreshMetrics();
   setInterval(refreshMetrics, 5000);

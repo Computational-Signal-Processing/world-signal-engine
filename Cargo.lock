@@ -1940,6 +1940,7 @@ dependencies = [
  "wse-detection",
  "wse-model",
  "wse-normalize",
+ "wse-presentation",
  "wse-scheduler",
  "wse-signals",
  "wse-storage",
@@ -1966,6 +1967,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wse-presentation"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "wse-model",
+]
+
+[[package]]
 name = "wse-scheduler"
 version = "0.1.0"
 dependencies = [
@@ -1983,6 +1993,7 @@ dependencies = [
  "serde",
  "wse-correlation",
  "wse-model",
+ "wse-presentation",
 ]
 
 [[package]]

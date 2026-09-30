@@ -192,6 +192,7 @@ pub struct SignalParams {
     pub signal_type: Option<String>,
     pub lens: Option<String>,
     pub active: Option<bool>,
+    pub status: Option<String>,
     pub limit: Option<usize>,
     pub offset: Option<usize>,
 }
@@ -203,6 +204,19 @@ fn parse_signal_type(raw: &str) -> Option<SignalType> {
         "EARLY_SIGNAL" => Some(SignalType::EarlySignal),
         "CONVERGENCE" => Some(SignalType::Convergence),
         "IMPACT" => Some(SignalType::Impact),
+        _ => None,
+    }
+}
+
+fn parse_status(raw: &str) -> Option<wse_model::SignalStatus> {
+    use wse_model::SignalStatus;
+    match raw.to_ascii_lowercase().as_str() {
+        "new" => Some(SignalStatus::New),
+        "developing" => Some(SignalStatus::Developing),
+        "confirmed" => Some(SignalStatus::Confirmed),
+        "stable" => Some(SignalStatus::Stable),
+        "fading" => Some(SignalStatus::Fading),
+        "resolved" => Some(SignalStatus::Resolved),
         _ => None,
     }
 }
@@ -220,12 +234,21 @@ pub async fn list_signals<S: wse_storage::Store>(
         None => None,
     };
 
+    let status = match params.status.as_deref() {
+        Some(raw) => match parse_status(raw) {
+            Some(st) => Some(st),
+            None => return bad_request(format!("unknown signal status: {raw}")),
+        },
+        None => None,
+    };
+
     let query = SignalQuery {
         category: params.category,
         entity_id: params.entity,
         signal_type,
         lens_id: params.lens,
         active_only: params.active.unwrap_or(false),
+        status,
         range: None,
         limit: params.limit,
         offset: params.offset,
@@ -492,6 +515,124 @@ pub async fn get_lens<S: wse_storage::Store>(
 /// Parse an entity id, exposed for tests.
 pub fn entity_id(raw: &str) -> EntityId {
     EntityId::new(raw)
+}
+
+/* --------------------------------------------------------------- WORLD -- */
+
+/// The one-screen answer to "what is changing in the world right now?".
+///
+/// The WORLD view previously had to fetch every signal and count in the client.
+/// This composes the answer from the store and the runtime, so the screen opens
+/// with a single request and the numbers on it come from the same place the
+/// feed does.
+#[derive(Debug, Serialize)]
+pub struct WorldSummary {
+    pub generated_at: chrono::DateTime<chrono::Utc>,
+    /// Signals whose event has not been resolved.
+    pub active_signals: usize,
+    pub signals_total: usize,
+    pub events_total: usize,
+    pub observations_total: usize,
+    /// Active signals per signal type, so the header can show the mix.
+    pub by_type: Vec<TypeCount>,
+    /// Active signals per lifecycle status.
+    pub by_status: Vec<StatusCount>,
+    /// The freshest active signals, best first — the "NOW" strip.
+    pub now: Vec<wse_model::Signal>,
+    /// How many sources are connected and how many are currently healthy.
+    pub sources_total: usize,
+    pub sources_healthy: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TypeCount {
+    #[serde(rename = "type")]
+    pub signal_type: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatusCount {
+    pub status: String,
+    pub count: usize,
+}
+
+/// `GET /world`
+///
+/// A composed view rather than a new store: it reads the same signals the feed
+/// does, so it cannot drift from them.
+pub async fn world<S: wse_storage::Store>(State(state): State<AppState<S>>) -> Response {
+    let engine = state.read().await;
+    let store = engine.store();
+
+    let all = match store.query_signals(&SignalQuery::default()) {
+        Ok(page) => page.items,
+        Err(err) => return internal(err),
+    };
+    let active = match store.query_signals(&SignalQuery::active()) {
+        Ok(page) => page.items,
+        Err(err) => return internal(err),
+    };
+
+    let type_order = [
+        SignalType::Now,
+        SignalType::Anomaly,
+        SignalType::EarlySignal,
+        SignalType::Convergence,
+        SignalType::Impact,
+    ];
+    let by_type = type_order
+        .iter()
+        .map(|ty| TypeCount {
+            signal_type: ty.as_str().to_string(),
+            count: active.iter().filter(|s| s.types.contains(ty)).count(),
+        })
+        .collect();
+
+    let status_order = [
+        wse_model::SignalStatus::New,
+        wse_model::SignalStatus::Developing,
+        wse_model::SignalStatus::Confirmed,
+        wse_model::SignalStatus::Stable,
+        wse_model::SignalStatus::Fading,
+        wse_model::SignalStatus::Resolved,
+    ];
+    let by_status = status_order
+        .iter()
+        .map(|st| StatusCount {
+            status: st.as_str().to_string(),
+            count: all.iter().filter(|s| s.status == *st).count(),
+        })
+        .collect();
+
+    let sources = store.all_sources().unwrap_or_default();
+    let schedules = engine.runtime().schedules();
+    let sources_healthy = sources
+        .iter()
+        .filter(|s| {
+            schedules
+                .get(s.id.as_str())
+                .map(|sch| sch.last_success.is_some() && sch.consecutive_failures == 0)
+                .unwrap_or(false)
+        })
+        .count();
+
+    // The store already orders by rank then recency; the strip shows the head.
+    let now: Vec<wse_model::Signal> = active.iter().take(8).cloned().collect();
+
+    Json(WorldSummary {
+        generated_at: chrono::Utc::now(),
+        active_signals: active.len(),
+        signals_total: all.len(),
+        events_total: store.event_count().unwrap_or(0),
+        observations_total: store.observation_count().unwrap_or(0),
+        by_type,
+        by_status,
+        now,
+        sources_total: sources.len(),
+        sources_healthy,
+    })
+    .into_response()
 }
 
 /* ------------------------------------------------------------- CONTROL -- */

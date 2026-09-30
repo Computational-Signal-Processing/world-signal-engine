@@ -1,15 +1,13 @@
 [package]
-name = "wse-signals"
+name = "wse-presentation"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Event formation and signal generation for the World Signal Engine."
+description = "Turns detection output into human language for the World Signal Engine."
 
 [dependencies]
 wse-model = { path = "../model" }
-wse-correlation = { path = "../correlation" }
-wse-presentation = { path = "../presentation" }
 serde = { workspace = true }
 chrono = { workspace = true }

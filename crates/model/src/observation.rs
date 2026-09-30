@@ -183,6 +183,25 @@ impl Observation {
     pub fn lag_ms(&self) -> i64 {
         (self.received_at - self.observed_at).num_milliseconds()
     }
+
+    /// A human name for the record this observation measured, when the source
+    /// supplied one.
+    ///
+    /// Different sources name the record differently — a story title, a
+    /// repository, an object name — so the attributes are checked in a stable
+    /// order. Returns `None` for single-record sources, where the metric alone
+    /// is already the subject.
+    pub fn record_label(&self) -> Option<String> {
+        for key in ["title", "repo", "object_name", "name"] {
+            if let Some(value) = self.attributes.get(key) {
+                let value = value.trim();
+                if !value.is_empty() {
+                    return Some(value.to_string());
+                }
+            }
+        }
+        None
+    }
 }
 
 /// Canonical series key: `source::entity::metric::unit`.

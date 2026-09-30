@@ -76,6 +76,7 @@ pub fn router_with_web_dir<S: wse_storage::Store + 'static>(
     let router = Router::new()
         .route("/health", get(handlers::health))
         .route("/metrics", get(handlers::metrics))
+        .route("/world", get(handlers::world))
         .route("/control", get(handlers::control))
         .route(
             "/control/collection",

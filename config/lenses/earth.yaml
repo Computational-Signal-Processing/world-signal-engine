@@ -3,6 +3,7 @@
 # `geophysics` is the category the USGS collector emits.
 id: lens_earth
 name: EARTH
+description: "The solid Earth: earthquakes and other geophysical movement, as reported by USGS."
 categories:
   - geophysics
   - environment

@@ -50,7 +50,7 @@ web UI. Current state:
 | Operations | `/control`, pause/resume, per-source enable/run, live activity over SSE |
 | Web UI | World, signal, event, observation, source, lenses, timeline, map, system |
 
-335 tests pass across the workspace.
+347 tests pass across the workspace.
 
 ## Quick start
 
@@ -85,11 +85,12 @@ The API is small on purpose:
 ```text
 GET  /health
 GET  /metrics
+GET  /world                   the one-screen "what is changing now" summary
 GET  /control                 the engine's live operational state
 POST /control/collection      pause or resume continuous collection
 GET  /activity                the recent activity stream, newest first
 GET  /events                  live activity stream (Server-Sent Events)
-GET  /signals                 ?category=&type=&entity=&active=&lens=
+GET  /signals                 ?category=&type=&entity=&active=&lens=&status=
 GET  /signals/:id
 GET  /events/:id
 GET  /observations/:id

@@ -13,6 +13,7 @@
 #     - hormuz
 id: lens_personal
 name: PERSONAL
+description: "Signals that touch the things you chose to follow."
 weights:
   novelty: 2.0
   relevance: 1.5

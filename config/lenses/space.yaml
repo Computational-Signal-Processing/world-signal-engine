@@ -3,5 +3,6 @@
 # `space` is the category the NASA collector emits.
 id: lens_space
 name: SPACE
+description: "Space weather and near-Earth objects, from NASA."
 categories:
   - space
