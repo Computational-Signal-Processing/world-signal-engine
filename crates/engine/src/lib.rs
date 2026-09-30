@@ -21,6 +21,7 @@
 
 pub mod backtest;
 pub mod metrics;
+pub mod runtime;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -39,6 +40,9 @@ pub use backtest::{
     run_backtest, truth_from_windows, BacktestDetection, BacktestReport, LabeledEvent,
 };
 pub use metrics::Metrics;
+pub use runtime::{
+    Activity, ActivityKind, ControlSnapshot, DiskSummary, RuntimeState, ScheduleView, SourceControl,
+};
 pub use wse_correlation::{ConvergenceConfig, MergeMode};
 
 /// Everything one pipeline cycle produced, for reporting and tests.
@@ -83,6 +87,10 @@ pub struct Engine<S: Store = InMemoryStore> {
     /// default; replay swaps in a clock that advances through historical time,
     /// which is what makes a replayed run reproduce byte-for-byte.
     clock: Arc<dyn Clock>,
+    /// Operational state (collection switch, source controls, activity). Shared
+    /// with the API so the Control screen and the live stream read the same
+    /// truth. Not part of detector state: replay must not reproduce it.
+    runtime: RuntimeState,
 }
 
 impl Engine<InMemoryStore> {
@@ -122,7 +130,13 @@ impl<S: Store> Engine<S> {
             trackers: HashMap::new(),
             metrics: Metrics::default(),
             clock,
+            runtime: RuntimeState::new(),
         }
+    }
+
+    /// The operational state, for the API and the live stream.
+    pub fn runtime(&self) -> &RuntimeState {
+        &self.runtime
     }
 
     /// Rebuild detector state from the stored history.
@@ -257,6 +271,7 @@ impl<S: Store> Engine<S> {
                 outcome.candidates = candidates;
                 outcome.events = events;
                 outcome.signals = signals;
+                self.publish_cycle(source_id, &outcome);
             }
             Err(err) => {
                 self.record_failure(source_id, &err);
@@ -266,10 +281,63 @@ impl<S: Store> Engine<S> {
                     self.metrics.collector_failure_total += 1;
                 }
                 outcome.source_failed = true;
+                let kind = if err.kind() == wse_model::FailureKind::RateLimited {
+                    ActivityKind::SourceRateLimited
+                } else {
+                    ActivityKind::SourceFailed
+                };
+                self.runtime.record(
+                    Activity::new(kind, format!("{source_id}: {err}"))
+                        .for_source(source_id.as_str()),
+                );
                 tracing::warn!(source = %source_id, error = %err, "collector failed");
             }
         }
         outcome
+    }
+
+    /// Turn one cycle's outcome into activity lines and broadcast them.
+    ///
+    /// Only real changes are published: a cycle that received nothing new, or
+    /// that produced no signal, is silence rather than noise. This is what
+    /// keeps the live stream meaningful instead of a per-second heartbeat.
+    fn publish_cycle(&self, source_id: &SourceId, outcome: &CycleOutcome) {
+        if outcome.source_failed {
+            return;
+        }
+        if outcome.observations_new > 0 {
+            self.runtime.record(
+                Activity::new(
+                    ActivityKind::Observation,
+                    format!(
+                        "{source_id}: {} new observation(s)",
+                        outcome.observations_new
+                    ),
+                )
+                .for_source(source_id.as_str()),
+            );
+        }
+        if outcome.candidates > 0 {
+            self.runtime.record(
+                Activity::new(
+                    ActivityKind::Anomaly,
+                    format!("{source_id}: {} anomaly candidate(s)", outcome.candidates),
+                )
+                .for_source(source_id.as_str()),
+            );
+        }
+        for event in &outcome.events {
+            self.runtime.record(
+                Activity::new(ActivityKind::Event, format!("event: {}", event.title))
+                    .for_event(event.id.as_str()),
+            );
+        }
+        for signal in &outcome.signals {
+            self.runtime.record(
+                Activity::new(ActivityKind::Signal, format!("signal: {}", signal.title))
+                    .for_signal(signal.id.as_str()),
+            );
+        }
     }
 
     /// Push a batch of observations through detection, events and signals.

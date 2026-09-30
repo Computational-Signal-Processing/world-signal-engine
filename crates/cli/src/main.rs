@@ -9,11 +9,13 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
 use wse_api::AppState;
 use wse_collector::synthetic::{SyntheticCollector, SyntheticWorld};
 use wse_detection::DetectorConfig;
+use wse_engine::runtime::{Activity, ActivityKind, ScheduleView};
 use wse_engine::{ConvergenceConfig, Engine, EngineConfig};
-use wse_model::Source;
+use wse_model::{Source, SourceId};
 use wse_signals::event::EventConfig;
 use wse_signals::SignalConfig;
 use wse_storage::{ObservationStore, SignalStore, SourceStore};
@@ -928,6 +930,18 @@ async fn run_served<S: wse_storage::Store + 'static>(
 ) -> Result<()> {
     let state = AppState::new(engine);
 
+    // A first activity line so a freshly connected browser sees the engine is
+    // alive even before the first collection cycle produces anything.
+    {
+        let engine = state.read().await;
+        engine.runtime().record(Activity::new(
+            ActivityKind::Started,
+            format!("engine started ({} sources registered)", {
+                engine.store().all_sources().map(|s| s.len()).unwrap_or(0)
+            }),
+        ));
+    }
+
     // Retention: age out old observations and cap the raw payloads, on a slow
     // loop. Doing it here rather than on the write path keeps collection fast
     // and makes the policy visible in one place.
@@ -946,9 +960,13 @@ async fn run_served<S: wse_storage::Store + 'static>(
     // Real sources: one scheduler-driven loop that polls each collector when it
     // is due. Fetching happens *outside* the engine lock so a slow source can
     // never block the API; only the fast in-memory ingest takes the lock.
+    //
+    // The loop is the single writer of each source's schedule, so the Control
+    // screen always reads a schedule that reflects the last real run.
     if collect {
         let mut scheduler = wse_scheduler::Scheduler::new();
         let mut collectors: Vec<Box<dyn wse_collector::Collector>> = Vec::new();
+        let mut cadences: HashMap<SourceId, Option<u64>> = HashMap::new();
         for collector in wse_sources::live_collectors() {
             let source_id = collector.source_id();
             let mut schedule = schedule_for(
@@ -963,29 +981,108 @@ async fn run_served<S: wse_storage::Store + 'static>(
                 // a 15-minute window without pretending the cadence changed.
                 *s = seconds;
             }
+            cadences.insert(source_id.clone(), schedule.poll_seconds());
             scheduler.register(source_id, schedule);
             collectors.push(collector);
+        }
+
+        // Publish each source's cadence before the loop starts, so the Control
+        // screen is correct even before the first run.
+        {
+            let engine = state.read().await;
+            for (source_id, seconds) in &cadences {
+                engine.runtime().set_schedule(
+                    source_id.as_str(),
+                    ScheduleView {
+                        cadence_seconds: *seconds,
+                        ..Default::default()
+                    },
+                );
+            }
         }
 
         let driver = state.clone();
         tokio::spawn(async move {
             loop {
                 let now = Utc::now();
+
+                // A manual "run now" from the Control screen is served on the
+                // next pass, alongside whatever is due. Both go through the same
+                // per-source in-flight guard below, so they can never overlap.
+                let manual: std::collections::HashSet<String> = driver
+                    .read()
+                    .await
+                    .runtime()
+                    .take_run_now()
+                    .into_iter()
+                    .collect();
+
                 for collector in &collectors {
                     let source_id = collector.source_id();
-                    if !scheduler.state(&source_id).is_some_and(|s| s.is_due(now)) {
+
+                    let (enabled, collection_on) = {
+                        let engine = driver.read().await;
+                        (
+                            engine.runtime().is_source_enabled(source_id.as_str()),
+                            engine.runtime().collection_enabled(),
+                        )
+                    };
+                    let requested = manual.contains(source_id.as_str());
+                    if !enabled {
                         continue;
                     }
-                    // Fetch without the lock.
+                    // A manual run bypasses the cadence check but not the pause
+                    // switch: pausing collection must stop manual runs too, or
+                    // "paused" would not mean paused.
+                    if !requested && !collection_on {
+                        continue;
+                    }
+                    if !requested && !scheduler.state(&source_id).is_some_and(|s| s.is_due(now)) {
+                        continue;
+                    }
+
+                    // Claim the source. If another run is somehow in flight,
+                    // skip rather than start a concurrent fetch.
+                    {
+                        let engine = driver.read().await;
+                        if !engine.runtime().try_begin_run(source_id.as_str()) {
+                            continue;
+                        }
+                    }
+
                     let started = Utc::now();
                     let result = collector.collect().await;
                     let ok = result.is_ok();
-                    // Apply under the lock.
-                    driver
-                        .write()
-                        .await
-                        .apply_collection(&source_id, started, result);
+                    {
+                        let mut engine = driver.write().await;
+                        engine.apply_collection(&source_id, started, result);
+                        engine.runtime().end_run(source_id.as_str());
+                    }
                     scheduler.record_run(&source_id, Utc::now(), ok);
+
+                    // Reflect the run in the Control screen's schedule view.
+                    let view = {
+                        let state = scheduler.state(&source_id);
+                        ScheduleView {
+                            cadence_seconds: cadences.get(&source_id).copied().flatten(),
+                            last_run: state.and_then(|s| s.last_run),
+                            last_success: state.and_then(|s| s.last_success),
+                            next_run: state
+                                .and_then(|s| s.last_run)
+                                .zip(cadences.get(&source_id).copied().flatten())
+                                .map(|(last, seconds)| {
+                                    last + chrono::Duration::seconds(seconds as i64)
+                                }),
+                            consecutive_failures: state
+                                .map(|s| s.consecutive_failures)
+                                .unwrap_or(0),
+                        }
+                    };
+                    driver
+                        .read()
+                        .await
+                        .runtime()
+                        .set_schedule(source_id.as_str(), view);
                 }
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }

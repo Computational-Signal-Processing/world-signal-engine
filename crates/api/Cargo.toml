@@ -16,6 +16,8 @@ serde_json = { workspace = true }
 chrono = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = { workspace = true }
+futures-util = "0.3"
 tower-http = { workspace = true }
 tracing = { workspace = true }
 

@@ -2,19 +2,32 @@
 //!
 //! Every handler is a thin read over the engine. Responses are the domain
 //! types serialized directly, so the API and the model can never drift apart.
+//!
+//! A handful of handlers are writes rather than reads — the Control screen's
+//! collection switch, per-source enable/disable and "run now". They touch only
+//! [`RuntimeState`](wse_engine::RuntimeState), never detector state, so they
+//! cannot corrupt the pipeline they control.
 
 use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
-    response::{IntoResponse, Response},
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse, Response,
+    },
     Json,
 };
+use futures_util::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
+use std::convert::Infallible;
+use std::time::Duration;
+use wse_engine::runtime::{ActivityKind, DiskSummary, SourceControl};
+use wse_engine::ControlSnapshot;
 use wse_model::{
     Cadence, EntityId, EventId, Observation, ObservationId, SignalId, SignalType, Source,
     SourceHealth, SourceId,
 };
-use wse_storage::{ObservationQuery, SignalQuery};
+use wse_storage::{MaintenanceStore, ObservationQuery, SignalQuery};
 
 use crate::state::AppState;
 
@@ -479,6 +492,247 @@ pub async fn get_lens<S: wse_storage::Store>(
 /// Parse an entity id, exposed for tests.
 pub fn entity_id(raw: &str) -> EntityId {
     EntityId::new(raw)
+}
+
+/* ------------------------------------------------------------- CONTROL -- */
+
+/// Build the Control screen's snapshot from real state: the store's counts and
+/// disk usage plus the runtime's collection switch and schedules.
+///
+/// Nothing here is hard-coded. A field the Control screen shows and this does
+/// not compute is a bug, not a placeholder.
+pub fn control_snapshot<S: wse_storage::Store>(
+    engine: &wse_engine::Engine<S>,
+    version: &'static str,
+) -> ControlSnapshot {
+    let runtime = engine.runtime();
+    let store = engine.store();
+
+    let sources = store.all_sources().unwrap_or_default();
+    let schedules = runtime.schedules();
+    let sources: Vec<SourceControl> = sources
+        .into_iter()
+        .map(|source| {
+            let id = source.id.as_str().to_string();
+            let schedule = schedules.get(&id).cloned().unwrap_or_default();
+            SourceControl {
+                enabled: runtime.is_source_enabled(&id),
+                running: runtime.is_running(&id),
+                source_id: id,
+                name: source.name,
+                category: source.category,
+                schedule,
+            }
+        })
+        .collect();
+
+    let signals_total = store.signal_count().unwrap_or(0);
+    let active_query = SignalQuery {
+        active_only: true,
+        ..Default::default()
+    };
+    let signals_active = store
+        .query_signals(&active_query)
+        .map(|page| page.total)
+        .unwrap_or(0);
+
+    let disk = match MaintenanceStore::disk_usage(store) {
+        Ok(usage) => DiskSummary {
+            database_bytes: usage.db_bytes,
+            raw_bytes: usage.raw_bytes,
+            raw_files: usage.raw_files,
+            total_bytes: usage.total_bytes(),
+        },
+        Err(_) => DiskSummary {
+            database_bytes: 0,
+            raw_bytes: 0,
+            raw_files: 0,
+            total_bytes: 0,
+        },
+    };
+
+    ControlSnapshot {
+        status: "live",
+        version,
+        started_at: runtime.started_at(),
+        uptime_seconds: runtime.uptime_seconds(),
+        collection_enabled: runtime.collection_enabled(),
+        sources,
+        signals_active,
+        signals_total,
+        observations_total: store.observation_count().unwrap_or(0),
+        events_total: store.event_count().unwrap_or(0),
+        disk,
+    }
+}
+
+/// `GET /control`
+///
+/// The engine's real operational state. Authenticated like every other API
+/// route, because it exposes source schedules and storage footprint.
+pub async fn control<S: wse_storage::Store>(State(state): State<AppState<S>>) -> Response {
+    let engine = state.read().await;
+    Json(control_snapshot(&engine, env!("CARGO_PKG_VERSION"))).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CollectionBody {
+    pub enabled: bool,
+}
+
+/// `POST /control/collection` — pause or resume continuous collection.
+pub async fn set_collection<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Json(body): Json<CollectionBody>,
+) -> Response {
+    let engine = state.read().await;
+    engine.runtime().set_collection_enabled(body.enabled);
+    Json(serde_json::json!({ "collection_enabled": body.enabled })).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SourceEnabledBody {
+    pub enabled: bool,
+}
+
+/// `POST /sources/:id/enabled` — enable or disable one source.
+pub async fn set_source_enabled<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+    Json(body): Json<SourceEnabledBody>,
+) -> Response {
+    let engine = state.read().await;
+    // Refuse an id that is not in the catalog: enabling a source that does not
+    // exist would silently do nothing and look like it worked.
+    match engine.store().get_source(&SourceId::new(id.clone())) {
+        Ok(Some(_)) => {
+            engine.runtime().set_source_enabled(&id, body.enabled);
+            Json(serde_json::json!({ "source_id": id, "enabled": body.enabled })).into_response()
+        }
+        Ok(None) => not_found(format!("source {id}")),
+        Err(err) => internal(err),
+    }
+}
+
+/// `POST /sources/:id/run` — run one source at the next scheduler pass.
+///
+/// Returns `202 Accepted`: the run is queued, not performed here. The scheduler
+/// coalesces duplicate requests and refuses to start a source that is already
+/// running, so this cannot overlap the scheduled run or double-poll a source.
+pub async fn run_source<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
+    let engine = state.read().await;
+    match engine.store().get_source(&SourceId::new(id.clone())) {
+        Ok(Some(_)) => {
+            if engine.runtime().is_running(&id) {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(serde_json::json!({
+                        "error": "source is already running",
+                        "source_id": id,
+                    })),
+                )
+                    .into_response();
+            }
+            engine.runtime().request_run_now(&id);
+            (
+                StatusCode::ACCEPTED,
+                Json(serde_json::json!({ "queued": true, "source_id": id })),
+            )
+                .into_response()
+        }
+        Ok(None) => not_found(format!("source {id}")),
+        Err(err) => internal(err),
+    }
+}
+
+/// `GET /activity` — the recent activity stream, newest first.
+pub async fn activity<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Query(params): Query<ActivityParams>,
+) -> Response {
+    let engine = state.read().await;
+    let limit = params
+        .limit
+        .unwrap_or(50)
+        .min(wse_engine::runtime::ACTIVITY_LIMIT);
+    Json(serde_json::json!({
+        "items": engine.runtime().recent_activity(limit),
+    }))
+    .into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ActivityParams {
+    pub limit: Option<usize>,
+}
+
+/// `GET /events` (SSE) — the live activity stream.
+///
+/// Server-Sent Events rather than WebSockets: the flow is one-way
+/// (server→browser), SSE reconnects automatically, and it rides plain HTTP so
+/// the existing auth middleware, reverse proxy and TLS story are unchanged.
+///
+/// Each event carries an `id` (the activity timestamp in nanos) so a
+/// reconnecting browser can send `Last-Event-ID`; the client uses it to drop
+/// anything it has already seen, which is what keeps reconnect from duplicating
+/// entries. A periodic comment line keeps proxies from closing an idle stream,
+/// and the client treats a gap in keep-alives as "connection lost".
+pub async fn events<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let runtime = {
+        let engine = state.read().await;
+        engine.runtime().clone()
+    };
+    let receiver = runtime.subscribe();
+
+    let stream = stream::unfold(receiver, |mut receiver| async move {
+        loop {
+            match receiver.recv().await {
+                Ok(activity) => {
+                    let id = activity
+                        .at
+                        .timestamp_nanos_opt()
+                        .unwrap_or_default()
+                        .to_string();
+                    let data = serde_json::to_string(&activity).unwrap_or_else(|_| "{}".into());
+                    let event = Event::default()
+                        .id(id)
+                        .event(event_name(activity.kind))
+                        .data(data);
+                    return Some((Ok(event), receiver));
+                }
+                // A lagging subscriber missed a burst. Skipping is correct: the
+                // UI re-syncs its full state on the next event and on reconnect,
+                // so replaying a stale backlog would only add duplicates.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    });
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+
+fn event_name(kind: ActivityKind) -> &'static str {
+    match kind {
+        ActivityKind::Started => "started",
+        ActivityKind::Observation => "observation",
+        ActivityKind::Anomaly => "anomaly",
+        ActivityKind::Event => "event",
+        ActivityKind::Signal => "signal",
+        ActivityKind::SourceRecovered => "source_recovered",
+        ActivityKind::SourceFailed => "source_failed",
+        ActivityKind::SourceRateLimited => "source_rate_limited",
+        ActivityKind::Control => "control",
+    }
 }
 
 #[cfg(test)]

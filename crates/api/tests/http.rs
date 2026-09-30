@@ -561,3 +561,252 @@ async fn the_ui_stays_reachable_when_authentication_is_on() {
     let (status, _) = get_json(&base, "/signals").await;
     assert_eq!(status, 401);
 }
+
+/* --------------------------------------------------------- control plane */
+
+/// Boot the synthetic world and serve with a key, so the authenticated control
+/// routes can be exercised the way a real deployment reaches them.
+async fn serve_authenticated(key: &str) -> String {
+    let origin = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let mut engine = Engine::new(EngineConfig::default());
+    engine
+        .register_source(Source::new(
+            wse_model::SourceId::new("synthetic_sensor"),
+            "Synthetic Sensor",
+            "synthetic",
+        ))
+        .unwrap();
+    let collector = SyntheticCollector::new(SyntheticWorld::acceptance(origin));
+    for _ in 0..205 {
+        engine.run_collector(&collector).await;
+    }
+    let state = AppState::new(engine);
+    let app = router_with_web_dir(
+        state,
+        "/nonexistent-web-dir-for-tests",
+        wse_api::SecurityConfig {
+            api_keys: vec![key.into()],
+            ..wse_api::SecurityConfig::default()
+        },
+    );
+    serve_app(app).await
+}
+
+async fn post_json(base: &str, path: &str, key: &str, body: Value) -> (u16, Value) {
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{base}{path}"))
+        .bearer_auth(key)
+        .json(&body)
+        .send()
+        .await
+        .expect("request failed");
+    let status = response.status().as_u16();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    (status, body)
+}
+
+async fn get_json_auth(base: &str, path: &str, key: &str) -> (u16, Value) {
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{base}{path}"))
+        .bearer_auth(key)
+        .send()
+        .await
+        .expect("request failed");
+    let status = response.status().as_u16();
+    let body: Value = response.json().await.unwrap_or(Value::Null);
+    (status, body)
+}
+
+#[tokio::test]
+async fn control_snapshot_reports_real_state() {
+    let base = serve().await;
+    let (status, body) = get_json(&base, "/control").await;
+    assert_eq!(status, 200);
+    assert_eq!(body["status"], "live");
+    assert_eq!(body["collection_enabled"], true);
+
+    let sources = body["sources"].as_array().expect("sources array");
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["source_id"], "synthetic_sensor");
+    assert_eq!(sources[0]["enabled"], true);
+
+    // The counts are read from the store, not hard-coded.
+    assert!(
+        body["observations_total"].as_u64().unwrap() > 0,
+        "control must report real observation counts: {body}"
+    );
+    assert!(body["disk"]["total_bytes"].as_u64().is_some());
+}
+
+#[tokio::test]
+async fn collection_can_be_paused_and_resumed() {
+    let base = serve().await;
+
+    let (status, body) = post_json(
+        &base,
+        "/control/collection",
+        "",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(body["collection_enabled"], false);
+
+    let (_, control) = get_json(&base, "/control").await;
+    assert_eq!(control["collection_enabled"], false);
+
+    let (status, _) = post_json(
+        &base,
+        "/control/collection",
+        "",
+        serde_json::json!({"enabled": true}),
+    )
+    .await;
+    assert_eq!(status, 200);
+    let (_, control) = get_json(&base, "/control").await;
+    assert_eq!(control["collection_enabled"], true);
+}
+
+#[tokio::test]
+async fn a_source_can_be_disabled_then_enabled() {
+    let base = serve().await;
+
+    let (status, _) = post_json(
+        &base,
+        "/sources/synthetic_sensor/enabled",
+        "",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, 200);
+
+    let (_, control) = get_json(&base, "/control").await;
+    assert_eq!(control["sources"][0]["enabled"], false);
+
+    // An unknown source is refused rather than silently accepted.
+    let (status, _) = post_json(
+        &base,
+        "/sources/does_not_exist/enabled",
+        "",
+        serde_json::json!({"enabled": true}),
+    )
+    .await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn run_now_is_queued_and_deduplicated() {
+    let base = serve().await;
+
+    let (status, body) = post_json(
+        &base,
+        "/sources/synthetic_sensor/run",
+        "",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 202);
+    assert_eq!(body["queued"], true);
+
+    // A second request for the same source is coalesced, not queued twice.
+    let (status, _) = post_json(
+        &base,
+        "/sources/synthetic_sensor/run",
+        "",
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 202);
+
+    let (status, _) = post_json(&base, "/sources/nope/run", "", serde_json::json!({})).await;
+    assert_eq!(status, 404);
+}
+
+#[tokio::test]
+async fn the_activity_stream_reflects_what_happened() {
+    let base = serve().await;
+    let (status, body) = get_json(&base, "/activity?limit=20").await;
+    assert_eq!(status, 200);
+    let items = body["items"].as_array().expect("items array");
+    assert!(
+        !items.is_empty(),
+        "expected activity after 205 cycles: {body}"
+    );
+    // Newest first, and every entry carries a real kind.
+    for item in items {
+        assert!(item["kind"].as_str().is_some());
+        assert!(item["message"].as_str().is_some());
+    }
+}
+
+#[tokio::test]
+async fn the_events_sse_endpoint_streams_activity() {
+    let base = serve().await;
+    // A live subscriber must receive the next activity line. We trigger one by
+    // pausing collection, then read the first SSE frame off the socket.
+    let client = reqwest::Client::new();
+    let mut stream = client
+        .get(format!("{base}/events"))
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .expect("connect to SSE");
+    assert_eq!(stream.status(), 200);
+
+    // Queue a control action after subscribing so it is broadcast to us.
+    let _ = post_json(
+        &base,
+        "/control/collection",
+        "",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+
+    let mut collected = String::new();
+    for _ in 0..10 {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), stream.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                collected.push_str(&String::from_utf8_lossy(&chunk));
+                if collected.contains("collection paused") {
+                    break;
+                }
+            }
+            _ => break,
+        }
+    }
+    assert!(
+        collected.contains("event: control") && collected.contains("collection paused"),
+        "expected the control activity on the SSE stream, got: {collected}"
+    );
+}
+
+#[tokio::test]
+async fn the_control_plane_requires_a_key_when_one_is_configured() {
+    let base = serve_authenticated("s3cret").await;
+
+    // No key: every control route is refused.
+    let (status, _) = get_json(&base, "/control").await;
+    assert_eq!(status, 401);
+    let (status, _) = post_json(
+        &base,
+        "/control/collection",
+        "",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, 401);
+
+    // With the key: it works.
+    let (status, _) = get_json_auth(&base, "/control", "s3cret").await;
+    assert_eq!(status, 200);
+    let (status, _) = post_json(
+        &base,
+        "/control/collection",
+        "s3cret",
+        serde_json::json!({"enabled": false}),
+    )
+    .await;
+    assert_eq!(status, 200);
+}

@@ -47,9 +47,10 @@ web UI. Current state:
 | Correlation | Cross-source convergence |
 | Signals | `NOW`, `ANOMALY`, `EARLY_SIGNAL`, `CONVERGENCE`, `IMPACT` |
 | API | REST, with a raw-data endpoint |
-| Web UI | World, signal, event, source, timeline, map |
+| Operations | `/control`, pause/resume, per-source enable/run, live activity over SSE |
+| Web UI | World, signal, event, observation, source, lenses, timeline, map, system |
 
-323 tests pass across the workspace.
+328 tests pass across the workspace.
 
 ## Quick start
 
@@ -82,18 +83,30 @@ baselines in SQLite, so a restart resumes rather than re-learning. With
 The API is small on purpose:
 
 ```text
-GET /health
-GET /metrics
-GET /signals                  ?category=&type=&entity=&active=&lens=
-GET /signals/:id
-GET /events/:id
-GET /observations/:id
-GET /observations/:id/raw     the raw bytes the source returned
-GET /sources
-GET /sources/:id
-GET /entities/:id
-GET /timeline                 ?series=
+GET  /health
+GET  /metrics
+GET  /control                 the engine's live operational state
+POST /control/collection      pause or resume continuous collection
+GET  /activity                the recent activity stream, newest first
+GET  /events                  live activity stream (Server-Sent Events)
+GET  /signals                 ?category=&type=&entity=&active=&lens=
+GET  /signals/:id
+GET  /events/:id
+GET  /observations/:id
+GET  /observations/:id/raw    the raw bytes the source returned
+GET  /sources
+GET  /sources/:id
+POST /sources/:id/enabled     enable or disable one source
+POST /sources/:id/run         run one source at the next scheduler pass
+GET  /entities/:id
+GET  /lenses
+GET  /lenses/:id
+GET  /timeline                ?series=
 ```
+
+The UI at `/` is the product: a live World feed of explainable signals, a
+System screen showing what is running and streaming activity live, and a
+drill-down from any signal to `EVENT → OBSERVATION → SOURCE → RAW DATA`.
 
 ## Documentation
 

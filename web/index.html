@@ -2,42 +2,61 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>World Signal Engine</title>
+  <meta name="description" content="Machine observes the world. Human investigates what changed." />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0a0d12" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#view">Skip to content</a>
+
   <header class="topbar">
-    <a class="brand" href="#/world">
+    <a class="brand" href="#/world" aria-label="World Signal Engine home">
       <span class="brand-mark" aria-hidden="true"></span>
-      <span>WORLD SIGNAL ENGINE</span>
+      <span class="brand-name">WORLD SIGNAL ENGINE</span>
     </a>
-    <nav class="nav">
+
+    <nav class="nav" aria-label="Primary">
       <a href="#/world" data-nav="world">World</a>
-      <a href="#/lenses" data-nav="lenses">Lenses</a>
       <a href="#/sources" data-nav="sources">Sources</a>
+      <a href="#/lenses" data-nav="lenses">Lenses</a>
       <a href="#/map" data-nav="map">Map</a>
+      <a href="#/system" data-nav="system">System</a>
     </nav>
-    <label class="lens-picker">
-      <span class="lens-label">LENS</span>
-      <select id="lens-select" aria-label="Filter the world by lens">
-        <option value="">all lenses</option>
-      </select>
-    </label>
-    <label class="key-picker" id="key-picker">
-      <span class="lens-label">KEY</span>
-      <input id="api-key" type="password" autocomplete="off" spellcheck="false"
-             placeholder="API key" aria-label="API key" />
-    </label>
-    <div class="status" id="status" role="status" aria-live="polite">connecting…</div>
+
+    <div class="controls">
+      <label class="field" id="lens-field">
+        <span class="field-label">Lens</span>
+        <select id="lens-select" aria-label="Filter the world by lens">
+          <option value="">all</option>
+        </select>
+      </label>
+
+      <label class="field" id="key-field">
+        <span class="field-label">Key</span>
+        <input id="api-key" type="password" autocomplete="off" spellcheck="false"
+               placeholder="API key" aria-label="API key" />
+      </label>
+
+      <div class="conn" id="conn" role="status" aria-live="polite">
+        <span class="conn-dot" aria-hidden="true"></span>
+        <span class="conn-text" id="conn-text">connecting</span>
+      </div>
+    </div>
   </header>
 
   <main id="view" class="view" aria-live="polite"></main>
 
   <footer class="foot">
     <span>Machine observes. Human investigates what changed.</span>
-    <span id="metrics" class="metrics"></span>
+    <span id="metrics" class="metrics" aria-hidden="true"></span>
   </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="/app.js"></script>
 </body>

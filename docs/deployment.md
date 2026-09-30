@@ -191,6 +191,36 @@ sqlite3 /var/lib/world-signal-engine/world-signal-engine.db \
 The `raw/` directory can be copied with `rsync`; a payload missing from a
 backup costs a drill-down step, not a signal.
 
+## Operations
+
+A running engine is not a black box. The same process that collects and
+detects exposes what it is doing, so an operator does not have to guess.
+
+```bash
+# What is running, what is paused, and how much is stored.
+curl -s -H "Authorization: Bearer $WSE_API_KEYS" https://engine.example/control
+
+# Pause collection (e.g. during a migration) without stopping the API.
+curl -s -X POST -H "Authorization: Bearer $WSE_API_KEYS" \
+  -H 'content-type: application/json' \
+  -d '{"enabled":false}' https://engine.example/control/collection
+
+# Run one source at the next scheduler pass.
+curl -s -X POST -H "Authorization: Bearer $WSE_API_KEYS" \
+  -H 'content-type: application/json' \
+  -d '{}' https://engine.example/sources/usgs_earthquakes/run
+```
+
+`GET /events` is a Server-Sent Events stream of the same activity the System
+screen shows: observations, anomalies, events, signals, and source health
+changes as they happen. Because `EventSource` cannot send an `Authorization`
+header, the bundled UI reads the stream over `fetch` and keeps the key in a
+header rather than the URL.
+
+Pausing collection stops new observations. It never stops the API, the UI, or
+queries over what was already collected — an operator can pause a misbehaving
+source and still investigate.
+
 ## Verifying a deployment
 
 ```bash
@@ -204,6 +234,14 @@ curl -sf -H "Authorization: Bearer $WSE_API_KEYS" \
 # Metrics, behind the key.
 curl -sf -H "Authorization: Bearer $WSE_API_KEYS" \
   https://engine.example/metrics | grep wse_signals_total
+
+# The engine's own operational state.
+curl -sf -H "Authorization: Bearer $WSE_API_KEYS" \
+  https://engine.example/control | grep -q '"status":"live"'
+
+# The live activity stream (first frame, then stop).
+curl -sN -H "Authorization: Bearer $WSE_API_KEYS" \
+  -H 'accept: text/event-stream' https://engine.example/events | head -3
 
 # An unauthenticated read must fail.
 curl -s -o /dev/null -w '%{http_code}\n' https://engine.example/signals

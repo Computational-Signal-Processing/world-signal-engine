@@ -94,14 +94,20 @@ Five collectors, real network, and GDELT's HTTP 429 correctly classified as
 
 `GET /health`, `/metrics`, `/signals`, `/signals/:id`, `/events/:id`,
 `/observations/:id`, `/observations/:id/raw`, `/sources`, `/sources/:id`,
-`/entities/:id`, `/timeline`, `/lenses`, `/lenses/:id` all respond. Verified by
-`curl` and by `crates/api/tests/http.rs`. ✅
+`/entities/:id`, `/timeline`, `/lenses`, `/lenses/:id` all respond, as do the
+operational routes added after this audit's first pass: `GET /control`,
+`GET /activity`, `GET /events` (SSE), `POST /control/collection`,
+`POST /sources/:id/enabled`, `POST /sources/:id/run`. Verified by `curl` against
+a served instance and by `crates/api/tests/http.rs` (26 tests). ✅
 
 ### Phase 9 — Web UI
 
-`GET /` serves `web/index.html` (200). The UI drives world → signal → event →
-observation → source, with a lens picker and (new) an API key field. The static
-files need no build step. ✅
+`GET /` serves `web/index.html` (200), and `app.js`, `styles.css`,
+`manifest.webmanifest` and `icon.svg` are served with the right content types.
+The UI drives world → signal → event → observation → source, with a lens picker,
+an API key field (revealed only when a key is needed), a map, a timeline, and a
+System screen that streams live activity over SSE and exposes the control plane.
+The static files need no build step. ✅
 
 ### Phase 10 — Replay / backtesting
 
@@ -156,7 +162,51 @@ rehydrated detector state from storage series=1
 Signals and observations were still served after the restart; the detector
 resumed rather than re-learning. ✅
 
-## Gaps found
+## Productionization (post-Phase 12)
+
+Not a phase; the work required to run this for real. Landed with this audit:
+
+- SQLite persistence, selected by `--data-dir`, sharing one serving path with
+  the in-memory backend.
+- Bounded rehydration, so a restart resumes warm without replaying all history.
+- Retention: observations age out; signals and events do not.
+- Raw pruning that forgets payloads as well as deleting their files (a real bug,
+  fixed and covered by a test).
+- API authentication (`WSE_API_KEYS`), constant-time key comparison, no CORS by
+  default, body/timeout limits, and a startup warning when serving without a key.
+- A UI key field, sent as a header.
+- `docs/deployment.md`, and CI checking the no-SQLite build.
+
+## Making it a running product (second pass)
+
+The engine could already answer the two required questions, but only if an
+operator drove it. This pass made it self-running and operable:
+
+- A continuous scheduler loop in `wse serve --collect`, honoring runtime
+  controls, so a served instance keeps observing the world without an operator.
+- `RuntimeState` in `wse-engine`: uptime, collection enabled/disabled, per-source
+  enable/disable, run-now requests (coalesced, not queued twice), and a bounded
+  activity ring buffer.
+- An activity stream emitted as the pipeline runs — observation batches, anomaly
+  candidates, events, signals, and source health changes — exposed over
+  `GET /activity` and pushed live over `GET /events` (SSE).
+- A control plane: `GET /control`, `POST /control/collection`,
+  `POST /sources/:id/enabled`, `POST /sources/:id/run`, all behind the same key
+  as every other route.
+- A System screen in the UI that shows the engine's real state, streams activity
+  live, and offers pause/enable/run controls — so "what is it doing right now?"
+  is answerable from the product, not from logs.
+- The UI rewritten around the brief's card vocabulary: icon + label + shape for
+  signal type, and the facts (deviation, persistence, independent sources) in
+  place of a single opaque importance score.
+
+Re-verified after this pass: `cargo fmt --all --check`, `cargo clippy --workspace
+--all-targets`, `cargo test --workspace` (328 tests), the no-SQLite build, a live
+`serve --collect` run against the real sources (USGS/NASA/HN/GitHub healthy,
+GDELT rate-limited and recorded as such), and the full drill-down over `curl`
+plus the browser UI.
+
+## Known limitations
 
 1. **`IMPACT` has no producer.** The type exists and is tested as a type, but no
    collector or detector emits an impact-scored signal. It is not a defect in
@@ -172,22 +222,12 @@ resumed rather than re-learning. ✅
 4. **No labelled history for the real sources.** Backtesting works and is
    measured, but its ground truth so far is hand-made. This is the same
    limitation the roadmap already records under Phase 10.
+5. **The activity stream is per-process.** It is an in-memory ring buffer, not a
+   durable log, and a restart starts it empty. That is deliberate — activity is
+   operational telemetry, not data. What matters (observations, events, signals,
+   source health) is in the store and survives.
 
-None of these block the two questions the brief requires the prototype to
-answer: *what changed abnormally since the last cycle*, and *show me the
-evidence*. Both were demonstrated above.
-
-## Productionization (post-Phase 12)
-
-Not a phase; the work required to run this for real. Landed with this audit:
-
-- SQLite persistence, selected by `--data-dir`, sharing one serving path with
-  the in-memory backend.
-- Bounded rehydration, so a restart resumes warm without replaying all history.
-- Retention: observations age out; signals and events do not.
-- Raw pruning that forgets payloads as well as deleting their files (a real bug,
-  fixed and covered by a test).
-- API authentication (`WSE_API_KEYS`), constant-time key comparison, no CORS by
-  default, body/timeout limits, and a startup warning when serving without a key.
-- A UI key field, sent as a header.
-- `docs/deployment.md`, and CI checking the no-SQLite build.
+None of these block the two questions the brief requires the product to answer:
+*what changed abnormally since the last cycle*, and *show me the evidence*. Both
+were demonstrated above, and both are now answerable from the running product
+itself rather than only from a command line.

@@ -76,6 +76,13 @@ pub fn router_with_web_dir<S: wse_storage::Store + 'static>(
     let router = Router::new()
         .route("/health", get(handlers::health))
         .route("/metrics", get(handlers::metrics))
+        .route("/control", get(handlers::control))
+        .route(
+            "/control/collection",
+            axum::routing::post(handlers::set_collection),
+        )
+        .route("/activity", get(handlers::activity))
+        .route("/events", get(handlers::events))
         .route("/signals", get(handlers::list_signals))
         .route("/signals/{id}", get(handlers::get_signal))
         .route("/events/{id}", get(handlers::get_event))
@@ -83,6 +90,14 @@ pub fn router_with_web_dir<S: wse_storage::Store + 'static>(
         .route("/observations/{id}/raw", get(handlers::get_observation_raw))
         .route("/sources", get(handlers::list_sources))
         .route("/sources/{id}", get(handlers::get_source))
+        .route(
+            "/sources/{id}/enabled",
+            axum::routing::post(handlers::set_source_enabled),
+        )
+        .route(
+            "/sources/{id}/run",
+            axum::routing::post(handlers::run_source),
+        )
         .route("/entities/{id}", get(handlers::get_entity))
         .route("/lenses", get(handlers::list_lenses))
         .route("/lenses/{id}", get(handlers::get_lens))
