@@ -55,6 +55,18 @@ pub struct Observation {
     pub dimensions: BTreeMap<String, String>,
     /// Additional non-numeric attributes from the source record.
     pub attributes: BTreeMap<String, String>,
+    /// Per-record discriminator within the series, e.g. a repository name or a
+    /// story id.
+    ///
+    /// Some sources emit several independent records per series *per
+    /// timestamp* — GitHub search returns many repositories, Hacker News many
+    /// stories. Without a discriminator those records share an id (same series,
+    /// same `observed_at`, same payload hash) and de-duplication silently drops
+    /// all but one. `identity` is that discriminator: it is part of the
+    /// observation's id and **never** part of its [`series_key`](Self::series_key),
+    /// so the records stay independently observable while still forming one
+    /// series for baseline and detection.
+    pub identity: Option<String>,
 }
 
 impl Observation {
@@ -73,7 +85,9 @@ impl Observation {
         let unit = unit.into();
         let entity_key = entity_id.as_ref().map(|e| e.as_str()).unwrap_or("-");
         let key = series_key(&source_id, entity_key, &metric, &unit);
-        let id = ObservationId::deterministic(&key, &observed_at.to_rfc3339(), &raw.hash);
+        // No `identity` yet: the id is finalized by `with_identity`, which is
+        // what a source with several records per timestamp calls.
+        let id = ObservationId::deterministic(&key, &observed_at.to_rfc3339(), &raw.hash, None);
         Self {
             id,
             source_id,
@@ -89,12 +103,33 @@ impl Observation {
             raw,
             dimensions: BTreeMap::new(),
             attributes: BTreeMap::new(),
+            identity: None,
         }
     }
 
     pub fn with_location(mut self, latitude: f64, longitude: f64) -> Self {
         self.latitude = Some(latitude);
         self.longitude = Some(longitude);
+        self
+    }
+
+    /// Set the per-record discriminator and re-derive the deterministic id.
+    ///
+    /// Call this for any source that emits more than one record per series per
+    /// timestamp. The discriminator must be stable for the same record across
+    /// collections (a repository name, a story id), so that re-collecting an
+    /// unchanged payload still produces the same id and is de-duplicated.
+    pub fn with_identity(mut self, identity: impl Into<String>) -> Self {
+        let identity = identity.into();
+        let entity_key = self.entity_id.as_ref().map(|e| e.as_str()).unwrap_or("-");
+        let key = series_key(&self.source_id, entity_key, &self.metric, &self.unit);
+        self.id = ObservationId::deterministic(
+            &key,
+            &self.observed_at.to_rfc3339(),
+            &self.raw.hash,
+            Some(&identity),
+        );
+        self.identity = Some(identity);
         self
     }
 
@@ -210,5 +245,34 @@ mod tests {
         let json = serde_json::to_string(&o).unwrap();
         let back: Observation = serde_json::from_str(&json).unwrap();
         assert_eq!(back, o);
+    }
+
+    #[test]
+    fn identity_separates_records_but_keeps_the_series_intact() {
+        // The GitHub/HN shape: many records, one series, one timestamp.
+        let a = obs(10.0, "h").with_identity("repo_a");
+        let b = obs(20.0, "h").with_identity("repo_b");
+        assert_ne!(a.id, b.id, "independent records must not collide");
+        assert_eq!(
+            a.series_key(),
+            b.series_key(),
+            "identity must never leak into the series key"
+        );
+    }
+
+    #[test]
+    fn identity_is_stable_across_collections() {
+        // The same record collected twice keeps its id, so it de-duplicates.
+        assert_eq!(
+            obs(10.0, "h").with_identity("repo_a").id,
+            obs(10.0, "h").with_identity("repo_a").id
+        );
+    }
+
+    #[test]
+    fn records_without_an_identity_still_collide() {
+        // Backwards compatibility: a single-record source is unchanged.
+        assert_eq!(obs(10.0, "h").id, obs(10.0, "h").id);
+        assert!(obs(10.0, "h").identity.is_none());
     }
 }

@@ -321,3 +321,74 @@ async fn metrics_reflect_pipeline_activity() {
     assert!(m.signals_total >= 1);
     assert!(!m.render().is_empty());
 }
+
+/// A collector failure, classified the same way the live loop does.
+///
+/// Driving `apply_collection` directly keeps this a pure engine test: no
+/// network, no extra collector type, just the classification under test.
+#[tokio::test]
+async fn a_throttled_source_reads_as_rate_limited_not_down() {
+    let mut engine = engine();
+    let source_id = wse_model::SourceId::new("src_throttled");
+    engine
+        .register_source(Source::new(source_id.clone(), "Throttled", "test"))
+        .unwrap();
+
+    for _ in 0..3 {
+        let outcome = engine.apply_collection(
+            &source_id,
+            Utc::now(),
+            Err(wse_collector::CollectorError::RateLimited(
+                "HTTP 429".into(),
+            )),
+        );
+        assert!(outcome.source_failed);
+        // The failure must never fabricate an observation.
+        assert_eq!(outcome.observations_ingested, 0);
+    }
+
+    let health = engine.source_health(&source_id).unwrap();
+    assert_eq!(health.status, wse_model::HealthStatus::RateLimited);
+    assert_eq!(health.rate_limit_count, 3);
+    assert_eq!(engine.metrics().collector_rate_limited_total, 3);
+    assert_eq!(engine.metrics().collector_failure_total, 0);
+    assert_eq!(engine.metrics().observations_total, 0);
+}
+
+#[tokio::test]
+async fn a_real_failure_escalates_to_down() {
+    let mut engine = engine();
+    let source_id = wse_model::SourceId::new("src_broken");
+    engine
+        .register_source(Source::new(source_id.clone(), "Broken", "test"))
+        .unwrap();
+
+    for _ in 0..3 {
+        engine.apply_collection(
+            &source_id,
+            Utc::now(),
+            Err(wse_collector::CollectorError::Transport(
+                "connection refused".into(),
+            )),
+        );
+    }
+
+    let health = engine.source_health(&source_id).unwrap();
+    assert_eq!(health.status, wse_model::HealthStatus::Down);
+    assert_eq!(engine.metrics().collector_failure_total, 3);
+    assert_eq!(engine.metrics().collector_rate_limited_total, 0);
+}
+
+#[tokio::test]
+async fn apply_collection_ingests_a_precomputed_result() {
+    // The live loop fetches without the lock and applies under it; this is the
+    // path it uses, so it must ingest exactly like `run_collector`.
+    use wse_collector::Collector as _;
+    let mut engine = engine();
+    let collector = SyntheticCollector::new(SyntheticWorld::acceptance(origin()));
+    let result = collector.collect().await;
+    let outcome = engine.apply_collection(&collector.source_id(), Utc::now(), result);
+    assert_eq!(outcome.observations_ingested, 1);
+    assert_eq!(outcome.observations_new, 1);
+    assert!(!outcome.source_failed);
+}

@@ -45,8 +45,45 @@ impl Request {
 /// A transport error. The message is safe to log: collectors must never put
 /// credentials into it.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("transport error: {0}")]
-pub struct TransportError(pub String);
+#[error("transport error: {message}")]
+pub struct TransportError {
+    pub message: String,
+    /// The HTTP status, when the source answered with one.
+    pub status: Option<u16>,
+}
+
+impl TransportError {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            status: None,
+        }
+    }
+
+    pub fn with_status(status: u16, message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            status: Some(status),
+        }
+    }
+
+    /// Whether the source is throttling us rather than broken.
+    pub fn is_rate_limited(&self) -> bool {
+        self.status == Some(429)
+    }
+}
+
+impl From<String> for TransportError {
+    fn from(message: String) -> Self {
+        Self::new(message)
+    }
+}
+
+impl From<&str> for TransportError {
+    fn from(message: &str) -> Self {
+        Self::new(message)
+    }
+}
 
 /// How a collector reaches its source.
 pub trait Transport: Send + Sync {
@@ -76,7 +113,7 @@ impl Transport for LiveTransport {
                 response
                     .into_reader()
                     .read_to_end(&mut body)
-                    .map_err(|e| TransportError(format!("reading response body: {e}")))?;
+                    .map_err(|e| TransportError::new(format!("reading response body: {e}")))?;
                 Ok(body)
             }
             Err(ureq::Error::Status(code, response)) => {
@@ -87,9 +124,12 @@ impl Transport for LiveTransport {
                     .chars()
                     .take(200)
                     .collect::<String>();
-                Err(TransportError(format!("HTTP {code}: {body}")))
+                Err(TransportError::with_status(
+                    code,
+                    format!("HTTP {code}: {body}"),
+                ))
             }
-            Err(ureq::Error::Transport(t)) => Err(TransportError(t.to_string())),
+            Err(ureq::Error::Transport(t)) => Err(TransportError::new(t.to_string())),
         }
     }
 }
@@ -213,7 +253,15 @@ macro_rules! http_collector {
                     .context
                     .transport
                     .fetch(&self.request)
-                    .map_err(|e| CollectorError::Transport(e.to_string()))?;
+                    .map_err(|e| {
+                        // A 429 is the source throttling us, not a broken
+                        // source; surface it as its own error kind.
+                        if e.is_rate_limited() {
+                            CollectorError::RateLimited(e.message)
+                        } else {
+                            CollectorError::Transport(e.message)
+                        }
+                    })?;
                 let observations = $parse(&body, started_at)?;
                 Ok(build_result(
                     $source().id,
@@ -391,7 +439,10 @@ mod tests {
                     return Ok(body.clone());
                 }
             }
-            Err(TransportError(format!("no fixture for {}", request.url)))
+            Err(TransportError::new(format!(
+                "no fixture for {}",
+                request.url
+            )))
         }
     }
 
@@ -400,7 +451,16 @@ mod tests {
 
     impl Transport for BrokenTransport {
         fn fetch(&self, _request: &Request) -> Result<Vec<u8>, TransportError> {
-            Err(TransportError("connection refused".to_string()))
+            Err(TransportError::new("connection refused"))
+        }
+    }
+
+    /// A transport that always answers 429, to prove throttling is classified.
+    struct RateLimitedTransport;
+
+    impl Transport for RateLimitedTransport {
+        fn fetch(&self, _request: &Request) -> Result<Vec<u8>, TransportError> {
+            Err(TransportError::with_status(429, "HTTP 429: rate limited"))
         }
     }
 
@@ -464,6 +524,18 @@ mod tests {
         ));
         let err = collector.collect().await.unwrap_err();
         assert!(matches!(err, CollectorError::Transport(_)));
+        assert_eq!(err.kind(), wse_model::FailureKind::Transport);
+    }
+
+    #[tokio::test]
+    async fn a_throttled_source_is_reported_as_rate_limited() {
+        let collector = GdeltCollector::with_context(CollectorContext::new(
+            Arc::new(RateLimitedTransport),
+            Arc::new(LiveClock),
+        ));
+        let err = collector.collect().await.unwrap_err();
+        assert!(matches!(err, CollectorError::RateLimited(_)), "got {err:?}");
+        assert_eq!(err.kind(), wse_model::FailureKind::RateLimited);
     }
 
     #[test]

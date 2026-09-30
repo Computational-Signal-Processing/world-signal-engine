@@ -156,7 +156,28 @@ async fn drill_down_reaches_raw_data() {
     let source_id = observation["source_id"].as_str().unwrap();
     let (status, source) = get_json(&base, &format!("/sources/{source_id}")).await;
     assert_eq!(status, 200);
-    assert_eq!(source["source"]["id"], source_id);
+    // The source is flattened into the view, with its cadence rendered for
+    // display next to it.
+    assert_eq!(source["id"], source_id);
+    assert!(
+        source["cadence_label"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "source view must carry a display cadence: {source}"
+    );
+
+    // The observation view exposes the series handle and source lag, which are
+    // what the Timeline and drill-down screens read.
+    assert!(
+        observation["series_key"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "observation view must carry a series_key: {observation}"
+    );
+    assert!(
+        observation["lag_ms"].is_i64(),
+        "observation view must carry lag_ms: {observation}"
+    );
 
     // OBSERVATION -> RAW DATA
     assert!(

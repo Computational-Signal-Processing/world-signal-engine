@@ -134,6 +134,9 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
             raw,
         )
         .with_received_at(received_at)
+        // Two stories can share a `created_at_i` second. The story id is the
+        // record's identity, so they stay independent instead of colliding.
+        .with_identity(&hit.object_id)
         .with_attribute("story_id", hit.object_id.clone())
         .with_attribute("title", title);
 
@@ -209,6 +212,19 @@ mod tests {
             parse(b"nope", received()),
             Err(CollectorError::Parse(_))
         ));
+    }
+
+    #[test]
+    fn stories_sharing_a_creation_second_stay_distinct() {
+        // Two stories posted in the same second must not collapse into one.
+        let body = br#"{"hits":[
+            {"objectID":"1","title":"a","created_at_i":1700000100,"points":10,"_tags":["story"]},
+            {"objectID":"2","title":"b","created_at_i":1700000100,"points":20,"_tags":["story"]}
+        ]}"#;
+        let observations = parse(body, received()).unwrap();
+        assert_eq!(observations.len(), 2);
+        assert_ne!(observations[0].id, observations[1].id);
+        assert_eq!(observations[0].series_key(), observations[1].series_key());
     }
 
     #[test]

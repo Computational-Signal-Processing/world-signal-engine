@@ -10,12 +10,88 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use wse_model::{EntityId, EventId, ObservationId, SignalId, SignalType, SourceId};
+use wse_model::{
+    Cadence, EntityId, EventId, Observation, ObservationId, SignalId, SignalType, Source,
+    SourceHealth, SourceId,
+};
 use wse_storage::{
     EventStore, ObservationQuery, ObservationStore, SignalQuery, SignalStore, SourceStore,
 };
 
 use crate::state::AppState;
+
+/// A cadence rendered for display, e.g. `15m`, `1h`, `event`, `daily@06Z`.
+///
+/// The UI shows this next to a source so the reader can judge how fresh an
+/// observation *should* be. It is derived from the catalog, never from how
+/// often we happen to have polled, so a mis-scheduled source is visible rather
+/// than hidden.
+pub fn cadence_label(cadence: Cadence) -> String {
+    match cadence {
+        Cadence::Event => "event".to_string(),
+        Cadence::Interval { seconds } => human_seconds(seconds),
+        Cadence::Daily { hour_utc } => format!("daily@{hour_utc:02}Z"),
+        Cadence::Irregular => "irregular".to_string(),
+    }
+}
+
+fn human_seconds(seconds: u64) -> String {
+    if seconds.is_multiple_of(86_400) && seconds >= 86_400 {
+        format!("{}d", seconds / 86_400)
+    } else if seconds.is_multiple_of(3_600) && seconds >= 3_600 {
+        format!("{}h", seconds / 3_600)
+    } else if seconds.is_multiple_of(60) && seconds >= 60 {
+        format!("{}m", seconds / 60)
+    } else {
+        format!("{seconds}s")
+    }
+}
+
+/// An observation as the UI needs it: the measurement plus the derived values
+/// (series key, source lag) that make the drill-down readable.
+#[derive(Debug, Serialize)]
+pub struct ObservationView {
+    #[serde(flatten)]
+    pub observation: Observation,
+    /// The series this observation belongs to; the handle for `/timeline`.
+    pub series_key: String,
+    /// Source-side lag in milliseconds (`received_at - observed_at`).
+    ///
+    /// Non-zero lag is the difference between "the world changed" and "we just
+    /// heard about it", and the reader must be able to see which one it is.
+    pub lag_ms: i64,
+}
+
+impl ObservationView {
+    pub fn new(observation: Observation) -> Self {
+        Self {
+            series_key: observation.series_key(),
+            lag_ms: observation.lag_ms(),
+            observation,
+        }
+    }
+}
+
+/// A source plus its display cadence and current health.
+#[derive(Debug, Serialize)]
+pub struct SourceView {
+    #[serde(flatten)]
+    pub source: Source,
+    /// Human-readable cadence, derived from the catalog.
+    pub cadence_label: String,
+    pub health: Option<SourceHealth>,
+}
+
+impl SourceView {
+    pub fn new(source: Source, health: Option<SourceHealth>) -> Self {
+        let cadence_label = cadence_label(source.cadence);
+        Self {
+            cadence_label,
+            source,
+            health,
+        }
+    }
+}
 
 /// A uniform error body.
 #[derive(Debug, Serialize)]
@@ -173,7 +249,7 @@ pub async fn get_event(State(state): State<AppState>, Path(id): Path<String>) ->
 pub async fn get_observation(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let engine = state.read().await;
     match engine.observation(&ObservationId::new(id.clone())) {
-        Some(observation) => Json(observation).into_response(),
+        Some(observation) => Json(ObservationView::new(observation)).into_response(),
         None => not_found(format!("observation {id}")),
     }
 }
@@ -218,15 +294,18 @@ pub async fn get_observation_raw(
 pub async fn list_sources(State(state): State<AppState>) -> Response {
     let engine = state.read().await;
     match engine.store().all_sources() {
-        Ok(sources) => Json(sources).into_response(),
+        Ok(sources) => {
+            let views: Vec<SourceView> = sources
+                .into_iter()
+                .map(|source| {
+                    let health = engine.source_health(&source.id);
+                    SourceView::new(source, health)
+                })
+                .collect();
+            Json(views).into_response()
+        }
         Err(err) => internal(err),
     }
-}
-
-#[derive(Debug, Serialize)]
-pub struct SourceDetail {
-    pub source: wse_model::Source,
-    pub health: Option<wse_model::SourceHealth>,
 }
 
 /// `GET /sources/:id`
@@ -234,11 +313,10 @@ pub async fn get_source(State(state): State<AppState>, Path(id): Path<String>) -
     let engine = state.read().await;
     let source_id = SourceId::new(id.clone());
     match engine.store().get_source(&source_id) {
-        Ok(Some(source)) => Json(SourceDetail {
-            health: engine.source_health(&source_id),
-            source,
-        })
-        .into_response(),
+        Ok(Some(source)) => {
+            let health = engine.source_health(&source_id);
+            Json(SourceView::new(source, health)).into_response()
+        }
         Ok(None) => not_found(format!("source {id}")),
         Err(err) => internal(err),
     }
@@ -248,7 +326,7 @@ pub async fn get_source(State(state): State<AppState>, Path(id): Path<String>) -
 pub struct EntityDetail {
     pub entity_id: String,
     pub signals: Vec<wse_model::Signal>,
-    pub observations: Vec<wse_model::Observation>,
+    pub observations: Vec<ObservationView>,
 }
 
 /// `GET /entities/:id`
@@ -279,7 +357,7 @@ pub async fn get_entity(State(state): State<AppState>, Path(id): Path<String>) -
     Json(EntityDetail {
         entity_id: id,
         signals,
-        observations,
+        observations: observations.into_iter().map(ObservationView::new).collect(),
     })
     .into_response()
 }
@@ -293,7 +371,7 @@ pub struct TimelineParams {
 #[derive(Debug, Serialize)]
 pub struct TimelineResponse {
     pub series_key: String,
-    pub observations: Vec<wse_model::Observation>,
+    pub observations: Vec<ObservationView>,
     pub baseline: Option<wse_model::BaselineSnapshot>,
 }
 
@@ -323,7 +401,7 @@ pub async fn timeline(
 
     Json(TimelineResponse {
         series_key: params.series,
-        observations,
+        observations: observations.into_iter().map(ObservationView::new).collect(),
         baseline,
     })
     .into_response()
@@ -404,5 +482,38 @@ mod tests {
     #[test]
     fn entity_id_is_passthrough() {
         assert_eq!(entity_id("ent_x").as_str(), "ent_x");
+    }
+
+    #[test]
+    fn cadences_render_in_the_units_a_reader_thinks_in() {
+        assert_eq!(cadence_label(Cadence::Interval { seconds: 900 }), "15m");
+        assert_eq!(cadence_label(Cadence::Interval { seconds: 3_600 }), "1h");
+        assert_eq!(cadence_label(Cadence::Interval { seconds: 86_400 }), "1d");
+        assert_eq!(cadence_label(Cadence::Interval { seconds: 45 }), "45s");
+        // 90 minutes is not a whole number of hours, so it stays in minutes.
+        assert_eq!(cadence_label(Cadence::Interval { seconds: 5_400 }), "90m");
+        assert_eq!(cadence_label(Cadence::Event), "event");
+        assert_eq!(cadence_label(Cadence::Daily { hour_utc: 6 }), "daily@06Z");
+        assert_eq!(cadence_label(Cadence::Irregular), "irregular");
+    }
+
+    #[test]
+    fn an_observation_view_exposes_series_key_and_lag() {
+        use wse_model::{Observation, RawReference, SourceId};
+        let observed_at = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        let mut observation = Observation::new(
+            SourceId::new("src_a"),
+            None,
+            "temperature",
+            21.5,
+            "celsius",
+            observed_at,
+            RawReference::new("raw/a", "hash"),
+        );
+        observation.received_at = observed_at + chrono::Duration::seconds(90);
+
+        let view = ObservationView::new(observation);
+        assert_eq!(view.lag_ms, 90_000);
+        assert_eq!(view.series_key, "src_a::-::temperature::celsius");
     }
 }

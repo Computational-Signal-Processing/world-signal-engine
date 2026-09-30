@@ -96,11 +96,25 @@ impl ObservationId {
     /// Determinism makes duplicate detection trivial: collecting the same
     /// payload twice yields the same id, so the store can reject it without
     /// comparing every field.
-    pub fn deterministic(series_key: &str, observed_at: &str, payload_hash: &str) -> Self {
-        Self(format!(
-            "obs_{}",
-            fnv1a_hex(&format!("{series_key}|{observed_at}|{payload_hash}"))
-        ))
+    ///
+    /// `identity` is the per-record discriminator (a repository name, a story
+    /// id). Sources that emit several records per series per timestamp must
+    /// pass one, or those records collide on `(series, timestamp, payload)` and
+    /// are silently de-duplicated down to a single survivor. A `None` identity
+    /// keeps the original id, so single-record sources are unaffected.
+    pub fn deterministic(
+        series_key: &str,
+        observed_at: &str,
+        payload_hash: &str,
+        identity: Option<&str>,
+    ) -> Self {
+        let seed = match identity {
+            Some(identity) => format!("{series_key}|{observed_at}|{payload_hash}|{identity}"),
+            // No discriminator: keep the original seed format, so ids for
+            // single-record sources are unchanged by this addition.
+            None => format!("{series_key}|{observed_at}|{payload_hash}"),
+        };
+        Self(format!("obs_{}", fnv1a_hex(&seed)))
     }
 }
 
@@ -139,11 +153,39 @@ mod tests {
 
     #[test]
     fn deterministic_observation_ids_are_stable_and_distinct() {
-        let a = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc");
-        let b = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc");
-        let c = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:01Z", "abc");
+        let a = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", None);
+        let b = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", None);
+        let c = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:01Z", "abc", None);
         assert_eq!(a, b);
         assert_ne!(a, c);
+    }
+
+    #[test]
+    fn a_record_discriminator_separates_records_sharing_a_timestamp() {
+        // Two records, same series, same timestamp, same payload hash — exactly
+        // the GitHub/HN shape. The discriminator is what keeps them apart.
+        let repo_a =
+            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", Some("a/b"));
+        let repo_b =
+            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", Some("c/d"));
+        assert_ne!(repo_a, repo_b);
+        // Same record re-collected is still the same id, so it de-duplicates.
+        let repo_a_again =
+            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", Some("a/b"));
+        assert_eq!(repo_a, repo_a_again);
+    }
+
+    #[test]
+    fn a_missing_discriminator_keeps_the_original_id() {
+        // Backwards compatibility: a source with one record per timestamp must
+        // not see its ids change just because the discriminator was added.
+        let no_identity =
+            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", None);
+        let legacy = ObservationId::new(format!(
+            "obs_{}",
+            fnv1a_hex("s::m::u|2026-01-01T00:00:00Z|abc")
+        ));
+        assert_eq!(no_identity, legacy);
     }
 
     #[test]

@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use wse_collector::{CollectionResult, Collector};
+use wse_collector::{CollectionResult, Collector, CollectorError};
 use wse_detection::{DetectorConfig, SeriesTracker};
 use wse_model::{Event, Observation, Signal, Source, SourceHealth, SourceId};
 use wse_scheduler::{Clock, LiveClock};
@@ -154,11 +154,27 @@ impl Engine {
     pub async fn run_collector(&mut self, collector: &dyn Collector) -> CycleOutcome {
         let source_id = collector.source_id();
         let started = Utc::now();
+        let result = collector.collect().await;
+        self.apply_collection(&source_id, started, result)
+    }
+
+    /// Apply an already-completed collection run.
+    ///
+    /// Split out from [`run_collector`](Self::run_collector) so a live driver
+    /// can perform the network fetch **without holding the engine lock** and
+    /// take the lock only for the fast, in-memory ingest. Otherwise a slow or
+    /// timing-out source would block every HTTP reader for the duration.
+    pub fn apply_collection(
+        &mut self,
+        source_id: &SourceId,
+        started: DateTime<Utc>,
+        result: Result<CollectionResult, CollectorError>,
+    ) -> CycleOutcome {
         let mut outcome = CycleOutcome::default();
 
-        match collector.collect().await {
+        match result {
             Ok(result) => {
-                self.record_success(&source_id, &result, started);
+                self.record_success(source_id, &result, started);
                 outcome.observations_ingested = result.observations.len();
                 // Retain the raw bytes before anything else looks at the
                 // observations: the drill-down's last step must not depend on
@@ -178,8 +194,12 @@ impl Engine {
                 outcome.signals = signals;
             }
             Err(err) => {
-                self.record_failure(&source_id, started);
-                self.metrics.collector_failure_total += 1;
+                self.record_failure(source_id, &err);
+                if err.kind() == wse_model::FailureKind::RateLimited {
+                    self.metrics.collector_rate_limited_total += 1;
+                } else {
+                    self.metrics.collector_failure_total += 1;
+                }
                 outcome.source_failed = true;
                 tracing::warn!(source = %source_id, error = %err, "collector failed");
             }
@@ -341,14 +361,14 @@ impl Engine {
         let _ = self.store.put_health(health);
     }
 
-    fn record_failure(&mut self, source_id: &SourceId, _started: DateTime<Utc>) {
+    fn record_failure(&mut self, source_id: &SourceId, err: &wse_collector::CollectorError) {
         let mut health = self
             .store
             .get_health(source_id)
             .ok()
             .flatten()
             .unwrap_or_else(|| SourceHealth::new(source_id.clone()));
-        health.record_failure(self.clock.now());
+        health.record_failure_with(self.clock.now(), err.kind(), Some(short_error(err)));
         let _ = self.store.put_health(health);
     }
 
@@ -378,6 +398,20 @@ impl Engine {
         keys.sort();
         keys
     }
+}
+
+/// A short, credential-free description of a collector failure.
+///
+/// Transport errors carry the response body, which can be long; source health
+/// only needs enough to tell the reader what happened.
+fn short_error(err: &wse_collector::CollectorError) -> String {
+    const MAX: usize = 160;
+    let text = err.to_string();
+    if text.chars().count() <= MAX {
+        return text;
+    }
+    let truncated: String = text.chars().take(MAX).collect();
+    format!("{truncated}…")
 }
 
 /// Fold a freshly formed signal into the one already stored under the same id.

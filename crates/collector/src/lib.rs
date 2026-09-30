@@ -30,6 +30,10 @@ pub use synthetic::{SyntheticCollector, SyntheticStream, SyntheticWorld};
 pub enum CollectorError {
     #[error("transport failure: {0}")]
     Transport(String),
+    /// The source is throttling us. Kept apart from a transport failure so
+    /// source health can say "rate limited" rather than "down".
+    #[error("source rate limited: {0}")]
+    RateLimited(String),
     #[error("failed to parse source payload: {0}")]
     Parse(String),
     #[error("source returned an unexpected status: {0}")]
@@ -38,6 +42,19 @@ pub enum CollectorError {
     Configuration(String),
     #[error("other collector error: {0}")]
     Other(String),
+}
+
+impl CollectorError {
+    /// Classify a failure for source health.
+    pub fn kind(&self) -> wse_model::FailureKind {
+        use wse_model::FailureKind;
+        match self {
+            CollectorError::RateLimited(_) => FailureKind::RateLimited,
+            CollectorError::Transport(_) | CollectorError::Status(_) => FailureKind::Transport,
+            CollectorError::Parse(_) => FailureKind::Parse,
+            CollectorError::Configuration(_) | CollectorError::Other(_) => FailureKind::Unknown,
+        }
+    }
 }
 
 /// How often a collector should run.

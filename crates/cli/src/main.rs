@@ -13,7 +13,7 @@ use wse_api::AppState;
 use wse_collector::synthetic::{SyntheticCollector, SyntheticWorld};
 use wse_detection::DetectorConfig;
 use wse_engine::{ConvergenceConfig, Engine, EngineConfig};
-use wse_model::{Source, SourceId};
+use wse_model::Source;
 use wse_signals::event::EventConfig;
 use wse_signals::SignalConfig;
 use wse_storage::{ObservationStore, SignalStore, SourceStore};
@@ -63,13 +63,20 @@ enum Command {
         /// Seconds between synthetic collection cycles.
         #[arg(long, default_value_t = 1)]
         interval_seconds: u64,
-        /// Also run the real source collectors once at startup.
+        /// Also run the real source collectors, continuously, while serving.
         ///
         /// This is what makes the served instance show the real world: the
         /// API and UI are then backed by live USGS/NASA/GDELT/HN/GitHub data,
         /// with the synthetic world (if enabled) running alongside it.
         #[arg(long)]
         collect: bool,
+        /// Override every interval source's cadence, in seconds.
+        ///
+        /// For live acceptance testing only: a 1-hour source can then be
+        /// exercised inside a short window. It does not change the catalog,
+        /// which still reports the true cadence.
+        #[arg(long)]
+        cadence_override: Option<u64>,
     },
     /// Run the real source collectors once against the live APIs.
     Collect {
@@ -182,7 +189,18 @@ async fn main() -> Result<()> {
             live,
             interval_seconds,
             collect,
-        } => serve(port, synthetic, live, interval_seconds, collect).await,
+            cadence_override,
+        } => {
+            serve(
+                port,
+                synthetic,
+                live,
+                interval_seconds,
+                collect,
+                cadence_override,
+            )
+            .await
+        }
         Command::Collect {
             sources,
             verbose,
@@ -636,52 +654,96 @@ async fn replay(steps: usize, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Map a catalog cadence to the collector's schedule.
+///
+/// `Cadence::Event` sources have no fixed interval; USGS-style feeds are polled
+/// on a short default so an "event" source still gets checked regularly rather
+/// than never. `Cadence::Irregular` is left to the collector's own schedule.
+fn schedule_for(source: &Source, default_event_poll: u64) -> wse_collector::Schedule {
+    match source.cadence {
+        wse_model::Cadence::Interval { seconds } => wse_collector::Schedule::Interval { seconds },
+        wse_model::Cadence::Event => wse_collector::Schedule::Event {
+            poll_seconds: default_event_poll,
+        },
+        wse_model::Cadence::Daily { hour_utc: _ } => {
+            wse_collector::Schedule::Interval { seconds: 86_400 }
+        }
+        wse_model::Cadence::Irregular => wse_collector::Schedule::Manual,
+    }
+}
+
 async fn serve(
     port: u16,
     synthetic: bool,
     live: bool,
     interval_seconds: u64,
     collect: bool,
+    cadence_override: Option<u64>,
 ) -> Result<()> {
     let mut engine = synthetic_engine();
+
+    // The real catalog is always registered. A served instance must be able to
+    // show the sources it observes even before (or without) collecting them;
+    // otherwise the Sources screen shows a placeholder rather than the truth.
+    for source in wse_sources::catalog() {
+        engine.register_source(source)?;
+    }
+
     if synthetic {
         let world = SyntheticWorld::acceptance(origin());
         register_synthetic_sources(&mut engine, &world)?;
-    } else if !collect {
-        // A served instance with neither a synthetic world nor real collectors
-        // still needs one catalog entry so the UI has something to list.
-        engine.register_source(
-            Source::new(SourceId::new("synthetic_sensor"), "Synthetic", "synthetic")
-                .with_category("synthetic"),
-        )?;
-    }
-
-    if collect {
-        // Register the real catalog and run each collector once. Failures are
-        // recorded as source health and never fabricate observations.
-        for source in wse_sources::catalog() {
-            engine.register_source(source)?;
-        }
-        for collector in wse_sources::live_collectors() {
-            let source_id = collector.source_id();
-            let outcome = engine.run_collector(collector.as_ref()).await;
-            if outcome.source_failed {
-                tracing::warn!(
-                    source = %source_id,
-                    "collector failed at startup; source health updated, no observations"
-                );
-            } else {
-                tracing::info!(
-                    source = %source_id,
-                    observations = outcome.observations_ingested,
-                    signals = outcome.signals.len(),
-                    "collected"
-                );
-            }
-        }
     }
 
     let state = AppState::new(engine);
+
+    // Real sources: one scheduler-driven loop that polls each collector when it
+    // is due. Fetching happens *outside* the engine lock so a slow source can
+    // never block the API; only the fast in-memory ingest takes the lock.
+    if collect {
+        let mut scheduler = wse_scheduler::Scheduler::new();
+        let mut collectors: Vec<Box<dyn wse_collector::Collector>> = Vec::new();
+        for collector in wse_sources::live_collectors() {
+            let source_id = collector.source_id();
+            let mut schedule = schedule_for(
+                &wse_sources::source_by_id(source_id.as_str())
+                    .unwrap_or_else(|| Source::new(source_id.clone(), "unknown", "unknown")),
+                DEFAULT_EVENT_POLL_SECONDS,
+            );
+            if let (Some(seconds), wse_collector::Schedule::Interval { seconds: s }) =
+                (cadence_override, &mut schedule)
+            {
+                // A test/demo override: lets a 1-hour source be exercised inside
+                // a 15-minute window without pretending the cadence changed.
+                *s = seconds;
+            }
+            scheduler.register(source_id, schedule);
+            collectors.push(collector);
+        }
+
+        let driver = state.clone();
+        tokio::spawn(async move {
+            loop {
+                let now = Utc::now();
+                for collector in &collectors {
+                    let source_id = collector.source_id();
+                    if !scheduler.state(&source_id).is_some_and(|s| s.is_due(now)) {
+                        continue;
+                    }
+                    // Fetch without the lock.
+                    let started = Utc::now();
+                    let result = collector.collect().await;
+                    let ok = result.is_ok();
+                    // Apply under the lock.
+                    driver
+                        .write()
+                        .await
+                        .apply_collection(&source_id, started, result);
+                    scheduler.record_run(&source_id, Utc::now(), ok);
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        });
+    }
 
     if synthetic {
         let driver = state.clone();
@@ -709,9 +771,75 @@ async fn serve(
     Ok(())
 }
 
+/// How often an event-driven source (e.g. USGS) is polled when the catalog
+/// gives no fixed interval.
+const DEFAULT_EVENT_POLL_SECONDS: u64 = 60;
+
 /// Small helper so `demo` reads cleanly.
 #[allow(dead_code)]
 fn _assert_traits_in_scope(store: &wse_storage::InMemoryStore) {
     let _ = store.all_sources();
     let _ = store.observation_count();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wse_model::{Cadence, SourceId};
+
+    fn source_with(cadence: Cadence) -> Source {
+        let mut source = Source::new(SourceId::new("src_x"), "X", "test");
+        source.cadence = cadence;
+        source
+    }
+
+    #[test]
+    fn interval_cadence_maps_to_an_interval_schedule() {
+        let schedule = schedule_for(&source_with(Cadence::Interval { seconds: 900 }), 60);
+        assert_eq!(schedule, wse_collector::Schedule::Interval { seconds: 900 });
+    }
+
+    #[test]
+    fn event_cadence_gets_a_short_poll_rather_than_never() {
+        // A USGS-style "event" source has no fixed interval. Without this it
+        // would map to `Manual` and never be collected live at all.
+        let schedule = schedule_for(&source_with(Cadence::Event), 60);
+        assert_eq!(
+            schedule,
+            wse_collector::Schedule::Event { poll_seconds: 60 }
+        );
+        assert_eq!(schedule.poll_seconds(), Some(60));
+    }
+
+    #[test]
+    fn irregular_cadence_is_left_to_the_collector() {
+        let schedule = schedule_for(&source_with(Cadence::Irregular), 60);
+        assert_eq!(schedule, wse_collector::Schedule::Manual);
+        assert_eq!(schedule.poll_seconds(), None);
+    }
+
+    #[test]
+    fn the_catalog_reports_the_real_cadence_not_the_override() {
+        // `--cadence-override` must not rewrite what the catalog says; the UI
+        // has to keep telling the truth about how often a source really runs.
+        let source = source_with(Cadence::Interval { seconds: 3600 });
+        assert_eq!(source.cadence, Cadence::Interval { seconds: 3600 });
+    }
+
+    #[test]
+    fn every_catalog_source_has_a_collector() {
+        // The live loop iterates the collectors; the API lists the catalog. If
+        // they disagree, the Sources screen would show sources that never run.
+        let mut catalog: Vec<String> = wse_sources::catalog()
+            .iter()
+            .map(|s| s.id.as_str().to_string())
+            .collect();
+        let mut collectors: Vec<String> = wse_sources::live_collectors()
+            .iter()
+            .map(|c| c.source_id().as_str().to_string())
+            .collect();
+        catalog.sort();
+        collectors.sort();
+        assert_eq!(catalog, collectors);
+    }
 }
