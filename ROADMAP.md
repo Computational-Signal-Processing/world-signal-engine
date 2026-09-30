@@ -44,10 +44,15 @@ World → signal → event → observation → source → raw data.
 ## In progress
 
 ### Phase 10 — Replay / backtesting
-`replay` runs the synthetic world through the pipeline as though it were live.
-Remaining: running a *historical* stream — data captured from a real source —
-through the same path, so false positives, false negatives, detection latency and
-signal persistence can be measured against known outcomes.
+Done. The engine takes an injectable clock; `replay-stream` replays a captured
+stream offline and deterministically; `backtest` scores the detector against it
+and reports detection latency, signal persistence, and — when labels are
+supplied — false positives, false negatives, precision and recall. `collect
+--out` captures a live run to a stream file.
+
+Widening the labels for the real sources (a hand-checked history of known
+earthquakes, releases, spikes) is the next step, not a blocker: the mechanism is
+in place and measured.
 
 ### Phase 11 — Correlation
 Deterministic convergence detection across independent sources is in place

@@ -19,14 +19,17 @@
 //! * **Every signal is explainable.** Signals carry evidence and reasons that
 //!   trace back to observation ids, and the raw reference is stored alongside.
 
+pub mod backtest;
 pub mod metrics;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use wse_collector::{CollectionResult, Collector};
 use wse_detection::{DetectorConfig, SeriesTracker};
 use wse_model::{Event, Observation, Signal, Source, SourceHealth, SourceId};
+use wse_scheduler::{Clock, LiveClock};
 use wse_signals::event::EventEngine;
 use wse_signals::SignalEngine;
 use wse_storage::InMemoryStore;
@@ -34,6 +37,9 @@ use wse_storage::{
     BaselineStore, EventStore, ObservationStore, RawStore, SignalStore, SourceStore,
 };
 
+pub use backtest::{
+    run_backtest, truth_from_windows, BacktestDetection, BacktestReport, LabeledEvent,
+};
 pub use metrics::Metrics;
 
 /// Everything one pipeline cycle produced, for reporting and tests.
@@ -64,10 +70,19 @@ pub struct Engine {
     event_engine: EventEngine,
     signal_engine: SignalEngine,
     metrics: Metrics,
+    /// Source of "now" for signal formation and health timestamps. Live by
+    /// default; replay swaps in a clock that advances through historical time,
+    /// which is what makes a replayed run reproduce byte-for-byte.
+    clock: Arc<dyn Clock>,
 }
 
 impl Engine {
     pub fn new(config: EngineConfig) -> Self {
+        Self::with_clock(config, Arc::new(LiveClock))
+    }
+
+    /// Build an engine whose sense of "now" comes from `clock`.
+    pub fn with_clock(config: EngineConfig, clock: Arc<dyn Clock>) -> Self {
         Self {
             event_engine: EventEngine::new(config.event.clone()),
             signal_engine: SignalEngine::new(config.signal.clone()),
@@ -76,7 +91,13 @@ impl Engine {
             raw_store: RawStore::new(),
             trackers: HashMap::new(),
             metrics: Metrics::default(),
+            clock,
         }
+    }
+
+    /// The current time, as the engine sees it.
+    pub fn now(&self) -> DateTime<Utc> {
+        self.clock.now()
     }
 
     /// The retained raw payloads, for the drill-down's final step.
@@ -214,7 +235,9 @@ impl Engine {
         }
         let category_of = |source: &str| categories.get(source).cloned();
 
-        let now = Utc::now();
+        // "Now" comes from the engine clock, not the wall clock, so a replayed
+        // run forms exactly the signals it formed the first time.
+        let now = self.clock.now();
         let events = self.event_engine.ingest(&candidates, &category_of);
         let groups = wse_correlation::detect_convergence(
             &candidates,
@@ -300,7 +323,7 @@ impl Engine {
             .flatten()
             .unwrap_or_else(|| SourceHealth::new(source_id.clone()));
         health.record_success(
-            Utc::now(),
+            self.clock.now(),
             latency,
             result.records_received,
             result.records_changed,
@@ -316,7 +339,7 @@ impl Engine {
             .ok()
             .flatten()
             .unwrap_or_else(|| SourceHealth::new(source_id.clone()));
-        health.record_failure(Utc::now());
+        health.record_failure(self.clock.now());
         let _ = self.store.put_health(health);
     }
 

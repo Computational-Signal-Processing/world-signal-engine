@@ -82,6 +82,39 @@ enum Command {
         /// Print the collected observations as JSON.
         #[arg(long)]
         json: bool,
+        /// Write the run to a stream file, so it can be replayed later.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
+    /// Replay a captured stream through the pipeline, as if it were live.
+    ///
+    /// With `--file` the stream is replayed offline and deterministically; with
+    /// `--steps` the synthetic acceptance world is used instead.
+    ReplayStream {
+        /// The stream file to replay, as written by `collect --out`.
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Print a line per produced signal.
+        #[arg(long)]
+        verbose: bool,
+        /// Print the resulting signals as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Score the detector against a captured stream.
+    Backtest {
+        /// The stream file to replay, as written by `collect --out`.
+        #[arg(long)]
+        file: std::path::PathBuf,
+        /// Ground-truth labels, as a JSON array of labeled events.
+        ///
+        /// Without this the report still shows latency and persistence, but
+        /// precision and recall are withheld rather than guessed.
+        #[arg(long)]
+        labels: Option<std::path::PathBuf>,
+        /// Print the full report as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// List the source catalog.
     Sources,
@@ -141,7 +174,14 @@ async fn main() -> Result<()> {
             sources,
             verbose,
             json,
-        } => collect(sources, verbose, json).await,
+            out,
+        } => collect(sources, verbose, json, out).await,
+        Command::ReplayStream {
+            file,
+            verbose,
+            json,
+        } => replay_stream(file, verbose, json).await,
+        Command::Backtest { file, labels, json } => backtest(file, labels, json).await,
         Command::Sources => list_sources(),
     }
 }
@@ -176,7 +216,12 @@ fn list_sources() -> Result<()> {
 ///
 /// This is the "is the pipeline real?" command: it fetches, normalizes, stores,
 /// baselines, detects and reports, for every source that answers.
-async fn collect(only: Vec<String>, verbose: bool, json: bool) -> Result<()> {
+async fn collect(
+    only: Vec<String>,
+    verbose: bool,
+    json: bool,
+    out: Option<std::path::PathBuf>,
+) -> Result<()> {
     let mut engine = Engine::new(EngineConfig::default());
 
     let catalog: Vec<_> = if only.is_empty() {
@@ -255,6 +300,198 @@ async fn collect(only: Vec<String>, verbose: bool, json: bool) -> Result<()> {
         engine.metrics().events_total,
         engine.metrics().signals_total
     );
+
+    if let Some(path) = out {
+        let observations = engine
+            .store()
+            .query_observations(&wse_storage::ObservationQuery {
+                limit: Some(usize::MAX),
+                ..Default::default()
+            })?
+            .items;
+        let header = wse_collector::StreamHeader::new(observations.len() as u64, catalog.clone());
+        let file = std::fs::File::create(&path)?;
+        let mut writer = std::io::BufWriter::new(file);
+        wse_collector::write_stream(&mut writer, &header, &observations)?;
+        println!(
+            "Wrote {} observation(s) to {} (replay with: wse replay-stream --file {}).",
+            observations.len(),
+            path.display(),
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Replay a captured stream, offline and deterministically.
+///
+/// The engine clock is pinned to each arrival batch, so the detector sees the
+/// same batches in the same order that live collection produced. No network.
+async fn replay_stream(file: std::path::PathBuf, verbose: bool, json: bool) -> Result<()> {
+    let handle = std::fs::File::open(&file)?;
+    let stream = wse_collector::read_stream(std::io::BufReader::new(handle))?;
+    let (from, to) = stream
+        .observed_span()
+        .map(|(a, b)| (a.to_rfc3339(), b.to_rfc3339()))
+        .unwrap_or_else(|| ("-".to_string(), "-".to_string()));
+
+    println!(
+        "Replaying {} observation(s) across {} cycle(s) from {}.",
+        stream.observations.len(),
+        stream.cycles().len(),
+        file.display()
+    );
+    println!("Source clock span: {from} .. {to}");
+
+    let start = stream
+        .observations
+        .iter()
+        .map(|o| o.received_at)
+        .min()
+        .unwrap_or_else(chrono::Utc::now);
+    let clock = wse_scheduler::SharedReplayClock::new(start, chrono::Duration::zero());
+    let mut engine = Engine::with_clock(EngineConfig::default(), clock.handle());
+
+    for source in stream.header.iter().flat_map(|h| h.sources.clone()) {
+        engine.register_source(source)?;
+    }
+
+    for (index, cycle) in stream.cycles().iter().enumerate() {
+        if let Some(first) = cycle.first() {
+            clock.set(first.received_at);
+        }
+        let (_, signals, _candidates) = engine.ingest_observations(cycle.clone());
+        if verbose {
+            for signal in &signals {
+                let types: Vec<&str> = signal.types.iter().map(|t| t.as_str()).collect();
+                println!("cycle {index}: [{}] {}", types.join(" + "), signal.title);
+            }
+        }
+    }
+
+    let signals = engine
+        .store()
+        .query_signals(&wse_storage::SignalQuery::default())?;
+    println!(
+        "\nReplayed {} observation(s), detected {} anomaly candidate(s), formed {} signal(s).",
+        engine.metrics().observations_total,
+        engine.metrics().anomalies_total,
+        signals.total
+    );
+    for signal in &signals.items {
+        let types: Vec<&str> = signal.types.iter().map(|t| t.as_str()).collect();
+        println!(
+            "\n[{}] {}\n  {}\n  evidence: {} observation(s) from {} source(s)\n  why: {}",
+            types.join(" + "),
+            signal.title,
+            signal.summary,
+            signal.evidence.len(),
+            signal.distinct_sources(),
+            signal.reasons.join("; ")
+        );
+        if json {
+            println!("{}", serde_json::to_string_pretty(signal)?);
+        }
+    }
+    Ok(())
+}
+
+/// Score the detector against a captured stream.
+async fn backtest(
+    file: std::path::PathBuf,
+    labels: Option<std::path::PathBuf>,
+    json: bool,
+) -> Result<()> {
+    let handle = std::fs::File::open(&file)?;
+    let stream = wse_collector::read_stream(std::io::BufReader::new(handle))?;
+
+    let truth: Vec<wse_engine::LabeledEvent> = match &labels {
+        Some(path) => {
+            let text = std::fs::read_to_string(path)?;
+            serde_json::from_str(&text)?
+        }
+        None => Vec::new(),
+    };
+
+    if let Some(path) = &labels {
+        let present = wse_engine::backtest::labeled_series_present(&stream, &truth);
+        if present.len() != truth.len() {
+            eprintln!(
+                "warning: {} of {} label(s) in {} name a series absent from the stream; \
+                 they will score as false negatives",
+                truth.len() - present.len(),
+                truth.len(),
+                path.display()
+            );
+        }
+    }
+
+    let report = wse_engine::run_backtest(&stream, &truth, EngineConfig::default());
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    println!("Backtest: {}", file.display());
+    println!(
+        "  replayed       {} observation(s) in {} cycle(s)",
+        report.observations_replayed, report.cycles
+    );
+    if let Some(span) = report.stream_span_seconds {
+        println!("  stream span    {span}s");
+    }
+    println!("  signals        {}", report.signals_total);
+
+    match report.mean_latency_seconds {
+        Some(mean) => println!("  mean latency   {mean:.0}s (first_seen - earliest evidence)"),
+        None => println!("  mean latency   n/a (no evidence to measure)"),
+    }
+    match report.mean_persistence_seconds {
+        Some(mean) => println!(
+            "  persistence    mean {mean:.0}s, max {}s",
+            report.max_persistence_seconds.unwrap_or(0)
+        ),
+        None => println!("  persistence    n/a (no signals)"),
+    }
+
+    if report.is_labelled() {
+        println!(
+            "  labelled       {} event(s): {} matched, {} false positive, {} missed",
+            report.truth_total,
+            report.matched,
+            report.false_positives,
+            report.false_negatives.len()
+        );
+        if let (Some(p), Some(r)) = (report.precision(), report.recall()) {
+            println!("  precision      {p:.2}\n  recall         {r:.2}");
+        }
+        for missed in &report.false_negatives {
+            println!(
+                "  MISSED         [{}] {} / {} ({} .. {})",
+                missed.label, missed.source_id, missed.metric, missed.start, missed.end
+            );
+        }
+    } else {
+        println!("  unlabelled     precision and recall withheld: no ground truth was supplied");
+    }
+
+    for detection in &report.detections {
+        let types = detection.types.join(" + ");
+        let latency = detection
+            .latency_seconds
+            .map(|l| format!("{l}s"))
+            .unwrap_or_else(|| "-".to_string());
+        println!(
+            "\n  [{}] {}\n    first seen {}  latency {}  duration {}s  evidence {}",
+            types,
+            detection.title,
+            detection.first_seen.to_rfc3339(),
+            latency,
+            detection.duration_seconds,
+            detection.evidence_count
+        );
+    }
     Ok(())
 }
 

@@ -76,6 +76,52 @@ impl Clock for ReplayClock {
     }
 }
 
+/// A [`ReplayClock`] that can be shared with the engine while the replay driver
+/// still advances it.
+///
+/// The engine holds an `Arc<dyn Clock>`, so a replay run needs a clock that is
+/// readable through the shared interface and writable by whoever drives the
+/// stream. Without this, signal formation would fall back to the wall clock and
+/// a replayed run would not reproduce.
+#[derive(Debug, Clone)]
+pub struct SharedReplayClock {
+    inner: std::sync::Arc<std::sync::Mutex<ReplayClock>>,
+}
+
+impl SharedReplayClock {
+    pub fn new(start: DateTime<Utc>, step: Duration) -> Self {
+        Self {
+            inner: std::sync::Arc::new(std::sync::Mutex::new(ReplayClock::new(start, step))),
+        }
+    }
+
+    /// Move to an explicit time, e.g. the timestamp of the observation about to
+    /// be ingested.
+    pub fn set(&self, at: DateTime<Utc>) {
+        self.inner.lock().expect("replay clock lock").set(at);
+    }
+
+    /// Advance by the configured step and return the new time.
+    pub fn advance(&self) -> DateTime<Utc> {
+        self.inner.lock().expect("replay clock lock").advance()
+    }
+
+    /// A handle the engine can own.
+    pub fn handle(&self) -> std::sync::Arc<dyn Clock> {
+        std::sync::Arc::new(self.clone())
+    }
+}
+
+impl Clock for SharedReplayClock {
+    fn now(&self) -> DateTime<Utc> {
+        self.inner.lock().expect("replay clock lock").now()
+    }
+
+    fn mode(&self) -> CollectionMode {
+        CollectionMode::Replay
+    }
+}
+
 /// Per-collector scheduling state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ScheduleState {

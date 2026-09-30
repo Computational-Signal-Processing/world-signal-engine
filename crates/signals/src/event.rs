@@ -114,7 +114,11 @@ impl EventEngine {
                     touched.push(event.id.as_str().to_string());
                 }
                 None => {
-                    let mut event = Event::new(title_for(candidate), candidate.observed_at);
+                    let mut event = Event::new_for(
+                        group_key.clone(),
+                        title_for(candidate),
+                        candidate.observed_at,
+                    );
                     event.observations.push(candidate.observation_id.clone());
                     event.anomalies.push(candidate.id.clone());
                     if let Some(entity) = &candidate.entity_id {
@@ -189,8 +193,18 @@ pub fn group_key(candidate: &AnomalyCandidate) -> String {
         .unwrap_or_else(|| format!("series:{}", candidate.series_key))
 }
 
-/// The grouping key for an event, derived from the entities it accumulated.
+/// The grouping key for an event.
+///
+/// This is the key the event was formed under, kept on the event itself. It
+/// used to be re-derived from `entities.first()` and then `anomalies.first()`,
+/// which meant an event with entities grouped under `entity:…` while one
+/// without grouped under `anomaly:…` — two different keys for the same
+/// ongoing change, so it never merged and a new event was started each cycle.
 pub fn event_group_key(event: &Event) -> String {
+    if !event.group_key.is_empty() {
+        return event.group_key.clone();
+    }
+    // Fall back for records built by `Event::new` (tests, hand-built data).
     match event.entities.first() {
         Some(entity) => format!("entity:{}", entity.as_str()),
         None => event

@@ -10,6 +10,7 @@
 //! [`synthetic`] provides a deterministic world so the whole pipeline can be
 //! exercised without depending on any real feed.
 
+pub mod replay;
 pub mod rng;
 pub mod synthetic;
 
@@ -19,6 +20,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use wse_model::{Observation, RawReference, SourceId};
 
+pub use replay::{
+    read_stream, write_stream, ReplayCollector, Stream, StreamHeader, StreamRecord, STREAM_FORMAT,
+    STREAM_FORMAT_VERSION,
+};
 pub use synthetic::{SyntheticCollector, SyntheticStream, SyntheticWorld};
 
 #[derive(Debug, Error)]

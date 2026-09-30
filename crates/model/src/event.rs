@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::anomaly::CandidateDirection;
 use crate::geo::Location;
-use crate::ids::{AnomalyId, EntityId, EventId, ObservationId};
+use crate::ids::{fnv1a_hex, AnomalyId, EntityId, EventId, ObservationId};
 
 /// An event groups anomaly candidates that share entity, time window,
 /// direction and category. It is the unit that the signal engine reasons over.
@@ -15,6 +15,13 @@ pub struct Event {
     pub title: String,
     pub first_seen: DateTime<Utc>,
     pub last_seen: DateTime<Utc>,
+    /// The grouping key this event was formed under (`entity:…` or `series:…`).
+    ///
+    /// Retained rather than re-derived from `entities`/`anomalies`, because
+    /// those vectors are ordered by arrival and can be empty in a partial
+    /// record. Re-deriving the key made grouping depend on which field happened
+    /// to be populated, which silently split one ongoing event into several.
+    pub group_key: String,
     pub entities: Vec<EntityId>,
     pub observations: Vec<ObservationId>,
     pub anomalies: Vec<AnomalyId>,
@@ -27,12 +34,50 @@ pub struct Event {
 }
 
 impl Event {
+    /// A fresh event under `group_key`.
+    ///
+    /// The id is derived from the group key and the time the event started, so
+    /// re-forming the same event reproduces the same id. A random id here would
+    /// defeat [`crate::Signal::stable_id`], which is built on top of it: every
+    /// replay would mint new signals for a change that never changed.
+    pub fn new_for(
+        group_key: impl Into<String>,
+        title: impl Into<String>,
+        at: DateTime<Utc>,
+    ) -> Self {
+        let group_key = group_key.into();
+        let id = EventId::new(format!(
+            "evt_{}",
+            fnv1a_hex(&format!("{}|{}", group_key, at.to_rfc3339()))
+        ));
+        Self {
+            id,
+            title: title.into(),
+            first_seen: at,
+            last_seen: at,
+            group_key,
+            entities: Vec::new(),
+            observations: Vec::new(),
+            anomalies: Vec::new(),
+            categories: Vec::new(),
+            location: None,
+            direction: CandidateDirection::Flat,
+            state: EventState::Detected,
+            source_count: 0,
+        }
+    }
+
+    /// A fresh event with a random id.
+    ///
+    /// Only for records that are not expected to recur, such as unit tests that
+    /// need distinct events. The pipeline uses [`Event::new_for`].
     pub fn new(title: impl Into<String>, at: DateTime<Utc>) -> Self {
         Self {
             id: EventId::generate(),
             title: title.into(),
             first_seen: at,
             last_seen: at,
+            group_key: String::new(),
             entities: Vec::new(),
             observations: Vec::new(),
             anomalies: Vec::new(),

@@ -33,6 +33,15 @@ cargo run -p wse-cli -- sources
 cargo run -p wse-cli -- collect --verbose
 cargo run -p wse-cli -- collect --source usgs_earthquakes --json
 
+# Capture a live run to a stream file, then replay it offline.
+cargo run -p wse-cli -- collect --out world.jsonl
+cargo run -p wse-cli -- replay-stream --file world.jsonl
+
+# Score the detector against the stream. Without --labels, precision and
+# recall are withheld rather than guessed.
+cargo run -p wse-cli -- backtest --file world.jsonl
+cargo run -p wse-cli -- backtest --file world.jsonl --labels labels.json --json
+
 # Serve the API and UI. --collect backs it with live data at startup.
 cargo run -p wse-cli -- serve --port 8080 --collect
 ```
@@ -42,6 +51,45 @@ cargo run -p wse-cli -- serve --port 8080 --collect
 detector config is permissive on purpose — it makes the pipeline visible in
 seconds rather than making real-world claims.
 
+## Replay and backtesting
+
+Two run modes exist: `LIVE` and `REPLAY`. Replay is not a test helper; it is how
+the detector is measured. See `docs/decisions/0005-replay-as-a-run-mode.md`.
+
+A stream is newline-delimited JSON: a `header` record then one `observation` per
+line, ordered by `observed_at`. It is plain on purpose — `jq`, `grep` and
+`wc -l` all work on it:
+
+```bash
+wc -l world.jsonl
+grep -c '"kind":"observation"' world.jsonl
+```
+
+Replay groups observations by `received_at`: everything that arrived together is
+fed to the pipeline in the same cycle, so the detector sees the same batches in
+the same order that live collection produced. The engine clock is pinned to each
+batch, which makes a replay deterministic — the same stream and configuration
+produce byte-identical reports, signal ids included.
+
+Ground truth is a JSON array of labeled events, each naming a series
+(`source_id` + `metric`) and a window:
+
+```json
+[
+  {
+    "source_id": "src_probe",
+    "metric": "probe_value",
+    "start": "2026-09-01T01:10:00Z",
+    "end": "2026-09-01T01:14:00Z",
+    "label": "spike"
+  }
+]
+```
+
+A signal matches a labeled event when it is about the same series and its span
+intersects the window. Matching on the series rather than the label is what
+keeps the check honest — the engine never sees the labels.
+
 ## Testing philosophy
 
 Tests drive real code paths. There are no mocks standing in for the engine, the
@@ -49,13 +97,18 @@ storage or the detectors. Where a test needs a source, it uses the deterministic
 synthetic world or a checked-in fixture, both of which are real inputs to real
 parsing code.
 
-Three kinds of test:
+Four kinds of test:
 
 - **Unit tests** next to the code: statistics, parsers, model invariants.
 - **Acceptance tests** (`crates/engine/tests/acceptance.rs`): the whole pipeline
   on scripted synthetic streams — drift produces an `EARLY_SIGNAL`, a spike
   produces an `ANOMALY`, aligned streams produce `CONVERGENCE`, and a repeated
   collection produces no duplicate observations.
+- **Replay tests** (`crates/engine/tests/replay_roundtrip.rs`): capture a world,
+  write it to a stream, read it back, replay it, and score it. Proves the
+  round-trip is lossless, that replay is deterministic across runs, that both
+  entry points into replay agree, and that running past the end of a stream is
+  an empty success rather than a failure.
 - **HTTP tests** (`crates/api/tests/http.rs`): the real router on a real socket,
   including the full drill-down.
 

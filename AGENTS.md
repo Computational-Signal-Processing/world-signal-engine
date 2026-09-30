@@ -118,3 +118,37 @@ GET /observations/:id → source_id, raw.hash
 GET /sources/:id
 GET /observations/:id/raw → the actual bytes
 ```
+
+## Replay and backtesting (Phase 10)
+
+Two run modes: `LIVE` and `REPLAY`. Replay is how the detector is measured, not
+a test helper. See `docs/decisions/0005-replay-as-a-run-mode.md`.
+
+- The engine takes an injectable clock (`Engine::with_clock`). Anything that
+  stamps a signal with "now" must use `self.clock.now()`, never `Utc::now()`, or
+  replay reports wall-clock times against historical data.
+- `wse-scheduler::SharedReplayClock` is a shareable, advanceable clock. The
+  replay driver pins it to each arrival batch's `received_at`.
+- A stream is newline-delimited JSON (`wse-collector/src/replay.rs`): a `header`
+  record, then one `observation` per line. `collect --out FILE` writes one;
+  `replay-stream --file FILE` and `backtest --file FILE` read it.
+- Replay groups by `received_at`, not `observed_at`, so detection sees the same
+  batches live collection produced. Replay is deterministic: same stream + same
+  config means a byte-identical report, signal ids included.
+- `backtest` withholds precision/recall when no `--labels` are given. Do not
+  "fix" that by inventing a number; an unlabelled run cannot tell "wrong" from
+  "not yet known to be right".
+- Running past the end of a stream is an empty **success**, never a failure:
+  `NO DATA` is not `DATA = ZERO` (brief section 29).
+
+Two latent bugs the replay work surfaced, both fixed and ADR'd:
+
+- **Event grouping** (`docs/decisions/0006-*`): `event_group_key` re-derived the
+  key from `entities`/`anomalies`, so `entity:...` and `series:...` never matched
+  and one ongoing change was split into a new event every cycle. The key is now
+  stored on the event as `Event::group_key`.
+- **Event identity** (`docs/decisions/0007-*`): `Event::new` used a random UUID,
+  which silently defeated `Signal::stable_id`'s documented determinism. The
+  pipeline now uses `Event::new_for`, whose id is derived from group key plus
+  start time. `Event::new` remains for tests only.
+
