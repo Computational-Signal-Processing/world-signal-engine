@@ -91,6 +91,26 @@ documented separately.
   commands, including the gaps it found.
 - `docs/decisions/0009-productionization.md` — why it is shaped this way.
 
+## A running product
+
+Not a phase either. After productionization the engine was deployable but still
+needed an operator to drive each collection cycle. That work is done:
+
+- `wse serve --collect` runs a continuous scheduler loop that honors runtime
+  controls, so a served instance keeps observing on its own.
+- `RuntimeState` exposes uptime, a collection toggle, per-source enable/disable,
+  coalesced run-now requests, and a bounded activity ring buffer.
+- The pipeline emits activity as it runs — observation batches, anomaly
+  candidates, events, signals, source health — served over `GET /activity` and
+  pushed live over `GET /events` (Server-Sent Events).
+- A control plane (`GET /control`, `POST /control/collection`,
+  `POST /sources/:id/enabled`, `POST /sources/:id/run`), behind the same key as
+  every other route.
+- The UI presents signals with icon, label and shape rather than colour alone,
+  and states the facts (deviation, persistence, independent sources) instead of
+  a single importance score. A System screen streams activity live and offers
+  pause/enable/run controls.
+
 ## Deliberately not built yet
 
 The following are out of scope until the `observation → signal` chain is proven

@@ -23,3 +23,9 @@ rewritten afterwards; if a decision changes, a new record supersedes the old one
 | [0002](decisions/0002-in-memory-storage-first.md) | In-memory storage first |
 | [0003](decisions/0003-retain-raw-payloads.md) | Retain raw payloads, keyed by content hash |
 | [0004](decisions/0004-separate-fetch-from-parse.md) | Separate fetch from parse in collectors |
+| [0005](decisions/0005-replay-as-a-run-mode.md) | Replay is a first-class run mode, not a test helper |
+| [0006](decisions/0006-events-keep-their-grouping-key.md) | Events keep their grouping key |
+| [0007](decisions/0007-derived-event-ids.md) | Event ids are derived, not random |
+| [0008](decisions/0008-related-entity-matching.md) | Related entity and geographic matching, behind a merge mode |
+| [0009](decisions/0009-productionization.md) | Persistence, retention and an authenticated API |
+| [0010](decisions/0010-self-running-runtime-and-control.md) | A self-running engine, and how it is observed and controlled |
