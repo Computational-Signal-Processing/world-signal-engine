@@ -1,0 +1,56 @@
+{
+  "hits": [
+    {
+      "objectID": "39000001",
+      "title": "Show HN: A tiny deterministic signal engine in Rust",
+      "url": "https://example.com/tiny-signal-engine",
+      "author": "ada",
+      "points": 412,
+      "num_comments": 138,
+      "created_at_i": 1700000100,
+      "created_at": "2023-11-14T22:15:00Z",
+      "story_text": null,
+      "comment_text": null,
+      "_tags": ["story", "author_ada", "story_39000001"]
+    },
+    {
+      "objectID": "39000002",
+      "title": "Rust 1.75 released",
+      "url": "https://blog.rust-lang.org/2023/12/28/Rust-1.75.0.html",
+      "author": "carol",
+      "points": 289,
+      "num_comments": 94,
+      "created_at_i": 1700000200,
+      "created_at": "2023-11-14T22:16:40Z",
+      "story_text": null,
+      "comment_text": null,
+      "_tags": ["story", "author_carol", "story_39000002"]
+    },
+    {
+      "objectID": "39000003",
+      "title": "Ask HN: How do you detect anomalies in time series?",
+      "url": null,
+      "author": "bob",
+      "points": 57,
+      "num_comments": 211,
+      "created_at_i": 1700000300,
+      "created_at": "2023-11-14T22:18:20Z",
+      "story_text": "We have a lot of metrics and no idea what is normal.",
+      "comment_text": null,
+      "_tags": ["story", "author_bob", "story_39000003"]
+    },
+    {
+      "objectID": "39000004",
+      "title": null,
+      "url": null,
+      "author": "dave",
+      "points": null,
+      "num_comments": null,
+      "created_at_i": 1700000400,
+      "created_at": "2023-11-14T22:20:00Z",
+      "story_text": null,
+      "comment_text": "A comment, not a story.",
+      "_tags": ["comment", "author_dave", "story_39000001"]
+    }
+  ]
+}

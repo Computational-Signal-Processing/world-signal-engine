@@ -1,0 +1,14 @@
+[package]
+name = "wse-signals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Event formation and signal generation for the World Signal Engine."
+
+[dependencies]
+wse-model = { path = "../model" }
+wse-correlation = { path = "../correlation" }
+serde = { workspace = true }
+chrono = { workspace = true }

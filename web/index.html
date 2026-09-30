@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>World Signal Engine</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/world">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <span>WORLD SIGNAL ENGINE</span>
+    </a>
+    <nav class="nav">
+      <a href="#/world" data-nav="world">World</a>
+      <a href="#/sources" data-nav="sources">Sources</a>
+      <a href="#/map" data-nav="map">Map</a>
+    </nav>
+    <div class="status" id="status" role="status" aria-live="polite">connecting…</div>
+  </header>
+
+  <main id="view" class="view" aria-live="polite"></main>
+
+  <footer class="foot">
+    <span>Machine observes. Human investigates what changed.</span>
+    <span id="metrics" class="metrics"></span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

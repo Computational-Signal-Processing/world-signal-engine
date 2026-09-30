@@ -1,0 +1,14 @@
+[package]
+name = "wse-scheduler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Collection scheduling and live/replay clocks for the World Signal Engine."
+
+[dependencies]
+wse-collector = { path = "../collector" }
+wse-model = { path = "../model" }
+chrono = { workspace = true }
+serde = { workspace = true }

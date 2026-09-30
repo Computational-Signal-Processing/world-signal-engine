@@ -1,0 +1,182 @@
+/* World Signal Engine — minimal, legible, no build step.
+   Signal *type* is conveyed by icon, label and shape, never by colour alone,
+   so the interface remains readable without colour perception. */
+
+:root {
+  --bg: #0b0e13;
+  --panel: #141922;
+  --panel-2: #1b2230;
+  --ink: #e8ecf3;
+  --ink-dim: #97a3b6;
+  --line: #263041;
+  --accent: #7fd1c1;
+  --warn: #e8b06a;
+  --bad: #e07a7a;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  line-height: 1.5;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.9rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  font-size: 0.78rem;
+}
+
+.brand-mark {
+  width: 0.7rem;
+  height: 0.7rem;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.nav { display: flex; gap: 1rem; margin-left: auto; }
+.nav a {
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+  border-bottom: 2px solid transparent;
+}
+.nav a.active, .nav a:hover { color: var(--ink); border-bottom-color: var(--accent); }
+
+.status {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  color: var(--ink-dim);
+  min-width: 9rem;
+  text-align: right;
+}
+.status.error { color: var(--bad); }
+
+.view { padding: 1.5rem 1.25rem 4rem; max-width: 78rem; margin: 0 auto; }
+
+h1 { font-size: 1.05rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); font-weight: 600; margin: 0 0 1.25rem; }
+h2 { font-size: 0.95rem; margin: 0 0 0.4rem; font-weight: 600; }
+
+.grid { display: grid; gap: 0.9rem; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 6px;
+  padding: 0.95rem 1.05rem;
+  display: block;
+  color: inherit;
+  text-decoration: none;
+}
+.card:hover { background: var(--panel-2); }
+.card .types { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.55rem; }
+.card .title { font-weight: 600; font-size: 0.98rem; }
+.card .summary { color: var(--ink-dim); font-size: 0.84rem; margin-top: 0.35rem; }
+.card .meta { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); margin-top: 0.6rem; display: flex; gap: 1rem; flex-wrap: wrap; }
+
+/* Type badges: shape + glyph + label, so type never depends on colour. */
+.type {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--panel-2);
+  color: var(--ink-dim);
+}
+.type .glyph { font-size: 0.8rem; }
+.type[data-type="NOW"] .glyph::before { content: "⚡"; }
+.type[data-type="ANOMALY"] .glyph::before { content: "◇"; }
+.type[data-type="EARLY_SIGNAL"] .glyph::before { content: "◎"; }
+.type[data-type="CONVERGENCE"] .glyph::before { content: "🔗"; }
+.type[data-type="IMPACT"] .glyph::before { content: "▲"; }
+.type[data-type="NOW"] { border-style: solid; }
+.type[data-type="ANOMALY"] { border-style: double; border-width: 3px; }
+.type[data-type="EARLY_SIGNAL"] { border-style: dashed; }
+.type[data-type="CONVERGENCE"] { border-style: dotted; }
+.type[data-type="IMPACT"] { border-style: solid; border-radius: 0; }
+
+.card[data-primary="ANOMALY"] { border-left-color: var(--bad); }
+.card[data-primary="EARLY_SIGNAL"] { border-left-color: var(--warn); }
+.card[data-primary="CONVERGENCE"] { border-left-color: var(--accent); }
+.card[data-primary="NOW"] { border-left-color: var(--ink-dim); }
+
+.empty { color: var(--ink-dim); padding: 3rem 0; text-align: center; }
+
+/* Drill-down trail */
+.trail { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); margin-bottom: 1.25rem; }
+.trail a { color: var(--accent); text-decoration: none; }
+.trail a:hover { text-decoration: underline; }
+.trail .sep { opacity: 0.5; }
+
+/* Detail layout */
+.detail { display: grid; gap: 1.25rem; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+@media (max-width: 60rem) { .detail { grid-template-columns: 1fr; } }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 1rem 1.1rem; }
+.panel h2 { color: var(--ink-dim); letter-spacing: 0.1em; text-transform: uppercase; font-size: 0.72rem; }
+
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 1rem; font-size: 0.85rem; }
+.kv dt { color: var(--ink-dim); font-family: var(--mono); font-size: 0.75rem; }
+.kv dd { margin: 0; }
+
+ul.reasons { margin: 0; padding-left: 1.1rem; font-size: 0.86rem; }
+ul.reasons li { margin-bottom: 0.3rem; }
+
+.evidence { list-style: none; margin: 0; padding: 0; }
+.evidence li { border-top: 1px solid var(--line); padding: 0.6rem 0; font-size: 0.85rem; }
+.evidence li:first-child { border-top: 0; }
+.evidence code { font-family: var(--mono); font-size: 0.75rem; color: var(--ink-dim); }
+
+.quality { display: grid; gap: 0.35rem; }
+.quality .row { display: grid; grid-template-columns: 7rem 1fr 2.4rem; align-items: center; gap: 0.5rem; font-size: 0.75rem; font-family: var(--mono); color: var(--ink-dim); }
+.bar { height: 0.4rem; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+.bar span { display: block; height: 100%; background: var(--accent); }
+
+/* Timeline: the NORMAL ──╮ ╰──● NOW idea. */
+.spark { width: 100%; height: 8rem; display: block; }
+.spark .baseline { stroke: var(--ink-dim); stroke-dasharray: 3 3; }
+.spark .series { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+.spark .now { fill: var(--bad); }
+
+/* Map: signal/event level only, never raw observation scatter. */
+.map { position: relative; width: 100%; aspect-ratio: 2 / 1; background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.map .graticule { stroke: var(--line); stroke-width: 0.5; }
+.map .marker { fill: var(--accent); opacity: 0.85; }
+.map .marker.anomaly { fill: var(--bad); }
+.map .marker.early { fill: var(--warn); }
+.map .label { fill: var(--ink); font-size: 2.2px; font-family: var(--mono); }
+
+.foot { border-top: 1px solid var(--line); padding: 0.75rem 1.25rem; display: flex; gap: 1rem; justify-content: space-between; font-size: 0.72rem; color: var(--ink-dim); font-family: var(--mono); }
+
+button.link { background: none; border: 1px solid var(--line); color: var(--ink); border-radius: 3px; padding: 0.25rem 0.6rem; font-size: 0.75rem; cursor: pointer; font-family: var(--mono); }
+button.link:hover { border-color: var(--accent); color: var(--accent); }

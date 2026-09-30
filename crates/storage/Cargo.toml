@@ -1,0 +1,15 @@
+[package]
+name = "wse-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Storage abstractions and in-memory implementation for the World Signal Engine."
+
+[dependencies]
+wse-model = { path = "../model" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
