@@ -41,6 +41,7 @@ pub use backtest::{
     run_backtest, truth_from_windows, BacktestDetection, BacktestReport, LabeledEvent,
 };
 pub use metrics::Metrics;
+pub use wse_correlation::{ConvergenceConfig, MergeMode};
 
 /// Everything one pipeline cycle produced, for reporting and tests.
 #[derive(Debug, Default)]
@@ -53,12 +54,16 @@ pub struct CycleOutcome {
     pub source_failed: bool,
 }
 
-/// Engine configuration. All three stages default to their own defaults.
+/// Engine configuration. Every stage defaults to its own defaults.
 #[derive(Debug, Clone, Default)]
 pub struct EngineConfig {
     pub detector: DetectorConfig,
     pub event: wse_signals::event::EventConfig,
     pub signal: wse_signals::SignalConfig,
+    /// How convergence decides that independent candidates are about the same
+    /// thing. Defaults to exact entity matching; `ConvergenceConfig::related()`
+    /// also matches related entity names and geography.
+    pub convergence: wse_correlation::ConvergenceConfig,
 }
 
 /// The pipeline engine.
@@ -85,7 +90,8 @@ impl Engine {
     pub fn with_clock(config: EngineConfig, clock: Arc<dyn Clock>) -> Self {
         Self {
             event_engine: EventEngine::new(config.event.clone()),
-            signal_engine: SignalEngine::new(config.signal.clone()),
+            signal_engine: SignalEngine::new(config.signal.clone())
+                .with_convergence(config.convergence.clone()),
             config,
             store: InMemoryStore::new(),
             raw_store: RawStore::new(),
@@ -239,13 +245,7 @@ impl Engine {
         // run forms exactly the signals it formed the first time.
         let now = self.clock.now();
         let events = self.event_engine.ingest(&candidates, &category_of);
-        let groups = wse_correlation::detect_convergence(
-            &candidates,
-            &wse_correlation::ConvergenceConfig::default(),
-        );
-        let signals = self
-            .signal_engine
-            .form_signals(&events, &candidates, &groups, now);
+        let signals = self.signal_engine.form_signals(&events, &candidates, now);
 
         for event in &events {
             if let Err(err) = self.store.put_event(event.clone()) {

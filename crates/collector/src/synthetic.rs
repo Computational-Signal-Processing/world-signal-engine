@@ -281,6 +281,49 @@ impl SyntheticWorld {
         world
     }
 
+    /// A world where independent sources report the *same place* under
+    /// slightly different entity names.
+    ///
+    /// This is the case exact entity matching could not see: the collectors
+    /// produce prefixed slugs, so one provider's `region_san_francisco` and
+    /// another's `region_san_francisco_bay_area` are the same place. Under
+    /// [`MergeMode::Related`] they converge; under the default they do not.
+    pub fn related_entities(origin: DateTime<Utc>) -> Self {
+        let streams = [
+            ("shipping_delay", "region_san_francisco_bay_area"),
+            ("port_activity", "region_san_francisco"),
+            ("oil_price", "region_san_francisco_bay"),
+        ];
+        let mut world = Self::new(origin);
+        for (idx, (name, entity)) in streams.iter().enumerate() {
+            let stream = SyntheticStream::new(*name, 100.0, 1.0)
+                .with_seed(200 + idx as u64)
+                .with_step_seconds(3600)
+                .with_entity(EntityId::new(*entity));
+            let phases = vec![Phase::drift(100, 130, 0.0, 5.0)];
+            world = world.with_stream(ScriptedStream::new(stream, phases));
+        }
+        world
+    }
+
+    /// A world where independent sources with no shared entity report the same
+    /// coordinates, for geographic convergence.
+    pub fn geographic_convergence(origin: DateTime<Utc>) -> Self {
+        let names = ["quake_count", "news_mentions", "sensor_tilt"];
+        let mut world = Self::new(origin);
+        for (idx, name) in names.iter().enumerate() {
+            let stream = SyntheticStream::new(*name, 100.0, 1.0)
+                .with_seed(300 + idx as u64)
+                .with_step_seconds(3600)
+                // Distinct entities: only the coordinates relate them.
+                .with_entity(EntityId::new(format!("ent_site_{idx}")))
+                .with_location(35.6, 139.7);
+            let phases = vec![Phase::drift(100, 130, 0.0, 5.0)];
+            world = world.with_stream(ScriptedStream::new(stream, phases));
+        }
+        world
+    }
+
     /// Total number of observations the world can produce.
     pub fn length(&self) -> usize {
         self.streams

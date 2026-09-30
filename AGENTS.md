@@ -152,3 +152,36 @@ Two latent bugs the replay work surfaced, both fixed and ADR'd:
   pipeline now uses `Event::new_for`, whose id is derived from group key plus
   start time. `Event::new` remains for tests only.
 
+
+## Convergence matching (Phase 11)
+
+Convergence is computed inside `SignalEngine::form_signals`, from the engine's
+own `ConvergenceConfig`. Do not pass groups in from outside — the rule that
+matches sources and the code that forms signals must not be able to drift apart.
+
+- `MergeMode::Exact` is the default and is the original behaviour: identical
+  entity id, else series key. `MergeMode::Related` also matches *related* entity
+  names and geography. Widening matching is opt-in
+  (`ConvergenceConfig::related()`); a deployment must not inherit it.
+- Related entity rule: one canonical segment set must be a **subset** of the
+  other, sharing >= `min_shared_segments` (2). Subset, not overlap, so
+  `region_south_fiji` and `region_south_tonga` stay apart despite "south". Real
+  collector slugs look like `region_san_francisco_bay_area`, `topic_oil_price`.
+- Related entities are merged with union-find so a chain of names is one group,
+  not a set of pairs. Geographic clustering (haversine, `radius_km`) uses the
+  same structure over connected components.
+- `ConvergenceGroup` carries `entity_ids` and `match_kinds`
+  (`exact_entity | related_entity | geography | series`) so a signal can report
+  *how* its sources agree.
+- `detect_convergence` sorts by strength, then first_seen, then `group_key`, and
+  uses `BTreeMap` not `HashMap`. The key tiebreaker and the ordered map are
+  load-bearing: equal-strength groups in hash order made replay
+  non-reproducible. Do not revert either to `HashMap`/unsorted.
+- `wse-engine` re-exports `ConvergenceConfig` and `MergeMode`; the CLI depends on
+  `wse-engine`, not `wse-correlation`, so import them from `wse_engine`.
+
+Synthetic worlds for these: `SyntheticWorld::related_entities` and
+`::geographic_convergence`. Acceptance tests assert both sides — convergence
+under `Related`, none under `Exact` — so a regression that makes matching
+unconditionally permissive fails too.
+

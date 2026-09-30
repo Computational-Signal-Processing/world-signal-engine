@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use wse_api::AppState;
 use wse_collector::synthetic::{SyntheticCollector, SyntheticWorld};
 use wse_detection::DetectorConfig;
-use wse_engine::{Engine, EngineConfig};
+use wse_engine::{ConvergenceConfig, Engine, EngineConfig};
 use wse_model::{Source, SourceId};
 use wse_signals::event::EventConfig;
 use wse_signals::SignalConfig;
@@ -129,6 +129,7 @@ fn synthetic_engine() -> Engine {
             now_window_seconds: i64::MAX,
             ..SignalConfig::default()
         },
+        convergence: ConvergenceConfig::related(),
     })
 }
 

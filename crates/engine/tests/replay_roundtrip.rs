@@ -18,6 +18,7 @@ use chrono::{DateTime, Duration, Utc};
 use wse_collector::replay::{read_stream, write_stream, ReplayCollector, StreamHeader};
 use wse_collector::synthetic::SyntheticWorld;
 use wse_detection::DetectorConfig;
+use wse_engine::ConvergenceConfig;
 use wse_engine::{run_backtest, truth_from_windows, Engine, EngineConfig, LabeledEvent};
 use wse_model::{SignalType, Source};
 use wse_signals::event::EventConfig;
@@ -38,6 +39,7 @@ fn config() -> EngineConfig {
             now_window_seconds: i64::MAX,
             ..SignalConfig::default()
         },
+        convergence: ConvergenceConfig::related(),
     }
 }
 

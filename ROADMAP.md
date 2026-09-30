@@ -55,9 +55,12 @@ earthquakes, releases, spikes) is the next step, not a blocker: the mechanism is
 in place and measured.
 
 ### Phase 11 — Correlation
-Deterministic convergence detection across independent sources is in place
-(entity, geography, time window, category, direction). Remaining: widening the
-entity/geography matching beyond the current exact-match rules.
+Done. Deterministic convergence across independent sources: entity, geography,
+time window, category and direction. Entity ids now match as *related* rather
+than only identical, so `region_san_francisco` and
+`region_san_francisco_bay_area` from two providers converge; candidates sharing
+no entity can converge on coordinates. Both are behind `MergeMode::Related`;
+the default (`Exact`) is unchanged. See `docs/decisions/0008-*`.
 
 ### Phase 12 — Lenses
 Lens configuration and matching exist. Remaining: shipping the full default lens

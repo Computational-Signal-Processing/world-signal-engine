@@ -77,17 +77,21 @@ impl SignalEngine {
         &self.config
     }
 
-    /// Turn events (plus their supporting candidates and any convergence
-    /// groups) into signals.
+    /// Turn events (plus their supporting candidates) into signals.
+    ///
+    /// Convergence is computed here from `self.convergence` rather than passed
+    /// in, so the configuration that decides how sources are matched and the
+    /// code that forms the signals cannot drift apart.
     ///
     /// Returns one signal per event that meets the promotion rules.
     pub fn form_signals(
         &self,
         events: &[Event],
         candidates: &[wse_model::AnomalyCandidate],
-        convergence: &[ConvergenceGroup],
         now: DateTime<Utc>,
     ) -> Vec<Signal> {
+        let convergence = wse_correlation::detect_convergence(candidates, &self.convergence);
+        let convergence = convergence.as_slice();
         let mut signals = Vec::new();
         for event in events {
             if event.observation_count() < self.config.min_observations {
@@ -404,8 +408,7 @@ pub fn process_batch(
     if events.is_empty() {
         return Vec::new();
     }
-    let groups = wse_correlation::detect_convergence(candidates, &ConvergenceConfig::default());
-    signal_engine.form_signals(&events, candidates, &groups, now)
+    signal_engine.form_signals(&events, candidates, now)
 }
 
 #[cfg(test)]

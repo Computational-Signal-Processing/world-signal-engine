@@ -22,6 +22,7 @@
 use chrono::{DateTime, Utc};
 use wse_collector::synthetic::{SyntheticCollector, SyntheticWorld};
 use wse_detection::DetectorConfig;
+use wse_engine::ConvergenceConfig;
 use wse_engine::{Engine, EngineConfig};
 use wse_model::{SignalType, Source};
 use wse_signals::event::EventConfig;
@@ -42,6 +43,7 @@ fn engine() -> Engine {
             now_window_seconds: i64::MAX,
             ..SignalConfig::default()
         },
+        convergence: ConvergenceConfig::related(),
     })
 }
 
@@ -127,6 +129,85 @@ async fn aligned_independent_streams_produce_convergence() {
             .iter()
             .any(|s| s.has_type(SignalType::Convergence)),
         "independent streams moving together must produce CONVERGENCE; got {:?}",
+        signals.items.iter().map(|s| &s.types).collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn differently_named_entities_for_one_place_converge_when_related_matching_is_on() {
+    // Three providers, one place, three different entity slugs. This is what
+    // Phase 11 widened matching for; under exact matching it produces nothing.
+    let mut related = engine();
+    drive(
+        &mut related,
+        SyntheticWorld::related_entities(origin()),
+        130,
+    )
+    .await;
+    let signals = related
+        .store()
+        .query_signals(&wse_storage::SignalQuery::default())
+        .unwrap();
+    assert!(
+        signals
+            .items
+            .iter()
+            .any(|s| s.has_type(SignalType::Convergence)),
+        "related entity names must converge under MergeMode::Related; got {:?}",
+        signals.items.iter().map(|s| &s.types).collect::<Vec<_>>()
+    );
+
+    // The same world under exact matching: no convergence, because the ids
+    // differ. This is the behaviour Phase 11 changed, asserted on both sides.
+    let mut exact = Engine::new(EngineConfig {
+        detector: DetectorConfig::synthetic(),
+        event: EventConfig::default(),
+        signal: SignalConfig {
+            now_window_seconds: i64::MAX,
+            ..SignalConfig::default()
+        },
+        convergence: ConvergenceConfig::default(),
+    });
+    drive(&mut exact, SyntheticWorld::related_entities(origin()), 130).await;
+    let exact_signals = exact
+        .store()
+        .query_signals(&wse_storage::SignalQuery::default())
+        .unwrap();
+    assert!(
+        !exact_signals
+            .items
+            .iter()
+            .any(|s| s.has_type(SignalType::Convergence)),
+        "exact matching must not converge differently named entities; got {:?}",
+        exact_signals
+            .items
+            .iter()
+            .map(|s| &s.types)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn independent_sources_at_one_place_converge_geographically() {
+    let mut engine = engine();
+    // Distinct entities, identical coordinates: only geography can relate them.
+    drive(
+        &mut engine,
+        SyntheticWorld::geographic_convergence(origin()),
+        130,
+    )
+    .await;
+
+    let signals = engine
+        .store()
+        .query_signals(&wse_storage::SignalQuery::default())
+        .unwrap();
+    assert!(
+        signals
+            .items
+            .iter()
+            .any(|s| s.has_type(SignalType::Convergence)),
+        "independent sources at one place must converge geographically; got {:?}",
         signals.items.iter().map(|s| &s.types).collect::<Vec<_>>()
     );
 }
