@@ -38,7 +38,7 @@ docs/decisions/     architecture decision records
 ## Commands
 
 ```bash
-cargo test --workspace                                   # 227 tests, offline
+cargo test --workspace                                   # 300 tests, offline
 cargo fmt --all && cargo clippy --workspace --all-targets
 cargo run -p wse-cli -- demo                             # synthetic acceptance world
 cargo run -p wse-cli -- sources                          # print the catalog
@@ -86,11 +86,26 @@ No network or credentials are needed to run it.
 ## Gotchas
 
 - **GDELT rate-limits aggressively** and returns a plain-text notice with HTTP
-  429 instead of JSON. The parser rejects non-JSON explicitly, so this shows up
-  as a `degraded` source with `error_count`, not as zero news volume. Do not
-  "fix" this by making the parser lenient.
+  429 instead of JSON. The transport classifies this as
+  `CollectorError::RateLimited`, so it shows up as a `rate_limited` source with
+  `rate_limit_count` and the last error, not as zero news volume and not as
+  `down` — a throttled source is healthy, we are simply asking too often. The
+  parser rejects non-JSON explicitly. Do not "fix" this by making the parser
+  lenient, and do not collapse `rate_limited` into `down`.
+- **GDELT's live API does not match its own docs.** The doc endpoint
+  (`api.gdeltproject.org`) uses `timelinevol` with `datetime`/`series`; the live
+  API (`api.gdeltproject.org/api/v2/doc/doc`) returns `query_details` and
+  `YYYYMMDDTHHMMSSZ` timestamps. Both shapes are decoded (`resolve_query`,
+  `parse_datetime`), and `tests/fixtures/gdelt_timelinevol_real.json` is a real
+  captured payload so this cannot silently regress to an empty source.
 - **GitHub search responses are wrapped** in an envelope; the repos are under
   `items`. The fixture reflects this.
+- **Several records per series per timestamp need `Observation.identity`.**
+  GitHub search returns many repositories, Hacker News many stories — all with
+  the same `observed_at` and payload hash. Without a discriminator they share an
+  id and de-duplication silently drops all but one. `identity` is part of the
+  id and **never** part of `series_key`, so the records stay independently
+  observable while still forming one series for baseline and detection.
 - **MSRV is 1.88**, not 1.75 or 1.82. It is set by the dependency graph, not by
   our code: `icu_* 2.3.0` (pulled in via `url`, which both `ureq` and `reqwest`
   depend on) requires 1.88, and several transitive crates are edition 2024, which

@@ -49,7 +49,7 @@ web UI. Current state:
 | API | REST, with a raw-data endpoint |
 | Web UI | World, signal, event, source, timeline, map |
 
-227 tests pass across the workspace.
+300 tests pass across the workspace.
 
 ## Quick start
 

@@ -41,7 +41,7 @@ raw bytes.
 ### Phase 9 — Web UI
 World → signal → event → observation → source → raw data.
 
-## In progress
+## Done (continued)
 
 ### Phase 10 — Replay / backtesting
 Done. The engine takes an injectable clock; `replay-stream` replays a captured
