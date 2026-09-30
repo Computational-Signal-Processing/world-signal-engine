@@ -68,6 +68,25 @@ impl EventEngine {
         &self.active
     }
 
+    /// Re-admit an event that was open when the process last stopped.
+    ///
+    /// Without this, a restart would leave every in-flight change orphaned: the
+    /// next candidate would not find its event, so it would start a second one
+    /// with a fresh id and the original signal would stop accumulating. The
+    /// event's own `group_key` and `last_seen` are what the matcher needs, so
+    /// they are restored as-is rather than recomputed.
+    pub fn adopt(&mut self, event: Event) {
+        if event.state == EventState::Resolved {
+            return;
+        }
+        if self.active.iter().any(|e| e.id == event.id) {
+            return;
+        }
+        self.directions
+            .insert(event.id.as_str().to_string(), event.direction);
+        self.active.push(event);
+    }
+
     /// Ingest a batch of candidates and return every event that was created or
     /// updated by this batch.
     ///

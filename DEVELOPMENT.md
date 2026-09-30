@@ -10,7 +10,7 @@
 
 ```bash
 cargo build --workspace
-cargo test  --workspace          # 300 tests, no network required
+cargo test  --workspace          # 323 tests, no network required
 cargo fmt   --all
 cargo clippy --workspace --all-targets
 ```

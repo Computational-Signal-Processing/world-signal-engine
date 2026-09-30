@@ -81,6 +81,24 @@ body {
 }
 .lens-picker select:focus { outline: 1px solid var(--accent); }
 
+/* API key field: same quiet treatment as the lens picker, since it is also a
+   view control — it changes what the API will answer, not what the engine
+   computes. Hidden unless a key has been entered or a 401 has been seen, so a
+   loopback demo is not asked for a credential it does not have. */
+.key-picker { display: none; align-items: center; gap: 0.4rem; margin-left: 1rem; }
+.key-picker.visible { display: flex; }
+.key-picker input {
+  background: var(--panel-2);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0.25rem 0.4rem;
+  font-size: 0.78rem;
+  font-family: var(--mono);
+  width: 11rem;
+}
+.key-picker input:focus { outline: 1px solid var(--accent); }
+
 /* Which lenses a signal is visible through. */
 .lens-badges { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.5rem; }
 .lens-badge {

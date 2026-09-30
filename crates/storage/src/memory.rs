@@ -13,8 +13,10 @@ use wse_model::{
 };
 
 use crate::query::{ObservationQuery, Page, SignalQuery, TimeRange};
+use crate::raw::{MemoryRawStore, RawStore, StoredPayload};
 use crate::store::{
-    BaselineStore, EventStore, ObservationStore, SignalStore, SourceStore, StorageError,
+    BaselineStore, DiskUsage, EventStore, MaintenanceStore, ObservationStore, SignalStore,
+    SourceStore, StorageError,
 };
 
 /// A complete in-memory implementation of every store.
@@ -28,6 +30,7 @@ pub struct InMemoryStore {
     sources: HashMap<SourceId, Source>,
     health: HashMap<SourceId, SourceHealth>,
     baselines: HashMap<String, (DateTime<Utc>, BaselineSnapshot)>,
+    raw: MemoryRawStore,
 }
 
 impl InMemoryStore {
@@ -197,6 +200,15 @@ impl SignalStore for InMemoryStore {
                         .as_ref()
                         .is_none_or(|l| s.lens_matches.iter().any(|lm| lm.as_str() == l))
                     && query.range.is_none_or(|r| r.contains(s.last_updated))
+                    // `active_only` means "the event behind this signal has not
+                    // been resolved". This was previously declared on the query
+                    // and ignored here, so `?active=true` returned everything;
+                    // the SQLite backend and this one must agree on the filter.
+                    && (!query.active_only
+                        || self
+                            .events
+                            .get(&s.event_id)
+                            .is_none_or(|e| e.state != wse_model::EventState::Resolved))
             })
             .cloned()
             .collect();
@@ -286,6 +298,56 @@ impl InMemoryStore {
             .iter()
             .map(|(k, v)| (k.clone(), v.len()))
             .collect()
+    }
+}
+
+impl RawStore for InMemoryStore {
+    fn put(
+        &mut self,
+        reference: wse_model::RawReference,
+        body: Vec<u8>,
+    ) -> Result<(), StorageError> {
+        self.raw.put(reference, body)
+    }
+
+    fn get(&self, hash: &str) -> Result<Option<StoredPayload>, StorageError> {
+        self.raw.get(hash)
+    }
+
+    fn len(&self) -> usize {
+        self.raw.len()
+    }
+
+    fn bytes_used(&self) -> u64 {
+        self.raw.bytes_used()
+    }
+}
+
+impl MaintenanceStore for InMemoryStore {
+    /// Drop observations older than `cutoff`.
+    ///
+    /// Present so the retention loop has a uniform interface, and so a test can
+    /// exercise retention without opening a database. In-memory data is
+    /// discarded at exit, so a deployment would not rely on this.
+    fn delete_observations_before(&mut self, cutoff: DateTime<Utc>) -> Result<usize, StorageError> {
+        let before = self.observations.len();
+        self.observations.retain(|_, o| o.observed_at >= cutoff);
+        for ids in self.series.values_mut() {
+            ids.retain(|id| self.observations.contains_key(id));
+        }
+        self.series.retain(|_, ids| !ids.is_empty());
+        Ok(before - self.observations.len())
+    }
+
+    /// Nothing to prune: in-memory payloads vanish with the process.
+    fn prune_raw_to(&mut self, _max_bytes: u64) -> Result<usize, StorageError> {
+        Ok(0)
+    }
+
+    fn disk_usage(&self) -> Result<DiskUsage, StorageError> {
+        // Nothing is on disk. Reporting zero is the honest answer, and it is
+        // distinguishable from "the backend failed to measure".
+        Ok(DiskUsage::default())
     }
 }
 

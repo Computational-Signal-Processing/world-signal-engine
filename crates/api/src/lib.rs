@@ -24,31 +24,55 @@
 //! single process is enough to run the whole MVP.
 
 pub mod handlers;
+pub mod security;
 pub mod state;
 
+pub use security::SecurityConfig;
 pub use state::AppState;
 
 use axum::{routing::get, Router};
 use std::path::Path;
-use tower_http::cors::CorsLayer;
+use std::sync::Arc;
+use std::time::Duration;
 use tower_http::services::{ServeDir, ServeFile};
+use tower_http::set_header::SetResponseHeaderLayer;
+use tower_http::timeout::TimeoutLayer;
 
 /// Default location of the web UI, relative to the repository root.
 pub const DEFAULT_WEB_DIR: &str = "web";
 
-/// Build the API router, serving the web UI from `DEFAULT_WEB_DIR` if present.
-pub fn router(state: AppState) -> Router {
+/// Build the API router with the default (open) security configuration.
+///
+/// Kept for tests and embedded use; a real deployment should call
+/// [`router_with_config`] with [`SecurityConfig::from_env`].
+pub fn router<S: wse_storage::Store + 'static>(state: AppState<S>) -> Router {
+    router_with_config(state, SecurityConfig::default())
+}
+
+/// Build the API router, serving the web UI from `DEFAULT_WEB_DIR` if present,
+/// with an explicit security configuration.
+pub fn router_with_config<S: wse_storage::Store + 'static>(
+    state: AppState<S>,
+    security: SecurityConfig,
+) -> Router {
     router_with_web_dir(
         state,
         std::env::var("WSE_WEB_DIR").unwrap_or_else(|_| DEFAULT_WEB_DIR.into()),
+        security,
     )
 }
 
-/// Build the API router with an explicit web UI directory.
+/// Build the API router with an explicit web UI directory and security config.
 ///
 /// If the directory does not exist the API still works; only the UI is absent.
 /// This keeps the binary usable in environments that ship just the API.
-pub fn router_with_web_dir(state: AppState, web_dir: impl AsRef<Path>) -> Router {
+pub fn router_with_web_dir<S: wse_storage::Store + 'static>(
+    state: AppState<S>,
+    web_dir: impl AsRef<Path>,
+    security: SecurityConfig,
+) -> Router {
+    let security = Arc::new(security);
+
     let router = Router::new()
         .route("/health", get(handlers::health))
         .route("/metrics", get(handlers::metrics))
@@ -63,7 +87,32 @@ pub fn router_with_web_dir(state: AppState, web_dir: impl AsRef<Path>) -> Router
         .route("/lenses", get(handlers::list_lenses))
         .route("/lenses/{id}", get(handlers::get_lens))
         .route("/timeline", get(handlers::timeline))
-        .layer(CorsLayer::permissive())
+        .layer(axum::middleware::from_fn_with_state(
+            security.clone(),
+            security::require_api_key,
+        ))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            security.max_body_bytes,
+        ))
+        .layer(TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(security.request_timeout_secs),
+        ))
+        // Defence in depth for the browser: the UI only ever needs same-origin
+        // reads, so framing, MIME sniffing and referrer leakage are all denied.
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::REFERRER_POLICY,
+            axum::http::HeaderValue::from_static("no-referrer"),
+        ))
+        .layer(security::cors_layer(&security))
         .with_state(state);
 
     let web_dir = web_dir.as_ref();
@@ -107,5 +156,18 @@ mod tests {
         let state = AppState::new(engine);
         let engine = state.read().await;
         assert_eq!(engine.store().all_sources().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_configured_router_still_builds() {
+        let state = AppState::new(Engine::new(EngineConfig::default()));
+        let app = router_with_config(
+            state,
+            SecurityConfig {
+                api_keys: vec!["k".into()],
+                ..Default::default()
+            },
+        );
+        let _ = app;
     }
 }

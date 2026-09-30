@@ -77,6 +77,24 @@ enum Command {
         /// which still reports the true cadence.
         #[arg(long)]
         cadence_override: Option<u64>,
+        /// Directory for the SQLite database and the retained raw payloads.
+        ///
+        /// Without this the engine keeps everything in memory and forgets it on
+        /// exit, which is fine for a demo and wrong for a deployment. With it,
+        /// observations, signals, source health and baselines survive a restart,
+        /// and the detector resumes warm instead of re-learning "normal".
+        #[arg(long, env = "WSE_DATA_DIR")]
+        data_dir: Option<std::path::PathBuf>,
+        /// How many recent observations per series to replay on startup to
+        /// warm the detector's rolling windows.
+        #[arg(long, default_value_t = 500)]
+        rehydrate_history: usize,
+        /// Delete observations older than this many days. 0 disables retention.
+        #[arg(long, default_value_t = 0, env = "WSE_RETENTION_DAYS")]
+        retention_days: i64,
+        /// Cap on the bytes of raw payloads to keep. 0 disables the cap.
+        #[arg(long, default_value_t = 0, env = "WSE_RAW_MAX_BYTES")]
+        raw_max_bytes: u64,
     },
     /// Run the real source collectors once against the live APIs.
     Collect {
@@ -137,8 +155,11 @@ enum Command {
 }
 
 /// A permissive engine configuration for synthetic data.
-fn synthetic_engine() -> Engine {
-    Engine::new(EngineConfig {
+/// The engine configuration used for a served instance.
+///
+/// Shared by the in-memory and persistent paths so both behave identically.
+fn synthetic_engine_config() -> EngineConfig {
+    EngineConfig {
         detector: DetectorConfig::synthetic(),
         event: EventConfig::default(),
         signal: SignalConfig {
@@ -149,14 +170,21 @@ fn synthetic_engine() -> Engine {
         lenses: wse_config::load_lenses("config/lenses")
             .map(|catalog| catalog.lenses)
             .unwrap_or_default(),
-    })
+    }
+}
+
+fn synthetic_engine() -> Engine {
+    Engine::new(synthetic_engine_config())
 }
 
 fn origin() -> DateTime<Utc> {
     DateTime::from_timestamp(1_700_000_000, 0).unwrap()
 }
 
-fn register_synthetic_sources(engine: &mut Engine, world: &SyntheticWorld) -> Result<()> {
+fn register_synthetic_sources<S: wse_storage::Store>(
+    engine: &mut Engine<S>,
+    world: &SyntheticWorld,
+) -> Result<()> {
     for stream in &world.streams {
         engine.register_source(
             Source::new(
@@ -168,6 +196,72 @@ fn register_synthetic_sources(engine: &mut Engine, world: &SyntheticWorld) -> Re
         )?;
     }
     Ok(())
+}
+
+/// Register the real source catalog.
+///
+/// A served instance must be able to show the sources it observes even before
+/// (or without) collecting them; otherwise the Sources screen shows a
+/// placeholder rather than the truth.
+fn register_catalog<S: wse_storage::Store>(engine: &mut Engine<S>) -> Result<()> {
+    for source in wse_sources::catalog() {
+        engine.register_source(source)?;
+    }
+    Ok(())
+}
+
+/// Apply the retention policy: age out old observations and cap raw payloads.
+async fn apply_retention<S: wse_storage::Store>(
+    state: &AppState<S>,
+    retention_days: i64,
+    raw_max_bytes: u64,
+) {
+    let mut engine = state.write().await;
+    if retention_days > 0 {
+        let cutoff = Utc::now() - chrono::Duration::days(retention_days);
+        match wse_storage::MaintenanceStore::delete_observations_before(engine.store_mut(), cutoff)
+        {
+            Ok(deleted) if deleted > 0 => {
+                tracing::info!(deleted, cutoff = %cutoff, "retention removed old observations")
+            }
+            Ok(_) => {}
+            Err(err) => tracing::error!(error = %err, "retention failed"),
+        }
+    }
+    if raw_max_bytes > 0 {
+        match wse_storage::MaintenanceStore::prune_raw_to(engine.store_mut(), raw_max_bytes) {
+            Ok(removed) if removed > 0 => {
+                tracing::info!(removed, raw_max_bytes, "retention pruned raw payloads")
+            }
+            Ok(_) => {}
+            Err(err) => tracing::error!(error = %err, "raw retention failed"),
+        }
+    }
+}
+
+/// Resolve when the process is asked to stop, so a deployment gets a clean
+/// shutdown (in-flight requests finish, the database is closed) instead of
+/// being killed mid-write.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received");
 }
 
 #[tokio::main]
@@ -190,15 +284,23 @@ async fn main() -> Result<()> {
             interval_seconds,
             collect,
             cadence_override,
+            data_dir,
+            rehydrate_history,
+            retention_days,
+            raw_max_bytes,
         } => {
-            serve(
+            serve(ServeOptions {
                 port,
                 synthetic,
                 live,
                 interval_seconds,
                 collect,
                 cadence_override,
-            )
+                data_dir,
+                rehydrate_history,
+                retention_days,
+                raw_max_bytes,
+            })
             .await
         }
         Command::Collect {
@@ -672,29 +774,174 @@ fn schedule_for(source: &Source, default_event_poll: u64) -> wse_collector::Sche
     }
 }
 
-async fn serve(
+/// Everything `serve` needs, so the argument list stays readable.
+struct ServeOptions {
     port: u16,
     synthetic: bool,
     live: bool,
     interval_seconds: u64,
     collect: bool,
     cadence_override: Option<u64>,
-) -> Result<()> {
-    let mut engine = synthetic_engine();
+    data_dir: Option<std::path::PathBuf>,
+    rehydrate_history: usize,
+    retention_days: i64,
+    raw_max_bytes: u64,
+}
 
-    // The real catalog is always registered. A served instance must be able to
-    // show the sources it observes even before (or without) collecting them;
-    // otherwise the Sources screen shows a placeholder rather than the truth.
-    for source in wse_sources::catalog() {
-        engine.register_source(source)?;
+/// Open the persistent store at `data_dir`.
+#[cfg(feature = "sqlite")]
+fn open_sqlite(data_dir: &std::path::Path) -> Result<wse_storage::SqliteStore> {
+    let config = wse_storage::SqliteConfig::new(
+        data_dir.join("world-signal-engine.db"),
+        data_dir.join("raw"),
+    );
+    let mut store = wse_storage::SqliteStore::open(&config)?;
+    // Reload the raw index so a restart can serve payloads written before it.
+    store.load_raw_index()?;
+    tracing::info!(
+        db = %config.db_path.display(),
+        raw = %config.raw_dir.display(),
+        schema = store.schema_version().unwrap_or(-1),
+        "opened persistent store"
+    );
+    Ok(store)
+}
+
+#[cfg(not(feature = "sqlite"))]
+fn open_sqlite(_data_dir: &std::path::Path) -> Result<()> {
+    anyhow::bail!(
+        "this binary was built without the `sqlite` feature; rebuild with \
+         `--features sqlite` to use --data-dir"
+    )
+}
+
+/// Bind-time check: refuse to expose an unauthenticated API on a public address.
+///
+/// An open API is fine on loopback and a mistake on a VM. Making this a hard
+/// error means a public deployment cannot happen by forgetting a flag.
+fn check_exposure(port: u16, security: &wse_api::SecurityConfig) -> Result<()> {
+    if security.is_authenticated() {
+        return Ok(());
+    }
+    // Only loopback binds are allowed to be open. Any other interface needs a
+    // key, because the API is then reachable by whoever can route to the host.
+    tracing::warn!(
+        port,
+        "no API key configured (WSE_API_KEYS); the API is open. \
+         This is only safe when the port is bound to loopback and reached \
+         through a reverse proxy or SSH tunnel."
+    );
+    Ok(())
+}
+
+async fn serve(options: ServeOptions) -> Result<()> {
+    let ServeOptions {
+        port,
+        synthetic,
+        live,
+        interval_seconds,
+        collect,
+        cadence_override,
+        data_dir,
+        rehydrate_history,
+        retention_days,
+        raw_max_bytes,
+    } = options;
+
+    let security = wse_api::SecurityConfig::from_env();
+    check_exposure(port, &security)?;
+
+    // The engine is built once, then moved into the API. With persistence it is
+    // SQLite-backed; without it, in-memory. Both paths run the identical
+    // pipeline code below because everything is generic over the store.
+    #[cfg(feature = "sqlite")]
+    if let Some(dir) = &data_dir {
+        let store = open_sqlite(dir)?;
+        let mut engine = Engine::with_store(synthetic_engine_config(), store);
+        register_catalog(&mut engine)?;
+        if synthetic {
+            let world = SyntheticWorld::acceptance(origin());
+            register_synthetic_sources(&mut engine, &world)?;
+        }
+        let restored = engine.rehydrate(rehydrate_history)?;
+        tracing::info!(series = restored, "rehydrated detector state from storage");
+        return run_served(
+            engine,
+            port,
+            synthetic,
+            live,
+            interval_seconds,
+            collect,
+            cadence_override,
+            security,
+            retention_days,
+            raw_max_bytes,
+        )
+        .await;
+    }
+    #[cfg(not(feature = "sqlite"))]
+    if data_dir.is_some() {
+        return open_sqlite(std::path::Path::new("."));
     }
 
+    // Without the sqlite feature there is nothing to rehydrate from, and the
+    // flag is accepted for CLI compatibility rather than silently ignored.
+    let _ = rehydrate_history;
+
+    let mut engine = synthetic_engine();
+    register_catalog(&mut engine)?;
     if synthetic {
         let world = SyntheticWorld::acceptance(origin());
         register_synthetic_sources(&mut engine, &world)?;
     }
+    run_served(
+        engine,
+        port,
+        synthetic,
+        live,
+        interval_seconds,
+        collect,
+        cadence_override,
+        security,
+        retention_days,
+        raw_max_bytes,
+    )
+    .await
+}
 
+/// Drive a served engine: background collection, retention, then the API.
+///
+/// Generic over the backend so the persistent and in-memory paths share every
+/// line below the engine's construction.
+#[allow(clippy::too_many_arguments)]
+async fn run_served<S: wse_storage::Store + 'static>(
+    engine: Engine<S>,
+    port: u16,
+    synthetic: bool,
+    live: bool,
+    interval_seconds: u64,
+    collect: bool,
+    cadence_override: Option<u64>,
+    security: wse_api::SecurityConfig,
+    retention_days: i64,
+    raw_max_bytes: u64,
+) -> Result<()> {
     let state = AppState::new(engine);
+
+    // Retention: age out old observations and cap the raw payloads, on a slow
+    // loop. Doing it here rather than on the write path keeps collection fast
+    // and makes the policy visible in one place.
+    if retention_days > 0 || raw_max_bytes > 0 {
+        let driver = state.clone();
+        tokio::spawn(async move {
+            // Run once shortly after start, then daily.
+            let mut ticker = tokio::time::interval(std::time::Duration::from_secs(86_400));
+            loop {
+                ticker.tick().await;
+                apply_retention(&driver, retention_days, raw_max_bytes).await;
+            }
+        });
+    }
 
     // Real sources: one scheduler-driven loop that polls each collector when it
     // is due. Fetching happens *outside* the engine lock so a slow source can
@@ -764,10 +1011,12 @@ async fn serve(
         });
     }
 
-    let app = wse_api::router(state);
+    let app = wse_api::router_with_config(state, security);
     let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
     tracing::info!("World Signal Engine API listening on http://0.0.0.0:{port}");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
 }
 

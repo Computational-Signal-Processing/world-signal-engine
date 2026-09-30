@@ -33,6 +33,12 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      # The CLI's `sqlite` feature is on by default, so the workspace test run
+      # exercises persistence. This checks the other configuration — a build
+      # that must not link a C compiler — still compiles.
+      - name: Check (no sqlite)
+        run: cargo check -p wse-cli --no-default-features
+
       - name: Build (release)
         run: cargo build --workspace --release
 
