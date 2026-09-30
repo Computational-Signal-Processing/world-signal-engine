@@ -91,8 +91,17 @@ No network or credentials are needed to run it.
   "fix" this by making the parser lenient.
 - **GitHub search responses are wrapped** in an envelope; the repos are under
   `items`. The fixture reflects this.
-- **MSRV is 1.82**, not 1.75 — the code uses `Option::is_none_or`, stable in
-  1.82.
+- **MSRV is 1.88**, not 1.75 or 1.82. It is set by the dependency graph, not by
+  our code: `icu_* 2.3.0` (pulled in via `url`, which both `ureq` and `reqwest`
+  depend on) requires 1.88, and several transitive crates are edition 2024, which
+  needs Cargo ≥ 1.85. Do not lower `rust-version` without re-running the MSRV CI
+  job; `cargo check` on the older toolchain is what proves it.
+- **`reqwest` is a dev-dependency of `wse-api` only**, and is built with
+  `default-features = false, features = ["json"]` — deliberately no TLS. The HTTP
+  tests talk to `http://127.0.0.1` and nothing else. Enabling `rustls-tls` pulls
+  in `quinn` → `rand 0.10` → `rand_core 0.10`, which is edition 2024 and pushes
+  the whole graph's MSRV up for no benefit. All real network I/O goes through
+  `ureq` in `wse-sources`.
 - The synthetic detector config (`DetectorConfig::synthetic()`) is deliberately
   permissive so the pipeline is visible in seconds. It is a demo config and makes
   no claims about the real world.

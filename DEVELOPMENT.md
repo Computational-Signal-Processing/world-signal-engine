@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Rust 1.82 or newer (the workspace MSRV; some code uses `Option::is_none_or`).
+- Rust 1.88 or newer (the workspace MSRV — see *Why 1.88* below).
 - No external services are needed to build or test. The full test suite runs
   against the synthetic world and checked-in fixtures, with no network.
 
