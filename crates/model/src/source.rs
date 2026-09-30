@@ -113,7 +113,7 @@ pub enum DataFormat {
 }
 
 /// How often a source is expected to produce data.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Cadence {
     /// A source that emits records whenever something happens.
@@ -156,7 +156,11 @@ pub struct SourceHealth {
     pub records_changed: u64,
     pub records_duplicate: u64,
     pub error_count: u64,
+    /// How many of the failures were the source throttling us.
+    pub rate_limit_count: u64,
     pub consecutive_failures: u32,
+    /// Short, credential-free description of the most recent failure.
+    pub last_error: Option<String>,
     pub status: HealthStatus,
 }
 
@@ -171,7 +175,9 @@ impl SourceHealth {
             records_changed: 0,
             records_duplicate: 0,
             error_count: 0,
+            rate_limit_count: 0,
             consecutive_failures: 0,
+            last_error: None,
             status: HealthStatus::Unknown,
         }
     }
@@ -190,19 +196,57 @@ impl SourceHealth {
         self.records_changed += changed;
         self.records_duplicate += duplicates;
         self.consecutive_failures = 0;
+        self.last_error = None;
         self.status = HealthStatus::Healthy;
     }
 
     pub fn record_failure(&mut self, at: DateTime<Utc>) {
+        self.record_failure_with(at, FailureKind::Unknown, None);
+    }
+
+    /// Record a failure, distinguishing throttling from real breakage.
+    ///
+    /// "Rate limited" and "down" are different facts about a source, and the
+    /// reader must be able to tell them apart: a throttled source is healthy,
+    /// we are simply asking too often.
+    pub fn record_failure_with(
+        &mut self,
+        at: DateTime<Utc>,
+        kind: FailureKind,
+        detail: Option<String>,
+    ) {
         self.last_failure = Some(at);
         self.error_count += 1;
-        self.consecutive_failures += 1;
-        self.status = if self.consecutive_failures >= 3 {
-            HealthStatus::Down
-        } else {
-            HealthStatus::Degraded
+        if kind == FailureKind::RateLimited {
+            self.rate_limit_count += 1;
+        }
+        self.last_error = detail;
+        self.status = match kind {
+            FailureKind::RateLimited => HealthStatus::RateLimited,
+            _ => {
+                self.consecutive_failures += 1;
+                if self.consecutive_failures >= 3 {
+                    HealthStatus::Down
+                } else {
+                    HealthStatus::Degraded
+                }
+            }
         };
     }
+}
+
+/// Why a collection run failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailureKind {
+    /// The source asked us to slow down (typically HTTP 429).
+    RateLimited,
+    /// The source could not be reached.
+    Transport,
+    /// The source answered with something we could not read.
+    Parse,
+    /// Anything else.
+    Unknown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,8 +254,12 @@ impl SourceHealth {
 pub enum HealthStatus {
     Unknown,
     Healthy,
+    /// Recovering, or failing once or twice.
     Degraded,
+    /// Repeatedly unreachable, or answering unreadably.
     Down,
+    /// The source is fine; we are polling it too often.
+    RateLimited,
 }
 
 #[cfg(test)]
@@ -240,6 +288,47 @@ mod tests {
         assert_eq!(h.consecutive_failures, 0);
         assert_eq!(h.records_changed, 3);
         assert_eq!(h.records_duplicate, 7);
+    }
+
+    #[test]
+    fn rate_limiting_is_not_reported_as_down() {
+        // A throttled source is healthy, we are asking too often. Even three
+        // rate-limit answers in a row must not read as "down".
+        let mut h = SourceHealth::new(SourceId::new("src_test"));
+        let now = Utc::now();
+        for _ in 0..3 {
+            h.record_failure_with(now, FailureKind::RateLimited, Some("HTTP 429".into()));
+        }
+        assert_eq!(h.status, HealthStatus::RateLimited);
+        assert_eq!(h.rate_limit_count, 3);
+        assert_eq!(
+            h.consecutive_failures, 0,
+            "throttling is not a failure streak"
+        );
+        assert_eq!(h.last_error.as_deref(), Some("HTTP 429"));
+    }
+
+    #[test]
+    fn a_real_failure_after_a_rate_limit_still_escalates() {
+        let mut h = SourceHealth::new(SourceId::new("src_test"));
+        let now = Utc::now();
+        h.record_failure_with(now, FailureKind::RateLimited, None);
+        h.record_failure_with(
+            now,
+            FailureKind::Transport,
+            Some("connection refused".into()),
+        );
+        assert_eq!(h.status, HealthStatus::Degraded);
+        assert_eq!(h.consecutive_failures, 1);
+    }
+
+    #[test]
+    fn success_clears_the_last_error() {
+        let mut h = SourceHealth::new(SourceId::new("src_test"));
+        let now = Utc::now();
+        h.record_failure_with(now, FailureKind::Parse, Some("bad json".into()));
+        h.record_success(now, 1, 1, 1, 0);
+        assert!(h.last_error.is_none());
     }
 
     #[test]

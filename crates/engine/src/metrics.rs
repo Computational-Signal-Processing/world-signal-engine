@@ -13,6 +13,8 @@ pub struct Metrics {
     pub sources_registered: u64,
     pub collector_success_total: u64,
     pub collector_failure_total: u64,
+    /// Failures that were the source throttling us, not breaking.
+    pub collector_rate_limited_total: u64,
     pub collector_latency_ms: Option<u64>,
     pub observations_total: u64,
     pub observations_duplicate_total: u64,
@@ -40,6 +42,10 @@ impl Metrics {
         out.push_str(&format!(
             "wse_collector_failure_total {}\n",
             self.collector_failure_total
+        ));
+        out.push_str(&format!(
+            "wse_collector_rate_limited_total {}\n",
+            self.collector_rate_limited_total
         ));
         if let Some(latency) = self.collector_latency_ms {
             out.push_str(&format!("wse_collector_latency_ms {latency}\n"));

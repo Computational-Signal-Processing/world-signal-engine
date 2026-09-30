@@ -56,10 +56,20 @@ pub fn source() -> Source {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct TimelineResponse {
+    /// Older responses echo the query here.
     #[serde(default)]
     pub query: String,
+    /// The live API echoes it here instead, as an object.
+    #[serde(default)]
+    pub query_details: Option<QueryDetails>,
     #[serde(default)]
     pub timeline: Vec<Series>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct QueryDetails {
+    #[serde(default)]
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -72,7 +82,8 @@ pub struct Series {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Point {
-    /// `YYYYMMDDHHMMSS` in UTC.
+    /// Compact UTC timestamp. The live API returns `YYYYMMDDTHHMMSSZ`; older
+    /// documentation and some responses use `YYYYMMDDHHMMSS`.
     pub date: String,
     pub value: f64,
 }
@@ -95,11 +106,7 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
     let response: TimelineResponse = serde_json::from_slice(body)
         .map_err(|e| CollectorError::Parse(format!("gdelt timeline: {e}")))?;
 
-    let query = if response.query.is_empty() {
-        DEFAULT_QUERY.to_string()
-    } else {
-        response.query.clone()
-    };
+    let query = resolve_query(&response);
     let entity = EntityId::new(format!("topic_{}", wse_model::canonicalize(&query)));
     let source_id = SourceId::new(SOURCE_ID);
     let hash = wse_model::fnv1a_hex(&String::from_utf8_lossy(body));
@@ -136,12 +143,30 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
     Ok(observations)
 }
 
+/// The tracked topic from a response, however the API chose to echo it.
+fn resolve_query(response: &TimelineResponse) -> String {
+    if !response.query.is_empty() {
+        return response.query.clone();
+    }
+    if let Some(details) = &response.query_details {
+        if !details.title.is_empty() {
+            return details.title.clone();
+        }
+    }
+    DEFAULT_QUERY.to_string()
+}
+
 /// GDELT timestamps are compact UTC strings, not RFC 3339.
+///
+/// Two shapes appear in the wild: `YYYYMMDDHHMMSS` (the documented form) and
+/// `YYYYMMDDTHHMMSSZ` (what the live API returns). Both must decode, or every
+/// live point would be skipped and the source would look empty.
 fn parse_gdelt_date(raw: &str) -> Option<DateTime<Utc>> {
-    if raw.len() < 14 {
+    let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
+    if digits.len() != 14 {
         return None;
     }
-    let naive = NaiveDateTime::parse_from_str(&raw[..14], "%Y%m%d%H%M%S").ok()?;
+    let naive = NaiveDateTime::parse_from_str(&digits, "%Y%m%d%H%M%S").ok()?;
     Some(Utc.from_utc_datetime(&naive))
 }
 
@@ -224,6 +249,35 @@ mod tests {
     fn short_or_bogus_dates_are_skipped() {
         assert!(parse_gdelt_date("2023").is_none());
         assert!(parse_gdelt_date("not-a-date-at-all").is_none());
+    }
+
+    #[test]
+    fn the_live_api_date_format_decodes() {
+        // The live API returns `YYYYMMDDTHHMMSSZ`; the documented form has no
+        // separators. Both must decode or live GDELT would look empty.
+        let compact = parse_gdelt_date("20231115000000").unwrap();
+        let live = parse_gdelt_date("20231115T000000Z").unwrap();
+        assert_eq!(compact, live);
+        assert_eq!(live.to_rfc3339(), "2023-11-15T00:00:00+00:00");
+    }
+
+    #[test]
+    fn a_captured_live_response_parses() {
+        // A real payload captured from the live API, kept so the live date
+        // format and `query_details` shape cannot silently regress.
+        let body = include_bytes!("../../../tests/fixtures/gdelt_timelinevol_real.json");
+        let observations = parse(body, received()).unwrap();
+        assert!(!observations.is_empty(), "live payload produced no points");
+        let first = &observations[0];
+        assert_eq!(first.observed_at.to_rfc3339(), "2026-09-29T14:45:00+00:00");
+        assert_eq!(
+            first.dimensions.get("query").map(String::as_str),
+            Some("climate"),
+            "the topic must come from query_details when query is absent"
+        );
+        // A live series is one series, regardless of how the topic was echoed.
+        let keys: Vec<String> = observations.iter().map(|o| o.series_key()).collect();
+        assert!(keys.iter().all(|k| k == &keys[0]));
     }
 
     #[test]

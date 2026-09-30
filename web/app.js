@@ -78,6 +78,27 @@ function fmtDuration(seconds) {
   return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
 }
 
+/** Source-side lag in the units a reader thinks in. */
+function fmtLag(ms) {
+  if (ms === null || ms === undefined) return "—";
+  const abs = Math.abs(ms);
+  if (abs < 1000) return `${Math.round(ms)} ms`;
+  if (abs < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  if (abs < 3_600_000) return `${(ms / 60_000).toFixed(1)} min`;
+  return `${(ms / 3_600_000).toFixed(1)} h`;
+}
+
+/**
+ * A health badge. "rate limited" and "down" are deliberately different: a
+ * throttled source is healthy, we are simply asking too often.
+ */
+function healthBadge(status) {
+  return el("span", { class: "health", "data-health": status || "unknown" }, [
+    el("span", { class: "dot", "aria-hidden": "true" }),
+    String(status || "unknown").replace("_", " "),
+  ]);
+}
+
 function typeBadge(type) {
   return el("span", { class: "type", "data-type": type }, [
     el("span", { class: "glyph", "aria-hidden": "true" }),
@@ -465,7 +486,7 @@ async function observationView(id) {
             el("dt", { text: "value" }), el("dd", { text: `${observation.value} ${observation.unit}` }),
             el("dt", { text: "observed at" }), el("dd", { text: fmtTime(observation.observed_at) }),
             el("dt", { text: "received at" }), el("dd", { text: fmtTime(observation.received_at) }),
-            el("dt", { text: "lag" }), el("dd", { text: `${observation.lag_seconds ?? "—"}s` }),
+            el("dt", { text: "lag" }), el("dd", { text: fmtLag(observation.lag_ms) }),
             el("dt", { text: "quality" }), el("dd", { text: observation.quality?.score?.toFixed?.(2) ?? "—" }),
             el("dt", { text: "flags" }),
             el("dd", { text: (observation.quality?.flags || []).join(", ") || "none" }),
@@ -479,14 +500,14 @@ async function observationView(id) {
           ? el("div", { class: "panel" }, [
               el("h2", { text: "Source" }),
               el("dl", { class: "kv" }, [
-                el("dt", { text: "name" }), el("dd", { text: source.source.name }),
-                el("dt", { text: "provider" }), el("dd", { text: source.source.provider }),
-                el("dt", { text: "category" }), el("dd", { text: source.source.category }),
-                el("dt", { text: "protocol" }), el("dd", { text: source.source.protocol }),
-                el("dt", { text: "format" }), el("dd", { text: source.source.format }),
-                el("dt", { text: "license" }), el("dd", { text: source.source.license || "—" }),
+                el("dt", { text: "name" }), el("dd", { text: source.name }),
+                el("dt", { text: "provider" }), el("dd", { text: source.provider }),
+                el("dt", { text: "category" }), el("dd", { text: source.category }),
+                el("dt", { text: "protocol" }), el("dd", { text: source.protocol }),
+                el("dt", { text: "format" }), el("dd", { text: source.format }),
+                el("dt", { text: "license" }), el("dd", { text: source.license || "—" }),
               ]),
-              el("a", { href: `#/source/${source.source.id}`, text: "→ source detail" }),
+              el("a", { href: `#/source/${source.id}`, text: "→ source detail" }),
             ])
           : el("div", { class: "panel", text: "Source metadata unavailable." }),
       ]),
@@ -498,20 +519,22 @@ async function observationView(id) {
 
 async function sourceView(id) {
   const detail = await api(`/sources/${encodeURIComponent(id)}`);
-  const source = detail.source;
+  const source = detail;
   const health = detail.health;
   setStatus(`source ${source.id}`);
 
   const healthRows = health
     ? [
-        el("dt", { text: "status" }), el("dd", { text: health.status }),
+        el("dt", { text: "status" }), el("dd", {}, [healthBadge(health.status)]),
         el("dt", { text: "last success" }), el("dd", { text: fmtTime(health.last_success) }),
         el("dt", { text: "last failure" }), el("dd", { text: fmtTime(health.last_failure) }),
-        el("dt", { text: "latency" }), el("dd", { text: `${health.latency_ms ?? "—"} ms` }),
+        el("dt", { text: "last error" }), el("dd", { text: health.last_error || "—" }),
+        el("dt", { text: "latency" }), el("dd", { text: `${health.last_latency_ms ?? "—"} ms` }),
         el("dt", { text: "records received" }), el("dd", { text: String(health.records_received ?? 0) }),
         el("dt", { text: "records changed" }), el("dd", { text: String(health.records_changed ?? 0) }),
         el("dt", { text: "records duplicate" }), el("dd", { text: String(health.records_duplicate ?? 0) }),
         el("dt", { text: "errors" }), el("dd", { text: String(health.error_count ?? 0) }),
+        el("dt", { text: "rate limited" }), el("dd", { text: String(health.rate_limit_count ?? 0) }),
       ]
     : [el("dt", { text: "health" }), el("dd", { text: "never run" })];
 
@@ -541,7 +564,8 @@ async function sourceView(id) {
             el("dt", { text: "subcategory" }), el("dd", { text: source.subcategory || "—" }),
             el("dt", { text: "protocol" }), el("dd", { text: source.protocol }),
             el("dt", { text: "format" }), el("dd", { text: source.format }),
-            el("dt", { text: "cadence" }), el("dd", { text: source.cadence || "—" }),
+            el("dt", { text: "cadence" }),
+            el("dd", { text: source.cadence_label || "—" }),
             el("dt", { text: "license" }), el("dd", { text: source.license || "—" }),
             el("dt", { text: "authentication" }), el("dd", { text: source.authentication || "—" }),
             el("dt", { text: "enabled" }), el("dd", { text: source.enabled ? "yes" : "no" }),
@@ -561,8 +585,8 @@ async function sourcesIndex() {
       el("div", { class: "summary", text: `${source.category} · ${source.provider}` }),
       el("div", { class: "meta" }, [
         el("span", { text: source.protocol }),
-        el("span", { text: source.format }),
-        el("span", { text: source.enabled ? "enabled" : "disabled" }),
+        el("span", { text: source.cadence_label || "—" }),
+        source.health ? healthBadge(source.health.status) : el("span", { text: "never run" }),
       ]),
     ])
   );

@@ -36,5 +36,5 @@ pub use observation::{series_key, Observation, RawReference};
 pub use quality::{DataPresence, Quality, QualityFlag};
 pub use signal::{Direction, Evidence, Signal, SignalQuality, SignalType};
 pub use source::{
-    AuthKind, Cadence, Cost, DataFormat, HealthStatus, Protocol, Source, SourceHealth,
+    AuthKind, Cadence, Cost, DataFormat, FailureKind, HealthStatus, Protocol, Source, SourceHealth,
 };

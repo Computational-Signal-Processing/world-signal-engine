@@ -159,6 +159,15 @@ h2 { font-size: 0.95rem; margin: 0 0 0.4rem; font-weight: 600; }
 
 .empty { color: var(--ink-dim); padding: 3rem 0; text-align: center; }
 
+/* Source health. "rate limited" is visually its own thing: the source is fine,
+   we are asking too often, and that must not read like "down". */
+.health { display: inline-flex; align-items: center; gap: 0.35rem; font-family: var(--mono); font-size: 0.72rem; }
+.health .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--ink-dim); }
+.health[data-health="healthy"] .dot { background: var(--ok, #4caf50); }
+.health[data-health="degraded"] .dot { background: var(--warn); }
+.health[data-health="down"] .dot { background: var(--bad); }
+.health[data-health="rate_limited"] .dot { background: var(--warn); border-radius: 0; }
+
 /* Drill-down trail */
 .trail { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); margin-bottom: 1.25rem; }
 .trail a { color: var(--accent); text-decoration: none; }

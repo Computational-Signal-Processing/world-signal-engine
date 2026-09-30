@@ -148,6 +148,11 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
             raw,
         )
         .with_received_at(received_at)
+        // Two repositories can share a `pushed_at` to the second. Without a
+        // per-repository discriminator they would share an observation id and
+        // all but one would be silently de-duplicated away. The repository is
+        // the record's identity; the ecosystem remains the series.
+        .with_identity(&repo.full_name)
         .with_attribute("repo", repo.full_name.clone())
         .with_attribute("repo_id", repo.id.to_string())
         .with_attribute("forks", format!("{:.0}", repo.forks_count))
@@ -240,6 +245,39 @@ mod tests {
         let observations = parse(body, received()).unwrap();
         assert_eq!(observations.len(), 1);
         assert_eq!(observations[0].value, 5.0);
+    }
+
+    #[test]
+    fn repositories_sharing_a_push_time_stay_distinct() {
+        // The real GitHub shape that caused silent data loss: two repositories
+        // pushed in the same second must produce two observations, not one.
+        let body = br#"[
+            {"id":1,"full_name":"a/one","html_url":"https://github.com/a/one",
+             "stargazers_count":10,"pushed_at":"2023-11-19T22:04:00Z","archived":false},
+            {"id":2,"full_name":"a/two","html_url":"https://github.com/a/two",
+             "stargazers_count":20,"pushed_at":"2023-11-19T22:04:00Z","archived":false}
+        ]"#;
+        let observations = parse(body, received()).unwrap();
+        assert_eq!(observations.len(), 2, "both repositories must be retained");
+        assert_ne!(
+            observations[0].id, observations[1].id,
+            "same timestamp must not collapse two repositories into one id"
+        );
+        assert_eq!(
+            observations[0].series_key(),
+            observations[1].series_key(),
+            "both are still one ecosystem series"
+        );
+    }
+
+    #[test]
+    fn an_unchanged_repository_still_de_duplicates() {
+        // Identity must be stable, or every collection would re-insert.
+        let body = br#"[{"id":1,"full_name":"a/one","html_url":"https://github.com/a/one",
+            "stargazers_count":10,"pushed_at":"2023-11-19T22:04:00Z","archived":false}]"#;
+        let first = parse(body, received()).unwrap();
+        let second = parse(body, received()).unwrap();
+        assert_eq!(first[0].id, second[0].id);
     }
 
     #[test]
