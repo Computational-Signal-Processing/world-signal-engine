@@ -1,9 +1,12 @@
 //! # wse-storage
 //!
 //! Storage is expressed as traits so the application is never locked to one
-//! database. The MVP ships an in-memory implementation that is good enough to
-//! run the whole pipeline and the tests; a persistent backend can be added
-//! later without touching the engine.
+//! database. Two backends implement them:
+//!
+//! * [`InMemoryStore`] — hash maps. Runs the whole pipeline and the tests with
+//!   zero operational cost, which is what the synthetic world needs.
+//! * `SqliteStore` (feature `sqlite`) — a single-file database with the raw
+//!   payloads on disk, for an engine that has to survive a restart.
 //!
 //! The five stores mirror the domain:
 //!
@@ -20,9 +23,15 @@ mod query;
 mod raw;
 mod store;
 
+#[cfg(feature = "sqlite")]
+mod sqlite;
+
 pub use memory::InMemoryStore;
 pub use query::{ObservationQuery, Page, SignalQuery, TimeRange};
-pub use raw::{RawStore, StoredPayload};
+pub use raw::{MemoryRawStore, RawStore, StoredPayload};
+#[cfg(feature = "sqlite")]
+pub use sqlite::{FilesystemRawStore, SqliteConfig, SqliteStore};
 pub use store::{
-    BaselineStore, EventStore, ObservationStore, SignalStore, SourceStore, StorageError, Store,
+    BaselineStore, DiskUsage, EventStore, MaintenanceStore, ObservationStore, SignalStore,
+    SourceStore, StorageError, Store,
 };

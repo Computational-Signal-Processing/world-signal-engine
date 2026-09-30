@@ -65,7 +65,11 @@ async fn serve_with(config: EngineConfig) -> String {
     let state = AppState::new(engine);
     // Point the router at a directory that does not exist: these tests are
     // about the API, and the UI fallback is covered separately.
-    let app = router_with_web_dir(state, "/nonexistent-web-dir-for-tests");
+    let app = router_with_web_dir(
+        state,
+        "/nonexistent-web-dir-for-tests",
+        wse_api::SecurityConfig::default(),
+    );
     serve_app(app).await
 }
 
@@ -381,11 +385,179 @@ async fn web_ui_is_served_from_the_configured_directory() {
     )
     .unwrap();
 
-    let app = router_with_web_dir(state, (*web_dir).clone());
+    let app = router_with_web_dir(
+        state,
+        (*web_dir).clone(),
+        wse_api::SecurityConfig::default(),
+    );
     let base = serve_app(app).await;
 
     let response = reqwest::get(format!("{base}/")).await.unwrap();
     assert_eq!(response.status(), 200);
     let body = response.text().await.unwrap();
     assert!(body.contains("WSE"), "index.html was not served: {body}");
+}
+
+/// A served engine with authentication turned on.
+async fn serve_with_keys(keys: Vec<String>) -> String {
+    let state = AppState::new(Engine::new(EngineConfig::default()));
+    let app = router_with_web_dir(
+        state,
+        "/nonexistent-web-dir-for-tests",
+        wse_api::SecurityConfig {
+            api_keys: keys,
+            ..wse_api::SecurityConfig::default()
+        },
+    );
+    serve_app(app).await
+}
+
+#[tokio::test]
+async fn a_configured_key_is_required_for_every_data_route() {
+    let base = serve_with_keys(vec!["s3cret".into()]).await;
+
+    // Without a key: rejected.
+    let (status, _) = get_json(&base, "/signals").await;
+    assert_eq!(status, 401, "an unauthenticated read must not succeed");
+
+    // With a wrong key: rejected. A near-miss must not be treated as a match.
+    let wrong = reqwest::Client::new()
+        .get(format!("{base}/signals"))
+        .bearer_auth("s3cre")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong.status().as_u16(), 401);
+
+    // With the right key: served.
+    let ok = reqwest::Client::new()
+        .get(format!("{base}/signals"))
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status().as_u16(), 200);
+
+    // The `X-API-Key` header is accepted too, for clients that cannot set
+    // `Authorization`.
+    let via_header = reqwest::Client::new()
+        .get(format!("{base}/signals"))
+        .header("x-api-key", "s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(via_header.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn health_stays_open_but_metrics_does_not() {
+    let base = serve_with_keys(vec!["s3cret".into()]).await;
+
+    // A load balancer must be able to probe health without credentials.
+    let (status, _) = get_json(&base, "/health").await;
+    assert_eq!(status, 200);
+
+    // Metrics expose operational detail and stay behind the key.
+    let (status, _) = get_json(&base, "/metrics").await;
+    assert_eq!(status, 401);
+
+    let ok = reqwest::Client::new()
+        .get(format!("{base}/metrics"))
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn an_unauthenticated_router_emits_no_cors_headers() {
+    // The default configuration has no allowed origins. A cross-origin request
+    // must not be told it is welcome, or any page could read the API through a
+    // visitor's browser.
+    let base = serve().await;
+    let response = reqwest::Client::new()
+        .get(format!("{base}/health"))
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        response
+            .headers()
+            .get("access-control-allow-origin")
+            .is_none(),
+        "an unconfigured API must not send CORS headers"
+    );
+}
+
+#[tokio::test]
+async fn a_configured_origin_is_the_only_one_allowed() {
+    let state = AppState::new(Engine::new(EngineConfig::default()));
+    let app = router_with_web_dir(
+        state,
+        "/nonexistent-web-dir-for-tests",
+        wse_api::SecurityConfig {
+            cors_origins: vec!["https://app.example".into()],
+            ..wse_api::SecurityConfig::default()
+        },
+    );
+    let base = serve_app(app).await;
+
+    let allowed = reqwest::Client::new()
+        .get(format!("{base}/health"))
+        .header("origin", "https://app.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        allowed
+            .headers()
+            .get("access-control-allow-origin")
+            .map(|v| v.to_str().unwrap()),
+        Some("https://app.example")
+    );
+
+    let denied = reqwest::Client::new()
+        .get(format!("{base}/health"))
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert!(denied
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+}
+
+#[tokio::test]
+async fn the_ui_stays_reachable_when_authentication_is_on() {
+    // The key field lives in the UI, so the UI cannot itself be behind the key:
+    // a browser would have nowhere to type one. The middleware guards the API
+    // routes only, and this is what proves it.
+    let web_dir = Arc::new(std::env::temp_dir().join("wse-web-auth-test"));
+    std::fs::create_dir_all(&*web_dir).unwrap();
+    std::fs::write(
+        web_dir.join("index.html"),
+        "<!doctype html><title>WSE</title>",
+    )
+    .unwrap();
+
+    let state = AppState::new(Engine::new(EngineConfig::default()));
+    let app = router_with_web_dir(
+        state,
+        (*web_dir).clone(),
+        wse_api::SecurityConfig {
+            api_keys: vec!["s3cret".into()],
+            ..wse_api::SecurityConfig::default()
+        },
+    );
+    let base = serve_app(app).await;
+
+    let page = reqwest::get(format!("{base}/")).await.unwrap();
+    assert_eq!(page.status(), 200, "the UI must load without a key");
+
+    // The data routes behind it still do not.
+    let (status, _) = get_json(&base, "/signals").await;
+    assert_eq!(status, 401);
 }

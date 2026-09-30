@@ -41,7 +41,7 @@ web UI. Current state:
 | Source catalog | 5 sources across 4 categories |
 | Collectors | USGS, NASA NEO, GDELT, Hacker News, GitHub |
 | Normalization | Observation model with dimensions and attributes |
-| Storage | In-memory `Observation`/`Event`/`Signal`/`Source`/`Baseline`/`Raw` stores |
+| Storage | In-memory or SQLite `Observation`/`Event`/`Signal`/`Source`/`Baseline`/`Raw` stores |
 | Baseline | Rolling and robust statistics |
 | Detection | Change, anomaly, early signal |
 | Correlation | Cross-source convergence |
@@ -49,7 +49,7 @@ web UI. Current state:
 | API | REST, with a raw-data endpoint |
 | Web UI | World, signal, event, source, timeline, map |
 
-300 tests pass across the workspace.
+323 tests pass across the workspace.
 
 ## Quick start
 
@@ -65,9 +65,19 @@ cargo run -p wse-cli -- collect --verbose
 
 # Serve the API and web UI, backed by live data collected at startup.
 cargo run -p wse-cli -- serve --port 8080 --collect
+
+# The same, but persistent and protected, as a deployment would run it.
+export WSE_API_KEYS="$(openssl rand -hex 32)"
+cargo run -p wse-cli -- serve --port 8080 --collect \
+  --data-dir /var/lib/world-signal-engine --retention-days 90
 ```
 
 Then open <http://localhost:8080>.
+
+With `--data-dir` the engine keeps observations, signals, source health and
+baselines in SQLite, so a restart resumes rather than re-learning. With
+`WSE_API_KEYS` set, every route but `/health` needs the key. See
+[docs/deployment.md](docs/deployment.md) for the full operational story.
 
 The API is small on purpose:
 
@@ -100,6 +110,8 @@ GET /timeline                 ?series=
 | [docs/detection.md](docs/detection.md) | Baselines, change, anomaly, early signal |
 | [docs/correlation.md](docs/correlation.md) | Convergence across independent sources |
 | [docs/lenses.md](docs/lenses.md) | Lenses and relevance |
+| [docs/deployment.md](docs/deployment.md) | Persistence, retention, security, systemd |
+| [docs/audit.md](docs/audit.md) | Reality audit of Phases 0–12 against real commands |
 
 ## Design principles
 

@@ -8,6 +8,7 @@ use wse_model::{
 };
 
 use crate::query::{ObservationQuery, Page, SignalQuery, TimeRange};
+use crate::raw::RawStore;
 
 #[derive(Debug, Error)]
 pub enum StorageError {
@@ -101,9 +102,68 @@ pub trait BaselineStore {
     ) -> Result<Option<(DateTime<Utc>, BaselineSnapshot)>, StorageError>;
 }
 
+/// Disk footprint of a storage backend.
+///
+/// Reported on `/metrics` and `/health` so retention is observable: a store
+/// that grows without bound is a failure mode that should be visible *before*
+/// the disk fills, not discovered from an alert that the VM is full.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DiskUsage {
+    pub db_bytes: u64,
+    pub raw_bytes: u64,
+    pub raw_files: u64,
+}
+
+impl DiskUsage {
+    pub fn total_bytes(&self) -> u64 {
+        self.db_bytes.saturating_add(self.raw_bytes)
+    }
+}
+
+/// Retention and footprint: the operations a long-running deployment needs.
+///
+/// Part of [`Store`] rather than separate because the retention loop is written
+/// once against the generic engine, and an in-memory backend can honestly answer
+/// "nothing to retain" with a no-op instead of forcing a special case at every
+/// call site.
+pub trait MaintenanceStore {
+    /// Delete observations observed before `cutoff`. Returns how many rows went.
+    fn delete_observations_before(&mut self, cutoff: DateTime<Utc>) -> Result<usize, StorageError>;
+
+    /// Delete raw payloads, oldest first, until the store is at or below
+    /// `max_bytes`. Returns how many were removed.
+    ///
+    /// A backend with no filesystem payloads has nothing to prune and returns
+    /// zero, which is different from failing to prune.
+    fn prune_raw_to(&mut self, max_bytes: u64) -> Result<usize, StorageError>;
+
+    /// Current disk footprint.
+    fn disk_usage(&self) -> Result<DiskUsage, StorageError>;
+}
+
 /// Umbrella trait for a complete storage backend.
-pub trait Store: ObservationStore + EventStore + SignalStore + SourceStore + BaselineStore {}
+///
+/// Includes [`RawStore`] because the raw bytes are part of the same promise as
+/// the rows: "drill down to raw data" has to work for whichever backend is in
+/// use. A backend that keeps its bytes elsewhere (files, object storage) still
+/// exposes them through this trait, so the engine never has to know which.
+pub trait Store:
+    ObservationStore
+    + EventStore
+    + SignalStore
+    + SourceStore
+    + BaselineStore
+    + RawStore
+    + MaintenanceStore
+{
+}
 impl<T> Store for T where
-    T: ObservationStore + EventStore + SignalStore + SourceStore + BaselineStore
+    T: ObservationStore
+        + EventStore
+        + SignalStore
+        + SourceStore
+        + BaselineStore
+        + RawStore
+        + MaintenanceStore
 {
 }

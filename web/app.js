@@ -19,6 +19,35 @@ const view = document.getElementById("view");
 const statusEl = document.getElementById("status");
 const metricsEl = document.getElementById("metrics");
 const lensSelect = document.getElementById("lens-select");
+const keyInput = document.getElementById("api-key");
+const keyPicker = document.getElementById("key-picker");
+
+/* Reveal the key field on demand.
+ *
+ * A loopback demo runs with no key, and showing an empty credential box on
+ * every visit would imply the API needs one. It appears when a key is already
+ * stored, or when a request comes back 401 — i.e. exactly when it is needed. */
+function revealKeyPicker() {
+  if (keyPicker) keyPicker.classList.add("visible");
+}
+
+/* The API key, if the deployment requires one.
+ *
+ * Kept in localStorage rather than in the URL: a key in the query string ends
+ * up in browser history, in server logs, and in any Referer the page sends.
+ * It is sent as a header on every request below. */
+const KEY_STORAGE = "wse-api-key";
+
+function apiKey() {
+  try { return localStorage.getItem(KEY_STORAGE) || ""; } catch (_) { return ""; }
+}
+
+function setApiKey(value) {
+  try {
+    if (value) localStorage.setItem(KEY_STORAGE, value);
+    else localStorage.removeItem(KEY_STORAGE);
+  } catch (_) { /* private mode: the key simply does not persist */ }
+}
 
 /** The active lens, kept in the URL so a view is linkable and survives reload. */
 function activeLens() {
@@ -52,8 +81,15 @@ function el(tag, props = {}, children = []) {
 }
 
 async function api(path) {
-  const response = await fetch(path, { headers: { accept: "application/json" } });
+  const headers = { accept: "application/json" };
+  const key = apiKey();
+  if (key) headers["Authorization"] = `Bearer ${key}`;
+  const response = await fetch(path, { headers });
   if (!response.ok) {
+    if (response.status === 401) {
+      revealKeyPicker();
+      throw new Error("This deployment requires an API key. Enter it in the KEY field above.");
+    }
     let detail = response.statusText;
     try {
       const body = await response.json();
@@ -777,7 +813,10 @@ async function route() {
 
 async function refreshMetrics() {
   try {
-    const text = await (await fetch("/metrics")).text();
+    const headers = {};
+    const key = apiKey();
+    if (key) headers["Authorization"] = `Bearer ${key}`;
+    const text = await (await fetch("/metrics", { headers })).text();
     const wanted = ["wse_observations_total", "wse_anomalies_total", "wse_signals_total"];
     const lines = text
       .split("\n")
@@ -788,6 +827,15 @@ async function refreshMetrics() {
 }
 
 window.addEventListener("hashchange", route);
+if (keyInput) {
+  keyInput.value = apiKey();
+  if (apiKey()) revealKeyPicker();
+  keyInput.addEventListener("change", (event) => {
+    setApiKey(event.target.value.trim());
+    // Re-run the current view so the new key takes effect immediately.
+    route();
+  });
+}
 if (lensSelect) {
   lensSelect.addEventListener("change", (event) => {
     // Keep the current hash; only the query changes. `worldView` re-reads it.

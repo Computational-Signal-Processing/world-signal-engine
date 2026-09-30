@@ -14,9 +14,7 @@ use wse_model::{
     Cadence, EntityId, EventId, Observation, ObservationId, SignalId, SignalType, Source,
     SourceHealth, SourceId,
 };
-use wse_storage::{
-    EventStore, ObservationQuery, ObservationStore, SignalQuery, SignalStore, SourceStore,
-};
+use wse_storage::{ObservationQuery, SignalQuery};
 
 use crate::state::AppState;
 
@@ -141,7 +139,7 @@ pub struct HealthResponse {
 }
 
 /// `GET /health`
-pub async fn health(State(state): State<AppState>) -> Response {
+pub async fn health<S: wse_storage::Store>(State(state): State<AppState<S>>) -> Response {
     let engine = state.read().await;
     let store = engine.store();
     let (sources, observations, events, signals) = (
@@ -162,7 +160,7 @@ pub async fn health(State(state): State<AppState>) -> Response {
 }
 
 /// `GET /metrics`
-pub async fn metrics(State(state): State<AppState>) -> Response {
+pub async fn metrics<S: wse_storage::Store>(State(state): State<AppState<S>>) -> Response {
     let engine = state.read().await;
     (
         StatusCode::OK,
@@ -197,8 +195,8 @@ fn parse_signal_type(raw: &str) -> Option<SignalType> {
 }
 
 /// `GET /signals`
-pub async fn list_signals(
-    State(state): State<AppState>,
+pub async fn list_signals<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
     Query(params): Query<SignalParams>,
 ) -> Response {
     let signal_type = match params.signal_type.as_deref() {
@@ -228,7 +226,10 @@ pub async fn list_signals(
 }
 
 /// `GET /signals/:id`
-pub async fn get_signal(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+pub async fn get_signal<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
     let engine = state.read().await;
     match engine.signal(&SignalId::new(id.clone())) {
         Some(signal) => Json(signal).into_response(),
@@ -237,7 +238,10 @@ pub async fn get_signal(State(state): State<AppState>, Path(id): Path<String>) -
 }
 
 /// `GET /events/:id`
-pub async fn get_event(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+pub async fn get_event<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
     let engine = state.read().await;
     match engine.event(&EventId::new(id.clone())) {
         Some(event) => Json(event).into_response(),
@@ -246,7 +250,10 @@ pub async fn get_event(State(state): State<AppState>, Path(id): Path<String>) ->
 }
 
 /// `GET /observations/:id`
-pub async fn get_observation(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+pub async fn get_observation<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
     let engine = state.read().await;
     match engine.observation(&ObservationId::new(id.clone())) {
         Some(observation) => Json(ObservationView::new(observation)).into_response(),
@@ -257,8 +264,8 @@ pub async fn get_observation(State(state): State<AppState>, Path(id): Path<Strin
 /// `GET /observations/:id/raw`
 ///
 /// The last step of the drill-down: the bytes the source actually returned.
-pub async fn get_observation_raw(
-    State(state): State<AppState>,
+pub async fn get_observation_raw<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
     Path(id): Path<String>,
 ) -> Response {
     let engine = state.read().await;
@@ -291,7 +298,7 @@ pub async fn get_observation_raw(
 }
 
 /// `GET /sources`
-pub async fn list_sources(State(state): State<AppState>) -> Response {
+pub async fn list_sources<S: wse_storage::Store>(State(state): State<AppState<S>>) -> Response {
     let engine = state.read().await;
     match engine.store().all_sources() {
         Ok(sources) => {
@@ -309,7 +316,10 @@ pub async fn list_sources(State(state): State<AppState>) -> Response {
 }
 
 /// `GET /sources/:id`
-pub async fn get_source(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+pub async fn get_source<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
     let engine = state.read().await;
     let source_id = SourceId::new(id.clone());
     match engine.store().get_source(&source_id) {
@@ -333,7 +343,10 @@ pub struct EntityDetail {
 ///
 /// Entities are not a first-class store in the MVP; this endpoint resolves the
 /// entity by searching the signals and observations that reference it.
-pub async fn get_entity(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+pub async fn get_entity<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
     let engine = state.read().await;
     let store = engine.store();
     let signals = match store.query_signals(&SignalQuery {
@@ -379,8 +392,8 @@ pub struct TimelineResponse {
 ///
 /// The raw material for the `NORMAL ────╮ ╰──● NOW` visualisation: the recent
 /// points of one series plus the baseline they were compared against.
-pub async fn timeline(
-    State(state): State<AppState>,
+pub async fn timeline<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
     Query(params): Query<TimelineParams>,
 ) -> Response {
     let limit = params.limit.unwrap_or(200).min(5_000);
@@ -420,7 +433,7 @@ pub struct LensSummary {
 }
 
 /// `GET /lenses`
-pub async fn list_lenses(State(state): State<AppState>) -> Response {
+pub async fn list_lenses<S: wse_storage::Store>(State(state): State<AppState<S>>) -> Response {
     let engine = state.read().await;
     let signals = match engine.store().query_signals(&SignalQuery::default()) {
         Ok(page) => page.items,
@@ -441,7 +454,10 @@ pub async fn list_lenses(State(state): State<AppState>) -> Response {
 }
 
 /// `GET /lenses/:id`
-pub async fn get_lens(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+pub async fn get_lens<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Path(id): Path<String>,
+) -> Response {
     let engine = state.read().await;
     let Some(lens) = engine.lenses().iter().find(|l| l.id.as_str() == id) else {
         return not_found(format!("lens {id}"));

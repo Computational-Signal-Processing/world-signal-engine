@@ -11,6 +11,12 @@ description = "Command-line driver for the World Signal Engine."
 name = "wse"
 path = "src/main.rs"
 
+[features]
+default = ["sqlite"]
+# SQLite persistence for a deployable engine. Off only for a build that must not
+# link a C compiler, in which case `--data-dir` is refused rather than ignored.
+sqlite = ["wse-storage/sqlite"]
+
 [dependencies]
 wse-model = { path = "../model" }
 wse-config = { path = "../config" }

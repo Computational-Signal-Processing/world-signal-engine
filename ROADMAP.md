@@ -75,6 +75,22 @@ A lens whose categories no collector emits yet (ENERGY, FINANCE) is present and
 honestly reports zero rather than being hidden. Lenses change visibility only —
 detection always runs on the full dataset.
 
+## Productionization
+
+Not a phase. After Phase 12 the engine was correct but not deployable: state was
+in memory, data grew without bound, and the API was open. That work is done and
+documented separately.
+
+- SQLite persistence behind the existing store traits; `--data-dir` selects it,
+  and both backends share one serving path.
+- Bounded rehydration on startup, so the detector resumes warm.
+- Retention: observations age out, signals and events do not.
+- API authentication, safe CORS defaults, request limits, graceful shutdown.
+- [docs/deployment.md](docs/deployment.md) — the operational story.
+- [docs/audit.md](docs/audit.md) — a reality audit of Phases 0–12 against real
+  commands, including the gaps it found.
+- `docs/decisions/0009-productionization.md` — why it is shaped this way.
+
 ## Deliberately not built yet
 
 The following are out of scope until the `observation → signal` chain is proven

@@ -35,10 +35,12 @@ thiserror = "1"
 anyhow = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 axum = "0.8"
-tower-http = { version = "0.6", features = ["fs", "cors"] }
+tower-http = { version = "0.6", features = ["fs", "cors", "limit", "timeout", "compression-gzip", "set-header"] }
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 ureq = { version = "2", default-features = false, features = ["tls", "gzip"] }
+rusqlite = { version = "0.40", features = ["bundled"] }

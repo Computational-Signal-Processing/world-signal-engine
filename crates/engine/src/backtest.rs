@@ -158,7 +158,7 @@ pub fn run_backtest(
         .min()
         .unwrap_or_else(Utc::now);
     let clock = SharedReplayClock::new(start, Duration::zero());
-    let mut engine = Engine::with_clock(config, clock.handle());
+    let mut engine: Engine = Engine::with_clock(config, clock.handle());
 
     for source in catalog_for(stream) {
         let _ = engine.register_source(source);

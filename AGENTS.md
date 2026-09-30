@@ -21,7 +21,7 @@ crates/model        vocabulary only; no I/O, no detection
 crates/collector    Collector contract + synthetic world
 crates/sources      real collectors (usgs, nasa, gdelt, hackernews, github)
 crates/normalize    payload → observation
-crates/storage      store traits + in-memory impl (incl. RawStore)
+crates/storage      store traits + in-memory and SQLite impls (incl. RawStore)
 crates/baseline     rolling/robust statistics
 crates/detection    change, anomaly, early signal → AnomalyCandidate
 crates/correlation  convergence across sources
@@ -38,12 +38,15 @@ docs/decisions/     architecture decision records
 ## Commands
 
 ```bash
-cargo test --workspace                                   # 300 tests, offline
+cargo test --workspace                                   # 323 tests, offline
 cargo fmt --all && cargo clippy --workspace --all-targets
 cargo run -p wse-cli -- demo                             # synthetic acceptance world
 cargo run -p wse-cli -- sources                          # print the catalog
 cargo run -p wse-cli -- collect --verbose                # hit the real APIs once
 cargo run -p wse-cli -- serve --port 8080 --collect      # API+UI backed by live data
+cargo run -p wse-cli -- serve --port 8080 --collect \    # persistent + authenticated
+  --data-dir /var/lib/wse --retention-days 90
+cargo check -p wse-cli --no-default-features             # the no-SQLite build
 ```
 
 The test suite is offline by design — synthetic world plus checked-in fixtures.
@@ -230,3 +233,40 @@ Synthetic worlds for these: `SyntheticWorld::related_entities` and
 under `Related`, none under `Exact` — so a regression that makes matching
 unconditionally permissive fails too.
 
+
+## Deployment (persistence, retention, security)
+
+See [docs/deployment.md](docs/deployment.md) for the operational story and
+`docs/decisions/0009-productionization.md` for why it is shaped this way.
+
+- **`serve` is generic over the store.** `run_served<S: Store>` drives both the
+  in-memory and the SQLite backend. Do not reintroduce a per-backend copy of the
+  serving logic; a change to collection or retention must reach both.
+- **`--data-dir` selects SQLite; without it the engine is in memory.** With it,
+  observations, events, signals, source health and baselines survive a restart.
+  `--rehydrate-history N` (default 500) replays the N most recent observations
+  per series so the detector resumes warm. `series=0` in the startup log means
+  an empty store, not a quiet world.
+- **`SqliteStore` wraps its `Connection` in a `std::sync::Mutex`.** One guard per
+  function; the mutex is not reentrant. Holding a guard across a call that takes
+  it again self-deadlocks — this is what `prune_raw_to` did.
+- **Retention ages out observations, not events or signals.** A signal is the
+  conclusion a person was investigating; its evidence may be gone and the
+  drill-down says so. Do not "fix" an empty evidence list by deleting the
+  signal.
+- **Raw pruning must forget the payload, not just delete its file.** Deleting
+  only the file leaves the size in the in-memory index, so `bytes_used` stays
+  inflated and pruning runs until the store looks empty. Covered by
+  `raw_retention_prunes_oldest_payloads_until_under_the_cap`.
+- **The API is authenticated when `WSE_API_KEYS` is set.** Every route but
+  `/health`. `/metrics` is *behind* the key by default; `WSE_PUBLIC_METRICS=1`
+  opens it. Key comparison is constant-time — do not replace it with `==`.
+- **CORS defaults to no origins.** The bundled UI is same-origin. Adding a
+  wildcard with auth on would let any page read the API through a visitor's
+  browser; that is why `SecurityConfig::default()` allows none.
+- **The UI sends the key as a header, never in the query string**, and keeps it
+  in `localStorage`. A key in a URL lands in history, logs and `Referer`.
+- **Serving without a key logs a warning.** There is no flag that makes an open
+  API safe on a public address; the warning is the honest signal.
+- **`SIGTERM`/`SIGINT` shut down cleanly**, so `systemctl restart` does not kill
+  a write in progress.

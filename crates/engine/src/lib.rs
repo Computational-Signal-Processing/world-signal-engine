@@ -33,9 +33,7 @@ use wse_scheduler::{Clock, LiveClock};
 use wse_signals::event::EventEngine;
 use wse_signals::SignalEngine;
 use wse_storage::InMemoryStore;
-use wse_storage::{
-    BaselineStore, EventStore, ObservationStore, RawStore, SignalStore, SourceStore,
-};
+use wse_storage::{StorageError, Store};
 
 pub use backtest::{
     run_backtest, truth_from_windows, BacktestDetection, BacktestReport, LabeledEvent,
@@ -70,10 +68,13 @@ pub struct EngineConfig {
 }
 
 /// The pipeline engine.
-pub struct Engine {
+///
+/// Generic over the storage backend so the same code runs against the in-memory
+/// store (synthetic world, tests) and SQLite (a real deployment). The default
+/// type parameter keeps `Engine::new(config)` working for the common case.
+pub struct Engine<S: Store = InMemoryStore> {
     config: EngineConfig,
-    store: InMemoryStore,
-    raw_store: RawStore,
+    store: S,
     trackers: HashMap<String, SeriesTracker>,
     event_engine: EventEngine,
     signal_engine: SignalEngine,
@@ -84,25 +85,89 @@ pub struct Engine {
     clock: Arc<dyn Clock>,
 }
 
-impl Engine {
+impl Engine<InMemoryStore> {
     pub fn new(config: EngineConfig) -> Self {
-        Self::with_clock(config, Arc::new(LiveClock))
+        Self::build(config, InMemoryStore::new(), Arc::new(LiveClock))
     }
 
-    /// Build an engine whose sense of "now" comes from `clock`.
+    /// Build an in-memory engine whose sense of "now" comes from `clock`.
+    ///
+    /// Replay uses this: the clock advances through historical time so the
+    /// detector sees the same batches, at the same times, that live collection
+    /// produced.
     pub fn with_clock(config: EngineConfig, clock: Arc<dyn Clock>) -> Self {
+        Self::build(config, InMemoryStore::new(), clock)
+    }
+}
+
+impl<S: Store> Engine<S> {
+    /// Build an engine over an explicit store.
+    pub fn with_store(config: EngineConfig, store: S) -> Self {
+        Self::build(config, store, Arc::new(LiveClock))
+    }
+
+    /// Build an engine over a persistent store, with an injectable clock.
+    pub fn with_store_and_clock(config: EngineConfig, store: S, clock: Arc<dyn Clock>) -> Self {
+        Self::build(config, store, clock)
+    }
+
+    fn build(config: EngineConfig, store: S, clock: Arc<dyn Clock>) -> Self {
         Self {
             event_engine: EventEngine::new(config.event.clone()),
             signal_engine: SignalEngine::new(config.signal.clone())
                 .with_convergence(config.convergence.clone())
                 .with_lenses(config.lenses.clone()),
             config,
-            store: InMemoryStore::new(),
-            raw_store: RawStore::new(),
+            store,
             trackers: HashMap::new(),
             metrics: Metrics::default(),
             clock,
         }
+    }
+
+    /// Rebuild detector state from the stored history.
+    ///
+    /// This is what makes a restart not a cold start. Without it the engine
+    /// would come back with empty rolling windows, spend the next N cycles
+    /// re-learning "normal", and silently stop being able to detect anything in
+    /// the meantime. Baselines are restored from the cache; the recent points of
+    /// each series are replayed through the trackers so the windows are warm.
+    ///
+    /// Returns how many series were rehydrated.
+    pub fn rehydrate(&mut self, history_per_series: usize) -> Result<usize, StorageError> {
+        let keys = self.store.series_keys()?;
+        let mut restored = 0usize;
+        for key in &keys {
+            // Newest first from the store; the tracker wants oldest first.
+            let mut points = self.store.latest_observations(key, history_per_series)?;
+            if points.is_empty() {
+                continue;
+            }
+            points.reverse();
+            let tracker = self.trackers.entry(key.clone()).or_insert_with(|| {
+                SeriesTracker::from_observation(&points[0], self.config.detector.clone())
+            });
+            for point in points {
+                tracker.push(
+                    point.observed_at,
+                    point.value,
+                    point.id.clone(),
+                    point.source_id.clone(),
+                );
+            }
+            restored += 1;
+        }
+
+        // The event engine's active set is also rebuilt, so a change that was
+        // mid-flight before the restart keeps accumulating into the same event
+        // instead of starting a second one.
+        let events = self.store.all_events()?;
+        for event in events {
+            if event.state != wse_model::EventState::Resolved {
+                self.event_engine.adopt(event);
+            }
+        }
+        Ok(restored)
     }
 
     /// The current time, as the engine sees it.
@@ -111,20 +176,20 @@ impl Engine {
     }
 
     /// The retained raw payloads, for the drill-down's final step.
-    pub fn raw_store(&self) -> &RawStore {
-        &self.raw_store
-    }
-
-    /// Retrieve a raw payload by the hash carried in an observation reference.
-    pub fn raw_payload(&self, hash: &str) -> Option<&wse_storage::StoredPayload> {
-        self.raw_store.get(hash)
-    }
-
-    pub fn store(&self) -> &InMemoryStore {
+    pub fn raw_store(&self) -> &S {
         &self.store
     }
 
-    pub fn store_mut(&mut self) -> &mut InMemoryStore {
+    /// Retrieve a raw payload by the hash carried in an observation reference.
+    pub fn raw_payload(&self, hash: &str) -> Option<wse_storage::StoredPayload> {
+        self.store.get(hash).ok().flatten()
+    }
+
+    pub fn store(&self) -> &S {
+        &self.store
+    }
+
+    pub fn store_mut(&mut self) -> &mut S {
         &mut self.store
     }
 
@@ -142,7 +207,7 @@ impl Engine {
     }
 
     /// Register a source in the catalog.
-    pub fn register_source(&mut self, source: Source) -> Result<(), wse_storage::StorageError> {
+    pub fn register_source(&mut self, source: Source) -> Result<(), StorageError> {
         self.metrics.sources_registered += 1;
         self.store.put_source(source)
     }
@@ -181,7 +246,7 @@ impl Engine {
                 // the source still being reachable later.
                 for payload in &result.raw_payloads {
                     if let Err(err) = self
-                        .raw_store
+                        .store
                         .put(payload.reference.clone(), payload.body.clone())
                     {
                         tracing::error!(error = %err, "failed to retain raw payload");
