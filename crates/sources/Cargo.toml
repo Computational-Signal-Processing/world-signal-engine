@@ -1,0 +1,23 @@
+[package]
+name = "wse-sources"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Real-source collectors for the World Signal Engine (USGS, NASA, GDELT, Hacker News, GitHub)."
+
+[dependencies]
+wse-model = { path = "../model" }
+wse-collector = { path = "../collector" }
+wse-scheduler = { path = "../scheduler" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+ureq = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

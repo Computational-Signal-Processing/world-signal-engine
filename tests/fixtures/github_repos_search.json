@@ -1,0 +1,63 @@
+{
+  "total_count": 2,
+  "incomplete_results": false,
+  "items": [
+  {
+    "id": 758012345,
+    "name": "rust-lang/rust",
+    "full_name": "rust-lang/rust",
+    "owner": { "login": "rust-lang" },
+    "description": "Empowering everyone to build reliable and efficient software.",
+    "html_url": "https://github.com/rust-lang/rust",
+    "stargazers_count": 92500,
+    "forks_count": 11900,
+    "open_issues_count": 10234,
+    "watchers_count": 92500,
+    "created_at": "2010-06-16T20:36:00Z",
+    "updated_at": "2023-11-20T06:30:00Z",
+    "pushed_at": "2023-11-20T06:12:00Z",
+    "language": "Rust",
+    "topics": ["compiler", "rust"],
+    "archived": false,
+    "license": { "spdx_id": "MIT" }
+  },
+  {
+    "id": 724712,
+    "name": "tokio-rs/tokio",
+    "full_name": "tokio-rs/tokio",
+    "owner": { "login": "tokio-rs" },
+    "description": "A runtime for writing reliable asynchronous applications with Rust.",
+    "html_url": "https://github.com/tokio-rs/tokio",
+    "stargazers_count": 24100,
+    "forks_count": 2200,
+    "open_issues_count": 312,
+    "watchers_count": 24100,
+    "created_at": "2016-05-20T20:11:00Z",
+    "updated_at": "2023-11-20T05:50:00Z",
+    "pushed_at": "2023-11-19T22:04:00Z",
+    "language": "Rust",
+    "topics": ["async", "rust"],
+    "archived": false,
+    "license": { "spdx_id": "MIT" }
+  },
+  {
+    "id": 999999,
+    "name": "some/archived-thing",
+    "full_name": "some/archived-thing",
+    "owner": { "login": "some" },
+    "description": "No longer maintained.",
+    "html_url": "https://github.com/some/archived-thing",
+    "stargazers_count": 12,
+    "forks_count": 1,
+    "open_issues_count": 0,
+    "watchers_count": 12,
+    "created_at": "2014-01-01T00:00:00Z",
+    "updated_at": "2019-01-01T00:00:00Z",
+    "pushed_at": "2019-01-01T00:00:00Z",
+    "language": "Rust",
+    "topics": [],
+    "archived": true,
+    "license": null
+  }
+  ]
+}

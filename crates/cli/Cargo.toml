@@ -1,0 +1,32 @@
+[package]
+name = "wse-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Command-line driver for the World Signal Engine."
+
+[[bin]]
+name = "wse"
+path = "src/main.rs"
+
+[dependencies]
+wse-model = { path = "../model" }
+wse-storage = { path = "../storage" }
+wse-engine = { path = "../engine" }
+wse-collector = { path = "../collector" }
+wse-detection = { path = "../detection" }
+wse-signals = { path = "../signals" }
+wse-sources = { path = "../sources" }
+wse-scheduler = { path = "../scheduler" }
+wse-api = { path = "../api" }
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

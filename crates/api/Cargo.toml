@@ -1,0 +1,25 @@
+[package]
+name = "wse-api"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "REST API for the World Signal Engine."
+
+[dependencies]
+wse-model = { path = "../model" }
+wse-storage = { path = "../storage" }
+wse-engine = { path = "../engine" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+reqwest = { workspace = true }
+wse-collector = { path = "../collector" }
