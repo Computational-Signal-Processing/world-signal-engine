@@ -173,6 +173,36 @@ matches sources and the code that forms signals must not be able to drift apart.
 - `ConvergenceGroup` carries `entity_ids` and `match_kinds`
   (`exact_entity | related_entity | geography | series`) so a signal can report
   *how* its sources agree.
+
+## Lenses (Phase 12)
+
+A lens is a view. It changes what is *visible*, never what is detected or
+stored. Detection always runs on the full dataset; lenses filter the result.
+
+- Lenses are YAML under `config/lenses/`, loaded by `wse-config`. Adding one is
+  a new file, not a Rust change. The loader is tolerant by design: a missing
+  directory is a valid state, and a malformed file is skipped and reported in
+  `LensCatalog::problems` so the other lenses still load. A view must never be
+  able to take down collection or detection.
+- The catalog is sorted by lens id, and `lens_matches` is written in that order.
+  This is a determinism requirement, not tidiness: a replayed run has to produce
+  the same signal bytes as the original.
+- Matching happens in `SignalEngine::assign_lenses`, once, at signal formation.
+  `Signal::lens_matches` is therefore a *record* of which lenses showed the
+  signal, not something recomputed per query. `?lens=` reads it directly.
+- `merge_signals` **unions** lens matches rather than replacing them. A signal
+  that accumulated categories over its life can only have gained lenses, and
+  dropping one would make a `?lens=` query lose a signal it had already returned.
+- A signal with no location is never excluded by a bbox. The engine does not
+  know where it happened, and hiding it would drop data rather than filter it.
+- A lens that matches nothing is a legitimate, visible state (ENERGY and FINANCE
+  have no collector yet). `GET /lenses` reports the count so an empty view is
+  distinguishable from a broken one.
+- Lenses are not part of a signal's identity. `lens_matches` is not hashed into
+  `Signal::stable_id`, so adding a lens does not rewrite existing signal ids.
+
+## Convergence ordering (Phase 11, still load-bearing)
+
 - `detect_convergence` sorts by strength, then first_seen, then `group_key`, and
   uses `BTreeMap` not `HashMap`. The key tiebreaker and the ordered map are
   load-bearing: equal-strength groups in hash order made replay

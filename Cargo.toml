@@ -8,6 +8,7 @@ members = [
     "crates/collector",
     "crates/normalize",
     "crates/correlation",
+    "crates/config",
     "crates/signals",
     "crates/scheduler",
     "crates/engine",

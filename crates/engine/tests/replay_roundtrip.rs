@@ -40,6 +40,7 @@ fn config() -> EngineConfig {
             ..SignalConfig::default()
         },
         convergence: ConvergenceConfig::related(),
+        lenses: Vec::new(),
     }
 }
 

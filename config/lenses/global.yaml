@@ -1,0 +1,6 @@
+# The empty lens: everything, always.
+#
+# WORLD is what a new user sees. It imposes no filter, so combining it with
+# another lens widens rather than narrows.
+id: lens_global
+name: WORLD

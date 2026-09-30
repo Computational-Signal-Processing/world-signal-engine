@@ -20,6 +20,7 @@ pub mod event;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use wse_correlation::{ConvergenceConfig, ConvergenceGroup};
+use wse_model::lens::Lens;
 use wse_model::{
     CandidateDirection, CandidateKind, Event, Evidence, Signal, SignalQuality, SignalType,
 };
@@ -58,6 +59,9 @@ impl Default for SignalConfig {
 pub struct SignalEngine {
     config: SignalConfig,
     convergence: ConvergenceConfig,
+    /// The lenses signals are matched against. Empty by default: a lens is a
+    /// view, so with none configured every signal simply has no lens matches.
+    lenses: Vec<Lens>,
 }
 
 impl SignalEngine {
@@ -65,12 +69,23 @@ impl SignalEngine {
         Self {
             config,
             convergence: ConvergenceConfig::default(),
+            lenses: Vec::new(),
         }
     }
 
     pub fn with_convergence(mut self, convergence: ConvergenceConfig) -> Self {
         self.convergence = convergence;
         self
+    }
+
+    /// The lenses every formed signal is matched against.
+    pub fn with_lenses(mut self, lenses: Vec<Lens>) -> Self {
+        self.lenses = lenses;
+        self
+    }
+
+    pub fn lenses(&self) -> &[Lens] {
+        &self.lenses
     }
 
     pub fn config(&self) -> &SignalConfig {
@@ -128,6 +143,7 @@ impl SignalEngine {
             signal.title = title_for(&signal, event);
             signal.summary = summarize(&signal);
             signal.reasons = reasons_for(&signal, &event_candidates);
+            self.assign_lens_matches(&mut signal);
             signal.quality = quality_for(&signal, &event_candidates);
             signals.push(signal);
         }
@@ -166,6 +182,31 @@ impl SignalEngine {
         if self.has_impact(signal) {
             signal.add_type(SignalType::Impact);
         }
+    }
+
+    /// Record which lenses currently show this signal.
+    ///
+    /// This is what makes `GET /signals?lens=` able to return anything: the
+    /// filter reads `lens_matches`, so leaving it empty would make every lens
+    /// query return nothing. It is deliberately *not* part of the signal's
+    /// identity — a lens is a view, and changing one must not rewrite history.
+    fn assign_lens_matches(&self, signal: &mut Signal) {
+        if self.lenses.is_empty() {
+            return;
+        }
+        let text = format!("{} {}", signal.title, signal.summary);
+        let location = signal.location.as_ref().map(|l| (l.latitude, l.longitude));
+        let entities: Vec<String> = signal
+            .entities
+            .iter()
+            .map(|e| e.as_str().to_string())
+            .collect();
+        signal.lens_matches = self
+            .lenses
+            .iter()
+            .filter(|lens| lens.matches(&signal.categories, &entities, &text, location))
+            .map(|lens| lens.id.clone())
+            .collect();
     }
 
     fn has_impact(&self, signal: &Signal) -> bool {
@@ -415,8 +456,8 @@ pub fn process_batch(
 mod tests {
     use super::*;
     use wse_model::{
-        AnomalyCandidate, BaselineSnapshot, DetectionMethod, EntityId, EventId, ObservationId,
-        SourceId,
+        AnomalyCandidate, BaselineSnapshot, DetectionMethod, EntityId, EventId, LensId,
+        ObservationId, SourceId,
     };
 
     fn at(secs: i64) -> DateTime<Utc> {
@@ -645,5 +686,77 @@ mod tests {
         let signals = process_batch(&mut events, &engine(), &candidates, &no_category, at(30));
         assert_eq!(signals[0].event_id, events.active_events()[0].id);
         assert_ne!(signals[0].event_id, EventId::new("evt_other"));
+    }
+
+    /// A lens is matched against the signal, and the match is *recorded* on it.
+    #[test]
+    fn a_lens_that_covers_the_signal_is_recorded_on_it() {
+        let mut events = EventEngine::new(Default::default());
+        let candidates = vec![candidate(
+            "src_a",
+            "a::oil::price::usd",
+            Some("ent_hormuz"),
+            CandidateKind::Anomaly,
+            CandidateDirection::Up,
+            4.0,
+            0.9,
+            0,
+        )];
+
+        let mut lens = Lens::new(LensId::new("lens_global"), "WORLD");
+        lens.entities.push("ent_hormuz".into());
+        let engine = SignalEngine::new(SignalConfig::default()).with_lenses(vec![lens]);
+
+        let signals = process_batch(&mut events, &engine, &candidates, &no_category, at(30));
+        assert_eq!(
+            signals[0].lens_matches,
+            vec![LensId::new("lens_global")],
+            "a matching lens must be recorded on the signal"
+        );
+    }
+
+    /// A lens whose filter the signal does not satisfy must not appear.
+    #[test]
+    fn a_lens_that_does_not_cover_the_signal_is_not_recorded() {
+        let mut events = EventEngine::new(Default::default());
+        let candidates = vec![candidate(
+            "src_a",
+            "a::oil::price::usd",
+            Some("ent_hormuz"),
+            CandidateKind::Anomaly,
+            CandidateDirection::Up,
+            4.0,
+            0.9,
+            0,
+        )];
+
+        let mut lens = Lens::new(LensId::new("lens_software"), "SOFTWARE");
+        lens.categories.push("technology".into());
+        let engine = SignalEngine::new(SignalConfig::default()).with_lenses(vec![lens]);
+
+        let signals = process_batch(&mut events, &engine, &candidates, &no_category, at(30));
+        assert!(
+            signals[0].lens_matches.is_empty(),
+            "an unrelated lens must not match: {:?}",
+            signals[0].lens_matches
+        );
+    }
+
+    /// With no lenses configured, matching is a no-op rather than a panic.
+    #[test]
+    fn no_lenses_configured_records_nothing() {
+        let mut events = EventEngine::new(Default::default());
+        let candidates = vec![candidate(
+            "src_a",
+            "a::oil::price::usd",
+            None,
+            CandidateKind::Anomaly,
+            CandidateDirection::Up,
+            4.0,
+            0.9,
+            0,
+        )];
+        let signals = process_batch(&mut events, &engine(), &candidates, &no_category, at(30));
+        assert!(signals[0].lens_matches.is_empty());
     }
 }

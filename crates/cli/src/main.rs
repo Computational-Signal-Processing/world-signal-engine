@@ -118,6 +118,15 @@ enum Command {
     },
     /// List the source catalog.
     Sources,
+    /// List the configured lenses.
+    Lenses {
+        /// The directory of lens YAML files.
+        #[arg(long, default_value = "config/lenses")]
+        dir: std::path::PathBuf,
+        /// Print the lenses as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// A permissive engine configuration for synthetic data.
@@ -130,6 +139,9 @@ fn synthetic_engine() -> Engine {
             ..SignalConfig::default()
         },
         convergence: ConvergenceConfig::related(),
+        lenses: wse_config::load_lenses("config/lenses")
+            .map(|catalog| catalog.lenses)
+            .unwrap_or_default(),
     })
 }
 
@@ -184,6 +196,7 @@ async fn main() -> Result<()> {
         } => replay_stream(file, verbose, json).await,
         Command::Backtest { file, labels, json } => backtest(file, labels, json).await,
         Command::Sources => list_sources(),
+        Command::Lenses { dir, json } => list_lenses(dir, json).await,
     }
 }
 
@@ -210,6 +223,70 @@ fn list_sources() -> Result<()> {
             source.name,
         );
     }
+    Ok(())
+}
+
+/// Print the configured lenses, with how many live signals each one shows.
+///
+/// The match count is the point of this command: a lens that filters on a
+/// category no collector emits yet (ENERGY, FINANCE, ...) shows zero, and that
+/// should be visible rather than a silently dead view.
+async fn list_lenses(dir: std::path::PathBuf, json: bool) -> Result<()> {
+    let catalog = wse_config::load_lenses(&dir)?;
+
+    for problem in &catalog.problems {
+        eprintln!("warning: {problem}");
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&catalog.lenses)?);
+        return Ok(());
+    }
+
+    // Match against the synthetic acceptance world, which is the one dataset
+    // available without a network round trip. It has to be driven to completion
+    // like `demo` does: a single cycle produces observations but no signals, and
+    // a lens table full of zeroes would say nothing.
+    let mut engine = synthetic_engine();
+    let world = SyntheticWorld::acceptance(origin());
+    register_synthetic_sources(&mut engine, &world)?;
+    let collector = SyntheticCollector::new(world);
+    for _ in 0..collector.length() {
+        engine.run_collector(&collector).await;
+    }
+    let signals = engine.store().query_signals(&Default::default())?.items;
+
+    println!("{:<24} {:<16} {:>8}  FILTER", "ID", "NAME", "SIGNALS");
+    for lens in &catalog.lenses {
+        let matches = signals
+            .iter()
+            .filter(|s| s.lens_matches.contains(&lens.id))
+            .count();
+        let mut filter = Vec::new();
+        if !lens.categories.is_empty() {
+            filter.push(format!("category in [{}]", lens.categories.join(", ")));
+        }
+        if !lens.entities.is_empty() {
+            filter.push(format!("entity in [{}]", lens.entities.join(", ")));
+        }
+        if !lens.keywords.is_empty() {
+            filter.push(format!("keyword ~ [{}]", lens.keywords.join(", ")));
+        }
+        if lens.bbox.is_some() {
+            filter.push("bbox".to_string());
+        }
+        if filter.is_empty() {
+            filter.push("everything".to_string());
+        }
+        println!(
+            "{:<24} {:<16} {:>8}  {}",
+            lens.id.as_str(),
+            lens.name,
+            matches,
+            filter.join("; ")
+        );
+    }
+    println!("\n{} lens(es) from {}", catalog.lenses.len(), dir.display());
     Ok(())
 }
 

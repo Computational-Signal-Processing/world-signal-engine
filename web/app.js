@@ -3,6 +3,7 @@
  * No build step, no framework. The routes mirror the brief's drill-down:
  *
  *   #/world              active signals
+ *   #/lenses             the configured lenses and what they show
  *   #/signal/:id         signal detail + why + quality
  *   #/event/:id          the event's development
  *   #/observation/:id    one observation, its source and its raw data
@@ -17,6 +18,22 @@
 const view = document.getElementById("view");
 const statusEl = document.getElementById("status");
 const metricsEl = document.getElementById("metrics");
+const lensSelect = document.getElementById("lens-select");
+
+/** The active lens, kept in the URL so a view is linkable and survives reload. */
+function activeLens() {
+  return new URLSearchParams(window.location.search).get("lens") || "";
+}
+
+/** A hash route carrying the active lens, so drill-down does not lose the view. */
+function withLens(hash, lens = activeLens()) {
+  return lens ? `${hash}${hash.includes("?") ? "&" : "?"}lens=${encodeURIComponent(lens)}` : hash;
+}
+
+/** Keep the picker in step with the URL, which is the source of truth. */
+function syncLensPicker() {
+  if (lensSelect) lensSelect.value = activeLens();
+}
 
 /** Small DOM helper. */
 function el(tag, props = {}, children = []) {
@@ -99,6 +116,7 @@ function setNav(active) {
 
 function render(active, title, nodes) {
   setNav(active);
+  syncLensPicker();
   view.replaceChildren(el("h1", { text: title }), ...[].concat(nodes));
 }
 
@@ -112,23 +130,135 @@ function errorView(err) {
   );
 }
 
+/* --------------------------------------------------------------- LENSES -- */
+
+let lensCache = null;
+
+/** The configured lenses, fetched once per page load. */
+async function loadLenses() {
+  if (lensCache) return lensCache;
+  try {
+    lensCache = await api("/lenses");
+  } catch (_) {
+    lensCache = [];
+  }
+  populateLensPicker(lensCache);
+  return lensCache;
+}
+
+function populateLensPicker(lenses) {
+  if (!lensSelect) return;
+  const current = activeLens();
+  lensSelect.replaceChildren(
+    el("option", { value: "", text: "all lenses" }),
+    ...lenses.map((l) => el("option", { value: l.id, text: l.name }))
+  );
+  lensSelect.value = current;
+}
+
+/**
+ * The lenses a signal is visible through.
+ *
+ * Shown because "why am I not seeing this?" is usually answered by which lens
+ * it fell under, and a signal matched by nothing is itself informative.
+ */
+function lensBadges(lensIds, lenses) {
+  const ids = lensIds || [];
+  if (ids.length === 0) return null;
+  const name = (id) => lenses.find((l) => l.id === id)?.name || id;
+  return el(
+    "div",
+    { class: "lens-badges" },
+    ids.map((id) => el("span", { class: "lens-badge", text: name(id) }))
+  );
+}
+
+/** The lens index: what each lens covers, and how much it currently shows. */
+async function lensesView() {
+  const lenses = await loadLenses();
+  setStatus(`${lenses.length} lens(es)`);
+
+  if (lenses.length === 0) {
+    render(
+      "lenses",
+      "Lenses",
+      el("div", { class: "empty", text: "No lenses configured." })
+    );
+    return;
+  }
+
+  const describe = (lens) => {
+    const parts = [];
+    if (lens.categories?.length) parts.push(`categories: ${lens.categories.join(", ")}`);
+    if (lens.entities?.length) parts.push(`entities: ${lens.entities.join(", ")}`);
+    if (lens.keywords?.length) parts.push(`keywords: ${lens.keywords.join(", ")}`);
+    if (lens.bbox) parts.push("a bounding box");
+    return parts.length ? parts.join(" · ") : "everything — no filter";
+  };
+
+  const cards = lenses.map((lens) =>
+    el("a", { class: "card", href: `#/world?lens=${encodeURIComponent(lens.id)}` }, [
+      el("div", { class: "title", text: lens.name }),
+      el("div", { class: "summary", text: describe(lens) }),
+      el("div", { class: "meta" }, [
+        el("span", { text: `${lens.matching_signals} signal(s)` }),
+        el("span", { text: lens.id }),
+      ]),
+      lens.matching_signals === 0
+        ? el("div", { class: "lens-empty", text: "no signals through this lens yet" })
+        : null,
+    ])
+  );
+
+  render("lenses", "Lenses", [
+    el("p", {
+      class: "summary",
+      text: "A lens changes what is visible, never what is detected. The dataset underneath is one.",
+    }),
+    el("div", { class: "grid" }, cards),
+  ]);
+}
+
 /* ---------------------------------------------------------------- WORLD -- */
 
 async function worldView() {
-  const page = await api("/signals?limit=100");
+  const lens = activeLens();
+  const query = lens ? `&lens=${encodeURIComponent(lens)}` : "";
+  const page = await api(`/signals?limit=100${query}`);
   const signals = page.items || [];
-  setStatus(`${signals.length} active signal(s)`);
+  const lenses = await loadLenses();
+  const lensName = (id) => lenses.find((l) => l.id === id)?.name || id;
+
+  setStatus(
+    lens
+      ? `${signals.length} signal(s) through ${lensName(lens)}`
+      : `${signals.length} active signal(s)`
+  );
 
   if (signals.length === 0) {
-    render("world", "World", el("div", { class: "empty", text: "No signals right now." }));
+    render(
+      "world",
+      "World",
+      el("div", { class: "empty" }, [
+        el("p", {
+          text: lens
+            ? `No signals through ${lensName(lens)} right now.`
+            : "No signals right now.",
+        }),
+        // An empty lens is often just a lens nothing feeds yet, which is worth
+        // saying rather than leaving the reader to guess.
+        lens ? el("a", { href: "#/lenses", text: "See what each lens covers →" }) : null,
+      ])
+    );
     return;
   }
 
   const cards = signals.map((signal) =>
-    el("a", { class: "card", href: `#/signal/${signal.id}`, "data-primary": primaryType(signal.types) }, [
+    el("a", { class: "card", href: withLens(`#/signal/${signal.id}`), "data-primary": primaryType(signal.types) }, [
       el("div", { class: "types" }, signal.types.map(typeBadge)),
       el("div", { class: "title", text: signal.title }),
       el("div", { class: "summary", text: signal.summary }),
+      lensBadges(signal.lens_matches, lenses),
       el("div", { class: "meta" }, [
         el("span", { text: `first seen ${fmtTime(signal.first_seen)}` }),
         el("span", { text: `duration ${fmtDuration(signal.duration_seconds)}` }),
@@ -199,7 +329,7 @@ async function signalView(id) {
 
   render("world", signal.title, [
     trail([
-      { label: "WORLD", href: "#/world" },
+      { label: "WORLD", href: withLens("#/world") },
       { label: `SIGNAL ${signal.id.slice(0, 10)}…` },
       { label: `EVENT ${signal.event_id.slice(0, 10)}…`, href: `#/event/${signal.event_id}` },
     ]),
@@ -237,6 +367,8 @@ async function signalView(id) {
             el("dd", { text: signal.entities.join(", ") || "—" }),
             el("dt", { text: "categories" }),
             el("dd", { text: signal.categories.join(", ") || "—" }),
+            el("dt", { text: "lenses" }),
+            el("dd", { text: (signal.lens_matches || []).join(", ") || "—" }),
           ]),
         ]),
         el("div", { style: "margin-top:1rem" }, [qualityPanel(signal.quality)]),
@@ -263,7 +395,7 @@ async function eventView(id) {
 
   render("world", event.title, [
     trail([
-      { label: "WORLD", href: "#/world" },
+      { label: "WORLD", href: withLens("#/world") },
       { label: `EVENT ${event.id.slice(0, 10)}…` },
     ]),
     el("div", { class: "detail" }, [
@@ -304,7 +436,7 @@ async function observationView(id) {
 
   render("world", `Observation ${observation.id.slice(0, 14)}…`, [
     trail([
-      { label: "WORLD", href: "#/world" },
+      { label: "WORLD", href: withLens("#/world") },
       { label: "OBSERVATION" },
       { label: "SOURCE", href: `#/source/${observation.source_id}` },
       { label: "RAW DATA" },
@@ -385,7 +517,7 @@ async function sourceView(id) {
 
   render("sources", source.name, [
     trail([
-      { label: "WORLD", href: "#/world" },
+      { label: "WORLD", href: withLens("#/world") },
       { label: "SOURCE" },
     ]),
     el("div", { class: "detail" }, [
@@ -498,7 +630,7 @@ async function timelineView(seriesKey) {
 
   render("world", `Timeline · ${seriesKey}`, [
     trail([
-      { label: "WORLD", href: "#/world" },
+      { label: "WORLD", href: withLens("#/world") },
       { label: "TIMELINE" },
     ]),
     el("div", { class: "panel" }, [
@@ -585,8 +717,12 @@ async function mapView() {
 /* --------------------------------------------------------------- ROUTER -- */
 
 async function route() {
+  // The lens rides in the query string, which is part of the hash. Strip it
+  // before splitting, or a lens id would be read as a route segment and
+  // `#/world?lens=lens_energy` would fall through to the default view.
   const hash = window.location.hash || "#/world";
-  const parts = hash.replace(/^#\//, "").split("/");
+  const route = hash.split("?")[0];
+  const parts = route.replace(/^#\//, "").split("/");
   const [name, ...rest] = parts;
   const id = rest.join("/");
   try {
@@ -601,6 +737,8 @@ async function route() {
         return await sourceView(id);
       case "sources":
         return await sourcesIndex();
+      case "lenses":
+        return await lensesView();
       case "timeline":
         return await timelineView(decodeURIComponent(id));
       case "map":
@@ -626,6 +764,12 @@ async function refreshMetrics() {
 }
 
 window.addEventListener("hashchange", route);
+if (lensSelect) {
+  lensSelect.addEventListener("change", (event) => {
+    // Keep the current hash; only the query changes. `worldView` re-reads it.
+    window.location.href = withLens(window.location.hash || "#/world", event.target.value);
+  });
+}
 window.addEventListener("DOMContentLoaded", () => {
   route();
   refreshMetrics();

@@ -21,8 +21,34 @@ use wse_model::Source;
 ///
 /// Returns the base URL of a server running in a background task.
 async fn serve() -> String {
+    serve_with(EngineConfig::default()).await
+}
+
+/// The same, but with the repository's shipped lens set loaded.
+///
+/// The path is resolved from the crate manifest, not the working directory:
+/// `cargo test` runs with the crate as CWD, and a relative path would silently
+/// find nothing (a missing lens directory is not an error).
+async fn serve_with_lenses() -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let lenses = wse_config::load_lenses(root.join("config/lenses"))
+        .expect("shipped lenses must load")
+        .lenses;
+    assert!(!lenses.is_empty(), "the shipped lens set must not be empty");
+    serve_with(EngineConfig {
+        lenses,
+        ..EngineConfig::default()
+    })
+    .await
+}
+
+async fn serve_with(config: EngineConfig) -> String {
     let origin = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
-    let mut engine = Engine::new(EngineConfig::default());
+    let mut engine = Engine::new(config);
     engine
         .register_source(Source::new(
             wse_model::SourceId::new("synthetic_sensor"),
@@ -246,6 +272,80 @@ async fn the_engine_never_confuses_absence_with_zero() {
     let base = serve().await;
     let (status, _) = get_json(&base, "/sources/never_seen_source").await;
     assert_eq!(status, 404);
+}
+
+/// Lenses are listed with their match counts, and an unknown one is 404.
+#[tokio::test]
+async fn lenses_are_listed_and_resolved_individually() {
+    let base = serve_with_lenses().await;
+
+    let (status, body) = get_json(&base, "/lenses").await;
+    assert_eq!(status, 200);
+    let lenses = body.as_array().expect("an array of lenses");
+    assert!(
+        lenses.len() >= 9,
+        "expected the shipped lens set, got {}",
+        lenses.len()
+    );
+
+    // WORLD is the empty lens: it shows every signal.
+    let world = lenses
+        .iter()
+        .find(|l| l["id"] == "lens_global")
+        .expect("lens_global must be present");
+    assert_eq!(world["name"], "WORLD");
+    assert!(
+        world["matching_signals"].as_u64().unwrap() > 0,
+        "WORLD must show the synthetic signals"
+    );
+
+    // A lens whose categories no source emits is present and honestly empty.
+    let energy = lenses
+        .iter()
+        .find(|l| l["id"] == "lens_energy")
+        .expect("lens_energy must be present");
+    assert_eq!(energy["matching_signals"], 0);
+
+    let (status, one) = get_json(&base, "/lenses/lens_global").await;
+    assert_eq!(status, 200);
+    assert_eq!(one["id"], "lens_global");
+    assert_eq!(one["matching_signals"], world["matching_signals"]);
+
+    let (status, _) = get_json(&base, "/lenses/lens_does_not_exist").await;
+    assert_eq!(status, 404);
+}
+
+/// `?lens=` filters on the matches the engine recorded at formation.
+///
+/// Without this the filter would read an always-empty field and every lens
+/// query would return nothing, which is the bug this asserts against.
+#[tokio::test]
+async fn the_lens_filter_returns_the_signals_that_lens_shows() {
+    let base = serve_with_lenses().await;
+
+    let (status, all) = get_json(&base, "/signals?limit=200").await;
+    assert_eq!(status, 200);
+    let all = all["items"].as_array().unwrap();
+    assert!(!all.is_empty(), "the synthetic world must produce signals");
+
+    let (status, world) = get_json(&base, "/signals?lens=lens_global&limit=200").await;
+    assert_eq!(status, 200);
+    assert_eq!(
+        world["total"].as_u64().unwrap(),
+        all.len() as u64,
+        "WORLD shows everything, so it must return every signal"
+    );
+
+    // Every returned signal must actually name the lens, and the lens must be
+    // in the signal's own match list — not merely inferred by the query.
+    for signal in world["items"].as_array().unwrap() {
+        let matches = signal["lens_matches"].as_array().unwrap();
+        assert!(matches.iter().any(|m| m == "lens_global"));
+    }
+
+    let (status, energy) = get_json(&base, "/signals?lens=lens_energy&limit=200").await;
+    assert_eq!(status, 200);
+    assert_eq!(energy["total"], 0, "ENERGY has no source yet");
 }
 
 /// The router must also serve the UI when the directory exists.

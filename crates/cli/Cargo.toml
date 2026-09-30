@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 wse-model = { path = "../model" }
+wse-config = { path = "../config" }
 wse-storage = { path = "../storage" }
 wse-engine = { path = "../engine" }
 wse-collector = { path = "../collector" }

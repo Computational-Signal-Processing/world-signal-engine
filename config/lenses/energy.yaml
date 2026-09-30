@@ -1,0 +1,19 @@
+# Energy: prices, shipping, port activity, grid load.
+#
+# No connected source emits these categories yet, so this lens currently shows
+# nothing. It is shipped so that connecting an energy source is a collector and
+# a catalog entry, with no lens work to do. `lenses` in the CLI reports the match
+# count, so a lens that shows nothing is visible rather than silently dead.
+id: lens_energy
+name: ENERGY
+categories:
+  - energy
+  - markets
+keywords:
+  - oil
+  - gas
+  - shipping
+  - port
+weights:
+  strength: 1.5
+  persistence: 1.5

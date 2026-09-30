@@ -1,0 +1,7 @@
+# Space and near-Earth object signals.
+#
+# `space` is the category the NASA collector emits.
+id: lens_space
+name: SPACE
+categories:
+  - space

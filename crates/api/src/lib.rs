@@ -60,6 +60,8 @@ pub fn router_with_web_dir(state: AppState, web_dir: impl AsRef<Path>) -> Router
         .route("/sources", get(handlers::list_sources))
         .route("/sources/{id}", get(handlers::get_source))
         .route("/entities/{id}", get(handlers::get_entity))
+        .route("/lenses", get(handlers::list_lenses))
+        .route("/lenses/{id}", get(handlers::get_lens))
         .route("/timeline", get(handlers::timeline))
         .layer(CorsLayer::permissive())
         .with_state(state);

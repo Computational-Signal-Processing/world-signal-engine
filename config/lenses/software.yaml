@@ -1,0 +1,12 @@
+# Software ecosystem signals: release activity, developer attention.
+#
+# `technology` is the category the GitHub and Hacker News collectors actually
+# emit, so this lens shows real signals today.
+id: lens_software
+name: SOFTWARE
+categories:
+  - technology
+keywords:
+  - release
+  - repository
+  - developer

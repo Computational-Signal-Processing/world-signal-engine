@@ -64,6 +64,9 @@ pub struct EngineConfig {
     /// thing. Defaults to exact entity matching; `ConvergenceConfig::related()`
     /// also matches related entity names and geography.
     pub convergence: wse_correlation::ConvergenceConfig,
+    /// Lenses that signals are matched against. Empty means no lens filtering,
+    /// which is a valid deployment: lenses are views, not storage.
+    pub lenses: Vec<wse_model::lens::Lens>,
 }
 
 /// The pipeline engine.
@@ -91,7 +94,8 @@ impl Engine {
         Self {
             event_engine: EventEngine::new(config.event.clone()),
             signal_engine: SignalEngine::new(config.signal.clone())
-                .with_convergence(config.convergence.clone()),
+                .with_convergence(config.convergence.clone())
+                .with_lenses(config.lenses.clone()),
             config,
             store: InMemoryStore::new(),
             raw_store: RawStore::new(),
@@ -126,6 +130,11 @@ impl Engine {
 
     pub fn metrics(&self) -> &Metrics {
         &self.metrics
+    }
+
+    /// The lenses signals are matched against.
+    pub fn lenses(&self) -> &[wse_model::lens::Lens] {
+        &self.config.lenses
     }
 
     pub fn config(&self) -> &EngineConfig {
@@ -410,6 +419,16 @@ fn merge_signals(mut existing: Signal, fresh: Signal) -> Signal {
         }
     }
     existing.evidence.sort_by_key(|e| e.observed_at);
+    // Lens matches are unioned rather than replaced. The union is what a merge
+    // means for a *view*: a signal that accumulated more categories over its
+    // life can only have gained lenses, and dropping a match would make a
+    // `?lens=` query lose a signal it had already returned.
+    for lens in fresh.lens_matches {
+        if !existing.lens_matches.contains(&lens) {
+            existing.lens_matches.push(lens);
+        }
+    }
+    existing.lens_matches.sort();
     // The summary describes the accumulated span, so recompute it after the
     // union rather than keeping the single-cycle version.
     existing.summary = wse_signals::summarize(&existing);

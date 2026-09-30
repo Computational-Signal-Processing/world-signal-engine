@@ -1,0 +1,7 @@
+# Global events: news volume and the like.
+#
+# `global_events` is the category the GDELT collector emits.
+id: lens_global_events
+name: GLOBAL EVENTS
+categories:
+  - global_events

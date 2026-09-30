@@ -63,8 +63,17 @@ no entity can converge on coordinates. Both are behind `MergeMode::Related`;
 the default (`Exact`) is unchanged. See `docs/decisions/0008-*`.
 
 ### Phase 12 — Lenses
-Lens configuration and matching exist. Remaining: shipping the full default lens
-set and letting a user combine lenses (`WORLD + TECHNOLOGY + ENERGY + TURKEY`).
+Done. Lenses are configuration, not code: `wse-config` loads `config/lenses/*.yaml`
+and the engine matches every formed signal against them, recording the result in
+`Signal::lens_matches`. Eleven default lenses ship (`WORLD`, `EARTH`, `SPACE`,
+`SOFTWARE`, `ENERGY`, `FINANCE`, `AGRICULTURE`, `SCIENCE`, `GLOBAL EVENTS`,
+`TURKEY`, `PERSONAL`). `GET /lenses` and `GET /lenses/:id` list them with their
+match counts; `GET /signals?lens=` filters on the recorded matches; the UI adds a
+lens picker, lens badges on each card, and a `#/lenses` index.
+
+A lens whose categories no collector emits yet (ENERGY, FINANCE) is present and
+honestly reports zero rather than being hidden. Lenses change visibility only —
+detection always runs on the full dataset.
 
 ## Deliberately not built yet
 

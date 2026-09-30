@@ -10,19 +10,33 @@ use serde::{Deserialize, Serialize};
 use crate::ids::LensId;
 
 /// A saved view over the world dataset.
+///
+/// Every filter is optional and defaults to "no constraint", so a lens file
+/// only has to state what it actually filters on:
+///
+/// ```yaml
+/// id: lens_turkey
+/// name: TURKEY
+/// bbox: [35.8, 25.6, 42.1, 44.8]
+/// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lens {
     pub id: LensId,
     pub name: String,
     /// Categories to include; empty means "all categories".
+    #[serde(default)]
     pub categories: Vec<String>,
     /// Entity canonical names to include; empty means "all entities".
+    #[serde(default)]
     pub entities: Vec<String>,
     /// Keyword matches applied to signal titles/summaries.
+    #[serde(default)]
     pub keywords: Vec<String>,
     /// Bounding box as `(min_lat, min_lon, max_lat, max_lon)`.
+    #[serde(default)]
     pub bbox: Option<(f64, f64, f64, f64)>,
     /// Relative weights applied to quality dimensions when ranking.
+    #[serde(default)]
     pub weights: BTreeMap<String, f64>,
 }
 

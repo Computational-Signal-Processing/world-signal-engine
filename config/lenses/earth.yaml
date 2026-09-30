@@ -1,0 +1,9 @@
+# Earth and geophysical signals.
+#
+# `geophysics` is the category the USGS collector emits.
+id: lens_earth
+name: EARTH
+categories:
+  - geophysics
+  - environment
+  - weather

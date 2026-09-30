@@ -44,6 +44,7 @@ fn engine() -> Engine {
             ..SignalConfig::default()
         },
         convergence: ConvergenceConfig::related(),
+        lenses: Vec::new(),
     })
 }
 
@@ -167,6 +168,7 @@ async fn differently_named_entities_for_one_place_converge_when_related_matching
             ..SignalConfig::default()
         },
         convergence: ConvergenceConfig::default(),
+        lenses: Vec::new(),
     });
     drive(&mut exact, SyntheticWorld::related_entities(origin()), 130).await;
     let exact_signals = exact

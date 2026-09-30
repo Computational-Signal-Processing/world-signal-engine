@@ -1,0 +1,18 @@
+# Agriculture: yield, drought, harvest, food prices.
+#
+# No connected source emits these categories yet; see energy.yaml for why it is
+# shipped anyway.
+id: lens_agriculture
+name: AGRICULTURE
+categories:
+  - agriculture
+  - environment
+  - weather
+keywords:
+  - drought
+  - harvest
+  - yield
+  - crop
+weights:
+  persistence: 1.5
+  breadth: 1.2

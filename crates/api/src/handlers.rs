@@ -329,6 +329,59 @@ pub async fn timeline(
     .into_response()
 }
 
+/// A lens plus how many signals it currently shows.
+///
+/// The count is included so the UI can distinguish "this lens matches nothing
+/// yet" from "this lens is misconfigured" — a lens whose categories no collector
+/// emits is legitimately empty, and that is worth seeing rather than guessing.
+#[derive(Debug, Serialize)]
+pub struct LensSummary {
+    #[serde(flatten)]
+    pub lens: wse_model::lens::Lens,
+    pub matching_signals: usize,
+}
+
+/// `GET /lenses`
+pub async fn list_lenses(State(state): State<AppState>) -> Response {
+    let engine = state.read().await;
+    let signals = match engine.store().query_signals(&SignalQuery::default()) {
+        Ok(page) => page.items,
+        Err(err) => return internal(err),
+    };
+    let summaries: Vec<LensSummary> = engine
+        .lenses()
+        .iter()
+        .map(|lens| LensSummary {
+            matching_signals: signals
+                .iter()
+                .filter(|s| s.lens_matches.contains(&lens.id))
+                .count(),
+            lens: lens.clone(),
+        })
+        .collect();
+    Json(summaries).into_response()
+}
+
+/// `GET /lenses/:id`
+pub async fn get_lens(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let engine = state.read().await;
+    let Some(lens) = engine.lenses().iter().find(|l| l.id.as_str() == id) else {
+        return not_found(format!("lens {id}"));
+    };
+    let signals = match engine.store().query_signals(&SignalQuery {
+        lens_id: Some(id),
+        ..SignalQuery::default()
+    }) {
+        Ok(page) => page.items,
+        Err(err) => return internal(err),
+    };
+    Json(LensSummary {
+        matching_signals: signals.len(),
+        lens: lens.clone(),
+    })
+    .into_response()
+}
+
 /// Parse an entity id, exposed for tests.
 pub fn entity_id(raw: &str) -> EntityId {
     EntityId::new(raw)

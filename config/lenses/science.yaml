@@ -1,0 +1,12 @@
+# Science: publications, preprints, research metadata.
+#
+# No connected source emits these categories yet; see energy.yaml for why it is
+# shipped anyway.
+id: lens_science
+name: SCIENCE
+categories:
+  - science
+  - research
+weights:
+  novelty: 1.5
+  confidence: 1.2

@@ -1,0 +1,8 @@
+# Turkey: a geographic lens, not a category one.
+#
+# The bounding box covers the country. A signal with no location is never
+# excluded by a box — the engine does not know where it happened, and hiding it
+# would be dropping data rather than filtering it.
+id: lens_turkey
+name: TURKEY
+bbox: [35.8, 25.6, 42.1, 44.8]

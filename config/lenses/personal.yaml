@@ -1,0 +1,18 @@
+# Personal: edit this one.
+#
+# It imposes no category, entity or keyword filter — it is meant to be changed.
+# What makes it distinct from WORLD is the weighting: it ranks what is new and
+# what touches a configured impact scope above what is merely strong, which is
+# the right bias for a personal feed.
+#
+# Add your own entities and keywords, for example:
+#
+#   entities:
+#     - topic_oil_price
+#   keywords:
+#     - hormuz
+id: lens_personal
+name: PERSONAL
+weights:
+  novelty: 2.0
+  relevance: 1.5
