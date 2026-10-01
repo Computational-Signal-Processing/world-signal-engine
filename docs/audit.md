@@ -219,9 +219,11 @@ plus the browser UI.
    Integration coverage lives beside the crates (`crates/api/tests`,
    `crates/engine/tests`) and in each crate's unit tests. The empty directories
    are leftovers from the planned layout.
-3. **No labelled history for the real sources.** Backtesting works and is
-   measured, but its ground truth so far is hand-made. This is the same
-   limitation the roadmap already records under Phase 10.
+3. **Labelled history exists for one real source.** The USGS catalog is labelled
+   with its real M7.0+ quakes and scored end to end (recall 0.50, precision 0.20
+   — `crates/engine/tests/real_backtest.rs`, `docs/decisions/0023-*`). The other
+   real sources still have only hand-made synthetic labels. The method for
+   widening this is settled; the remaining labels are the continuing work.
 4. **The activity stream is per-process.** It is an in-memory ring buffer, not a
    durable log, and a restart starts it empty. That is deliberate — activity is
    operational telemetry, not data. What matters (observations, events, signals,

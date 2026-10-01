@@ -1934,6 +1934,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "wse-baseline",
@@ -1945,6 +1946,7 @@ dependencies = [
  "wse-presentation",
  "wse-scheduler",
  "wse-signals",
+ "wse-sources",
  "wse-storage",
 ]
 

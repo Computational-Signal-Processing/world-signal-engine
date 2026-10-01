@@ -112,7 +112,8 @@ and "a world watch you can open".
 6. Be honest about cold-start baselines (finding 6).
 7. Prove the live path with an automated acceptance test (finding 8).
 
-Finding 10 is left as a documented limitation rather than faked.
+Finding 10 was left as a documented limitation rather than faked; it is now
+closed against the real USGS catalog (see *Follow-up status*, below).
 
 ## H. Follow-up status (2026-10-01, after productization)
 
@@ -127,7 +128,7 @@ Finding 10 is left as a documented limitation rather than faked.
 | 7 | Coverage is 4 narrow domains | IMPROVED | 13 sources across 9 categories: geophysics ×2, space ×2, weather, earth, global events, cyber, finance, science ×2, technology ×2. See *Source network* below. |
 | 8 | No acceptance test for the live SSE → world path | FIXED | `a_live_signal_frame_triggers_a_world_refresh` drives the real path over a socket: a world one run away from a signal, a live SSE reader attached, then a `signal` frame must arrive and the re-fetch it triggers must report the new signal (`active_signals` 3 → 4). The wire-contract test pins the frame shape; this proves a real signal produces a real refresh. |
 | 9 | `IMPACT` has no producer | FIXED | The shipped `config/impact/systemic.yaml` declares a scope (`finance`, `cyber`, entity `Hormuz`); the CLI loads it into `SignalConfig` for both `demo` and `serve`. `impact_scope.rs` proves a finance spike produces an `IMPACT` signal whose reason names the term, an in-scope entity is IMPACT without a listed category, and an out-of-scope `earth` spike is not. |
-| 10 | No labelled ground truth | OPEN (documented) | |
+| 10 | No labelled ground truth | FIXED | The checked-in real USGS catalog (`tests/fixtures/usgs_9mo_2026.geojson`, the actual feed over 2026-01-01..2026-09-30, M5+) is labelled with its ten M7.0+ quakes, read from the catalog before the detector ran. `crates/engine/tests/real_backtest.rs` scores the production detector against it: recall 0.50, precision 0.20 — measured, deterministic, and unflattering, which is the point. See `docs/decisions/0023-*`. |
 
 ### New sources added
 

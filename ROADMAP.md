@@ -53,9 +53,12 @@ and reports detection latency, signal persistence, and — when labels are
 supplied — false positives, false negatives, precision and recall. `collect
 --out` captures a live run to a stream file.
 
-Widening the labels for the real sources (a hand-checked history of known
-earthquakes, releases, spikes) is the next step, not a blocker: the mechanism is
-in place and measured.
+Widening the labels for the real sources is under way: the USGS catalog is now
+labelled with its real M7.0+ quakes and scored end to end (`crates/engine/tests/
+real_backtest.rs`, `docs/decisions/0023-*`). The measurement is honest and
+unflattering — recall 0.50, precision 0.20 — which is exactly what a detector
+needs before it can be improved. Labelling the remaining real sources is the
+continuing work, not a blocker.
 
 ### Phase 11 — Correlation
 Done. Deterministic convergence across independent sources: entity, geography,

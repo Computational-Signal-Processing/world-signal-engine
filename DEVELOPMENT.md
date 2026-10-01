@@ -90,6 +90,25 @@ A signal matches a labeled event when it is about the same series and its span
 intersects the window. Matching on the series rather than the label is what
 keeps the check honest — the engine never sees the labels.
 
+### Real ground truth
+
+Labels are only worth as much as their provenance. A label made by running the
+detector and calling its output "events" scores precision 1.0 and proves nothing.
+The shipped real labels are read from the source's own record, before the
+detector runs:
+
+- `tests/fixtures/usgs_9mo_2026.geojson` — the **real** USGS catalog over
+  2026-01-01..2026-09-30, M5.0+ (1494 events), trimmed to the fields the
+  normalizer reads.
+- `tests/fixtures/usgs_m7_labels_2026.json` — its ten M7.0+ earthquakes, an
+  objective magnitude threshold, not a judgment about the detector.
+
+`crates/engine/tests/real_backtest.rs` rebuilds the stream the way an hourly
+poller would have seen it (each quake arrives at the next poll, many per cycle)
+and scores the production detector against the labels. The current numbers —
+recall 0.50, precision 0.20 — are asserted as *measurements*, pinned so drift is
+visible, not as targets. See `docs/decisions/0023-real-ground-truth-labels.md`.
+
 ## Testing philosophy
 
 Tests drive real code paths. There are no mocks standing in for the engine, the

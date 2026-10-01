@@ -40,7 +40,7 @@ docs/decisions/     architecture decision records
 ## Commands
 
 ```bash
-cargo test --workspace                                   # 347 tests, offline
+cargo test --workspace                                   # 495 tests, offline
 cargo fmt --all && cargo clippy --workspace --all-targets
 cargo run -p wse-cli -- demo                             # synthetic acceptance world
 cargo run -p wse-cli -- sources                          # print the catalog
@@ -218,6 +218,15 @@ a test helper. See `docs/decisions/0005-replay-as-a-run-mode.md`.
 - `backtest` withholds precision/recall when no `--labels` are given. Do not
   "fix" that by inventing a number; an unlabelled run cannot tell "wrong" from
   "not yet known to be right".
+- **Labels come from the world, never from the detector.** A label made by
+  running the detector and calling its output "events" scores precision 1.0 and
+  proves nothing. The shipped real labels are the USGS catalog's own M7.0+
+  earthquakes (`tests/fixtures/usgs_9mo_2026.geojson` +
+  `usgs_m7_labels_2026.json`), read before the engine ran. If a label and a
+  detection disagree, the label is right and the detector is wrong. The measured
+  numbers (recall 0.50, precision 0.20) are pinned in
+  `crates/engine/tests/real_backtest.rs` so drift is reviewed, not silent. See
+  `docs/decisions/0023-real-ground-truth-labels.md`.
 - Running past the end of a stream is an empty **success**, never a failure:
   `NO DATA` is not `DATA = ZERO` (brief section 29).
 
