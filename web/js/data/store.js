@@ -192,6 +192,20 @@ export class Store {
     this.bus.emit("selection", { ...this.selection });
   }
 
+  /**
+   * Drop the reader's pick.
+   *
+   * A format change is a different reader at a different distance — a pick made
+   * on a desk screen should not still be holding the drill-down open on a phone.
+   * The live signal is the right thing to show again.
+   */
+  clearSelection() {
+    const { signalId, eventId, observationId, sourceId } = this.selection;
+    if (!signalId && !eventId && !observationId && !sourceId) return;
+    this.selection = { signalId: null, eventId: null, observationId: null, sourceId: null };
+    this.bus.emit("selection", { ...this.selection });
+  }
+
   /* ------------------------------------------------------------ connection */
 
   setConnection(state, error) {

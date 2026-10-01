@@ -32,6 +32,17 @@ export const categoryStripBlock = {
     this.render(host, ctx);
     this.startRotation(host, ctx);
   },
+  /**
+   * Re-paginate when the region's box changes.
+   *
+   * `perPage` is read from the region's own size, so a format change alters how
+   * many cards fit. Without this the strip would keep the page size it measured
+   * at mount and either clip cards or leave the row half empty.
+   */
+  resize(host, ctx) {
+    this.render(host, ctx);
+    this.startRotation(host, ctx);
+  },
   render(host, ctx) {
     const data = ctx.data();
     const categories = data.observatory?.categories ?? [];

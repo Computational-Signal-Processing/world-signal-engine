@@ -56,6 +56,15 @@ export class Studio {
     const policy = await loadPolicy();
     if (policy) this.director.setPolicy(policy);
     this.wire();
+    // A block that measures its box learns about a format change here, without
+    // a window listener and without re-rendering regions whose box is unchanged.
+    this.scenes.watchResize(({ regionId }) => {
+      this.scenes.resizeRegion(regionId);
+      // A format change is exactly when a viewer has stepped away and come
+      // back, so it is also when the broadcast should be showing the live
+      // signal again rather than a stale pick from before.
+      this.store.clearSelection();
+    });
     return this.cutTo("overview", { reason: "boot", transition: "cut" });
   }
 

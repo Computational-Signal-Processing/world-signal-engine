@@ -32,6 +32,49 @@ export class SceneManager {
     this.unsubscribes = [];
     this.epoch = 0;
     this.history = [];          // scene ids, for returning after a takeover
+
+    // A block that draws to a measured box has to be told when that box
+    // changes. Each region element is observed, so a region that arrives later
+    // is covered too.
+    this.observer = null;
+    this.onResize = null;
+    this.sizes = null;          // region element -> last reported "WxH"
+  }
+
+  /**
+   * Watch the composition for size changes.
+   *
+   * Each region element is observed, not the scene root: `ResizeObserver` on a
+   * parent does not report a child's change, and the region box is what a block
+   * measures. `callback` is invoked with `{ regionId, element }` for a region
+   * whose box genuinely changed — the first observation is the size the block
+   * was already mounted with, so it is recorded and not announced.
+   */
+  watchResize(callback) {
+    this.onResize = callback;
+    if (this.observer || typeof ResizeObserver !== "function") return;
+    this.sizes = new Map();
+    this.observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const box = entry.contentRect;
+        const key = `${Math.round(box.width)}x${Math.round(box.height)}`;
+        const first = !this.sizes.has(entry.target);
+        const previous = this.sizes.get(entry.target);
+        this.sizes.set(entry.target, key);
+        if (first || previous === key) continue;
+        const region = [...this.regions.values()].find((r) => r.element === entry.target);
+        if (region) this.onResize?.({ regionId: region.definition.id, element: entry.target });
+      }
+    });
+    for (const [, region] of this.regions) this.observer.observe(region.element);
+  }
+
+  /** Stop watching for size changes. */
+  unwatchResize() {
+    this.observer?.disconnect();
+    this.observer = null;
+    this.onResize = null;
+    this.sizes = null;
   }
 
   /** The id of the scene currently on air. */
@@ -108,6 +151,8 @@ export class SceneManager {
 
     instance.mount();
     this.root.append(element);
+    // A region that arrives after the watcher was installed still gets watched.
+    if (this.observer) this.observer.observe(element);
     return { definition, element, instance, bucket };
   }
 
@@ -155,6 +200,8 @@ export class SceneManager {
   /** Tear a region down: block first, then the listeners it registered. */
   disposeRegion(region) {
     region.instance.unmount();
+    this.observer?.unobserve(region.element);
+    this.sizes?.delete(region.element);
     region.element.remove();
     for (const off of region.bucket ?? []) off();
     if (region.bucket) region.bucket.length = 0;
@@ -166,6 +213,13 @@ export class SceneManager {
     for (const [, region] of this.regions) {
       region.instance.update(this.contextFor(region.definition, epoch));
     }
+  }
+
+  /** Tell one region its box changed. */
+  resizeRegion(id) {
+    const region = this.regions.get(id);
+    if (!region) return;
+    region.instance.resize(this.contextFor(region.definition, this.epoch));
   }
 
   /** Tell every region its box changed. */
@@ -186,6 +240,7 @@ export class SceneManager {
   clear() {
     for (const [, region] of this.regions) this.disposeRegion(region);
     this.regions.clear();
+    this.unwatchResize();
     this.root?.remove();
     this.root = null;
     this.scene = null;

@@ -10,34 +10,24 @@
 
 /* --- scene transitions -------------------------------------------------- */
 
+/* Only the incoming scene is animated. The outgoing scene is removed by the
+ * recomposition itself, so there is no second scene on screen to animate out. */
 .scene[data-transition-in] { animation-duration: var(--transition-ms, 420ms); animation-timing-function: var(--ease-out); animation-fill-mode: both; }
-.scene[data-transition-out] { animation-duration: var(--transition-ms, 420ms); animation-timing-function: var(--ease-cut); animation-fill-mode: both; position: absolute; inset: 0; }
 
 .scene[data-transition-in="fade"] { animation-name: fade-in; }
-.scene[data-transition-out="fade"] { animation-name: fade-out; }
-
 .scene[data-transition-in="slide"] { animation-name: slide-in; }
-.scene[data-transition-out="slide"] { animation-name: slide-out; }
-
 .scene[data-transition-in="zoom"] { animation-name: zoom-in; }
-.scene[data-transition-out="zoom"] { animation-name: zoom-out; }
-
 .scene[data-transition-in="orbit"] { animation-name: orbit-in; }
-.scene[data-transition-out="orbit"] { animation-name: orbit-out; }
 
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
 
 @keyframes slide-in { from { opacity: 0; transform: translateX(2.5rem); } to { opacity: 1; transform: none; } }
-@keyframes slide-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-2.5rem); } }
 
 @keyframes zoom-in { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
-@keyframes zoom-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.015); } }
 
 /* The orbit reads as a camera move: the incoming scene arrives with a slight
  * rotation, as if the globe were being turned to it. */
 @keyframes orbit-in { from { opacity: 0; transform: scale(0.97) rotate(-0.6deg); } to { opacity: 1; transform: none; } }
-@keyframes orbit-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.02) rotate(0.6deg); } }
 
 /* --- pre-alert ----------------------------------------------------------
  *
