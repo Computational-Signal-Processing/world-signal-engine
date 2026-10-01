@@ -23,7 +23,7 @@ pub mod backtest;
 pub mod metrics;
 pub mod runtime;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
@@ -396,15 +396,38 @@ impl<S: Store> Engine<S> {
         // search result) is stored for evidence but never detected on: its
         // aggregate is membership churn, not a change in the world. The
         // judgement is declared in the catalog, not hard-coded here.
-        let comparable: HashMap<String, bool> = self
-            .store
-            .all_sources()
-            .unwrap_or_default()
-            .into_iter()
+        let sources = self.store.all_sources().unwrap_or_default();
+        let comparable: HashMap<String, bool> = sources
+            .iter()
             .map(|s| (s.id.as_str().to_string(), s.measurement.is_comparable()))
             .collect();
+        // A raw metric that some derivation reads is evidence-only: it is
+        // stored and drill-downable, but the derived series is what detection
+        // should see. Declared per source; nothing here names a metric.
+        let evidence_only: HashSet<(String, String)> = sources
+            .iter()
+            .flat_map(|s| {
+                s.derivations
+                    .iter()
+                    .map(move |d| (s.id.as_str().to_string(), d.from_metric.clone()))
+            })
+            .collect();
+        // The derivations to evaluate, keyed by source.
+        let derivations: HashMap<String, Vec<wse_model::Derivation>> = sources
+            .into_iter()
+            .filter(|s| !s.derivations.is_empty())
+            .map(|s| (s.id.as_str().to_string(), s.derivations))
+            .collect();
 
-        for observation in observations {
+        // Raw observations must be stored before a derivation can look back at
+        // the predecessor, so this cycle's inputs are kept until the end.
+        let mut incoming = observations;
+        if !derivations.is_empty() {
+            let derived = self.derive_observations(&incoming, &derivations);
+            incoming.extend(derived);
+        }
+
+        for observation in incoming {
             // De-duplication happens before anything else: the same payload
             // collected twice must not produce a second observation.
             if self
@@ -425,7 +448,12 @@ impl<S: Store> Engine<S> {
                 // An unknown source (a test, a replay of an unregistered feed)
                 // is treated as measurable: the catalog is the place to mark a
                 // source as unstable, and absence of an entry is not a verdict.
-                .unwrap_or(true);
+                .unwrap_or(true)
+                && (evidence_only.is_empty()
+                    || !evidence_only.contains(&(
+                        observation.source_id.as_str().to_string(),
+                        observation.metric.clone(),
+                    )));
 
             if detectable {
                 let series_key = observation.series_key();
@@ -500,6 +528,75 @@ impl<S: Store> Engine<S> {
         }
 
         (events, persisted, candidates.len())
+    }
+
+    /// Evaluate the declared derivations for one ingest cycle.
+    ///
+    /// For each raw observation whose `(source, metric)` is an input to a
+    /// declared derivation, look up the predecessor of the same series and
+    /// entity (in this cycle first, then in the store) and compute the derived
+    /// value with the pure [`wse_baseline::evaluate`]. The result is a normal
+    /// observation on the derived metric's own series, carrying its provenance.
+    ///
+    /// No predecessor, or a counter reset, yields no derived observation —
+    /// never a zero and never a large negative value. Nothing here uses the wall
+    /// clock; the derived timestamps come from the input observations, which is
+    /// what keeps replay deterministic.
+    fn derive_observations(
+        &self,
+        incoming: &[Observation],
+        derivations: &HashMap<String, Vec<wse_model::Derivation>>,
+    ) -> Vec<Observation> {
+        let mut derived = Vec::new();
+        for observation in incoming {
+            let Some(list) = derivations.get(observation.source_id.as_str()) else {
+                continue;
+            };
+            let Some(declaration) = list.iter().find(|d| d.from_metric == observation.metric)
+            else {
+                continue;
+            };
+
+            let raw_series = observation.series_key();
+
+            // Predecessor: the newest strictly-earlier point of the same raw
+            // series. In this cycle first (a batch may carry several points),
+            // then the store. Identity rides on the series key, so two entities
+            // never see each other's predecessor, and an out-of-order arrival
+            // never becomes a predecessor of an earlier point.
+            let previous = incoming
+                .iter()
+                .filter(|o| o.series_key() == raw_series && o.observed_at < observation.observed_at)
+                .max_by_key(|o| o.observed_at)
+                .cloned()
+                .or_else(|| {
+                    self.store
+                        .latest_observations(&raw_series, 1)
+                        .ok()
+                        .and_then(|points| points.into_iter().next())
+                        .filter(|p| p.observed_at < observation.observed_at)
+                });
+
+            let previous_value = previous.as_ref().map(|p| p.value);
+            match wse_baseline::evaluate(declaration.kind, previous_value, observation.value) {
+                wse_baseline::Derived::Value(value) => {
+                    if let Some(previous) = previous {
+                        derived.push(Observation::derived_from(
+                            &previous,
+                            observation,
+                            declaration,
+                            value,
+                        ));
+                    }
+                }
+                // A reset is a real event in the source, but not a world
+                // change to detect on: the next observation becomes the new
+                // predecessor. Nothing is emitted, so no negative anomaly is
+                // manufactured.
+                wse_baseline::Derived::NoPredecessor | wse_baseline::Derived::Reset => {}
+            }
+        }
+        derived
     }
 
     /// Advance the lifecycle of active events against a clock.

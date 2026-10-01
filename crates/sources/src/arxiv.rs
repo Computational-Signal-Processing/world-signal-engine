@@ -1,12 +1,15 @@
 //! arXiv — preprint submission velocity per fixed category.
 //!
 //! The arXiv API returns `<opensearch:totalResults>` for a category query: the
-//! total number of preprints in that category. Differenced over a fixed window
-//! it becomes a submission-velocity series — "how many new cs.AI preprints
-//! appeared", a leading indicator of research activity.
+//! total number of preprints in that category. The total only ever grows, so a
+//! level z-score on it is close to meaningless. The collector therefore emits
+//! the **raw cumulative level** (`preprint_total`), and the catalog declares a
+//! `Delta` derivation from it to `preprint_new` — the number of new preprints
+//! since the previous poll, which is the submission-velocity series the name
+//! promises.
 //!
-//! The query is a fixed set of categories, re-measured every collection, so the
-//! series is comparable.
+//! The raw level is stored and drill-downable but **evidence-only**: it is not
+//! detected on. Only `preprint_new` is. See `docs/decisions/0014-derived-metrics.md`.
 //!
 //! Docs: <https://info.arxiv.org/help/api/index.html>
 //!
@@ -18,12 +21,17 @@ use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
 use wse_collector::CollectorError;
-use wse_model::{EntityId, Observation, RawReference, Source, SourceId};
+use wse_model::{Derivation, EntityId, Observation, RawReference, Source, SourceId};
 
 use crate::xml;
 
 pub const SOURCE_ID: &str = "arxiv_submissions";
 pub const COLLECTOR_TYPE: &str = "arxiv_category_total";
+
+/// The raw cumulative level the collector emits.
+pub const RAW_METRIC: &str = "preprint_total";
+/// The derived per-interval series detection runs on.
+pub const DERIVED_METRIC: &str = "preprint_new";
 
 /// The query endpoint.
 pub const API_ENDPOINT: &str = "https://export.arxiv.org/api/query";
@@ -69,6 +77,7 @@ pub fn source() -> Source {
         tier: wse_model::SourceTier::Tier2,
         measurement: wse_model::MeasurementSemantics::StableSeries,
         feeds_lenses: vec!["lens_science".to_string(), "lens_ai".to_string()],
+        derivations: vec![Derivation::delta(RAW_METRIC, DERIVED_METRIC)],
     }
 }
 
@@ -121,7 +130,7 @@ pub fn observation_for(
     Observation::new(
         source_id,
         Some(entity),
-        "preprint_total",
+        RAW_METRIC,
         total as f64,
         "preprints",
         observed_at,
@@ -171,7 +180,7 @@ mod tests {
         let ai = observation_for("cs_ai", "cs.AI", 203523, received(), &fixture());
         let lg = observation_for("cs_lg", "cs.LG", 100000, received(), &fixture());
         assert_ne!(ai.series_key(), lg.series_key());
-        assert_eq!(ai.metric, "preprint_total");
+        assert_eq!(ai.metric, RAW_METRIC);
         assert_eq!(ai.unit, "preprints");
     }
 
@@ -182,5 +191,18 @@ mod tests {
         assert_eq!(source.tier, wse_model::SourceTier::Tier2);
         assert!(source.feeds_lenses.contains(&"lens_ai".to_string()));
         assert!(source.measurement.is_comparable());
+    }
+
+    #[test]
+    fn the_catalog_declares_the_velocity_derivation() {
+        // The collector emits the raw level; the catalog is what says the
+        // detection series is its increment. Without this the source would be
+        // detected on a monotonic total.
+        let source = source();
+        let derivation = source
+            .derivation_for(RAW_METRIC)
+            .expect("arxiv must derive from its cumulative level");
+        assert_eq!(derivation.to_metric, DERIVED_METRIC);
+        assert_eq!(derivation.kind, wse_model::DerivationKind::Delta);
     }
 }

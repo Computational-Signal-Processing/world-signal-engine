@@ -72,6 +72,41 @@ sets a per-record *discriminator* for sources that emit several records per
 series per timestamp (GitHub search, Hacker News); it is folded into the id and
 kept on the observation for drill-down, but never enters the series key.
 
+### Derived observations
+
+Some sources report a quantity that is not itself a world change — a cumulative
+registry size, a star count. The change is the increment. A source may declare a
+derivation (`Source::derivations`), and the engine computes the derived value at
+ingest, emitting a normal observation on the **derived metric's own series**:
+
+```text
+raw:      arxiv_submissions::arxiv_cs_ai::preprint_total::preprints
+derived:  arxiv_submissions::arxiv_cs_ai::preprint_new::preprints
+```
+
+The raw observation is kept (stored, queryable, drill-downable) but is
+**evidence-only**: a metric named as a derivation input is never detected on, so
+only the derived series produces anomalies. The derived observation carries its
+provenance so the drill-down can explain it:
+
+```text
+derivation.kind            delta
+derivation.inputs          [previous_observation_id, current_observation_id]
+derivation.interval_start  previous.observed_at
+derivation.interval_end    current.observed_at
+derivation.formula         "current - previous"
+```
+
+Three rules hold and must not be relaxed:
+
+- **No predecessor is not zero.** A first observation yields no derived value.
+- **A counter reset is not a negative change.** `current < previous` yields no
+  derived value; the next observation becomes the new predecessor.
+- **The interval is explicit.** `observed_at` is the interval end; the measured
+  interval is `interval_start..interval_end`, never inferred from polling time.
+
+See `docs/decisions/0014-derived-metrics.md`.
+
 ### The series key
 
 ```text

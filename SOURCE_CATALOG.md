@@ -215,8 +215,10 @@ is the fix: pin the members, then the count means something.
 - **License:** arXiv API terms; metadata is open
 - **Entities:** `arxiv_*` (one series per category)
 - **Parameters:** a fixed category list (`cs.AI`, `cs.LG`, `cs.CL`, `cs.CV`)
-- **Notes:** the total number of preprints in each tracked category, differenced
-  over the window. The Atom feed's `opensearch:totalResults` is the measurement.
+- **Notes:** the Atom feed's `opensearch:totalResults` is the raw cumulative
+  measurement (`preprint_total`). The catalog declares
+  `preprint_new = Delta(preprint_total)`; the raw level is stored but
+  evidence-only, and detection runs on the derived per-interval velocity.
   Feeds the SCIENCE and AI lenses.
 
 ### github_rust_activity

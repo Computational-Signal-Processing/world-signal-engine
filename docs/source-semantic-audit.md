@@ -558,9 +558,15 @@ entity `arxiv_<slug>`, `metric=preprint_total`, `observed_at` = collection time.
 12. **Never infer:** that the stored value is a *rate*; that a rise is a research
     surge (it is a cumulative count that only ever rises).
 
-**Eligibility: EVIDENCE_ONLY** as stored (a monotonic level is not an anomaly
-target). It becomes DETECTABLE_WITH_CONSTRAINTS only if the collector emits the
-*difference* instead of the total.
+**Eligibility: DETECTABLE via a derived series.** As stored (a monotonic
+cumulative level) the raw `preprint_total` is not an anomaly target, so the
+catalog declares `preprint_new = Delta(preprint_total)` and the raw level is
+**evidence-only** (stored, not detected on). The derived `preprint_new` series
+is what detection runs on. See `docs/decisions/0014-derived-metrics.md`.
+
+**Update (CAP-2A):** the doc/implementation mismatch noted above is resolved —
+the collector still emits the raw total, and the increment is now computed by
+the engine from the declared derivation rather than claimed in a comment.
 
 ## 13. noaa_kp_index — NOAA Planetary K-index
 

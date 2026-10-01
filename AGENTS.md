@@ -304,6 +304,17 @@ See [docs/deployment.md](docs/deployment.md) for the operational story and
   `--rehydrate-history N` (default 500) replays the N most recent observations
   per series so the detector resumes warm. `series=0` in the startup log means
   an empty store, not a quiet world.
+- **A cumulative level is detected through its declared derivation, not as a
+  level.** `Source::derivations` declares e.g. `preprint_new =
+  Delta(preprint_total)`. The engine evaluates it at ingest and emits a normal
+  observation on the derived series; the raw metric named as an input is
+  **evidence-only** (stored, not detected on). Nothing branches on a source or
+  metric name — the declaration is the only switch. The pure arithmetic is
+  `wse_baseline::evaluate`; the engine supplies the predecessor. Three rules are
+  load-bearing: no predecessor emits nothing (not zero), a counter reset emits
+  nothing (not a negative delta), and the interval is explicit on the derived
+  observation. See `docs/decisions/0014-derived-metrics.md`; guarded by
+  `crates/engine/tests/derived_metrics.rs`.
 - **`SqliteStore` wraps its `Connection` in a `std::sync::Mutex`.** One guard per
   function; the mutex is not reentrant. Holding a guard across a call that takes
   it again self-deadlocks — this is what `prune_raw_to` did.

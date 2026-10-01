@@ -17,8 +17,10 @@
 //! assert_eq!(snapshot.sample_size, 10);
 //! ```
 
+mod derive;
 mod stats;
 
+pub use derive::{evaluate, Derived};
 pub use stats::{
     ewma, first_differences, mean, median, median_absolute_deviation, percentile, std_dev,
     trend_per_second, volatility,

@@ -84,6 +84,47 @@ pub enum MeasurementSemantics {
     UnstablePopulation,
 }
 
+/// How a derived series is computed from a source's own raw series.
+///
+/// Some sources emit a quantity that is not itself a world change: a registry
+/// size, a cumulative star count. The change is the *increment*, and a level
+/// z-score on the raw value is close to meaningless. Declaring the derivation
+/// here keeps the transformation data — the same pattern as `measurement` and
+/// `feeds_lenses` — so the engine applies it generically and never branches on
+/// a source or metric name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Derivation {
+    /// The raw metric this derivation reads.
+    pub from_metric: String,
+    /// The derived metric it emits, as its own series.
+    pub to_metric: String,
+    pub kind: DerivationKind,
+}
+
+impl Derivation {
+    /// `to = from(t) - from(previous)`: the increment of a cumulative level.
+    pub fn delta(from_metric: impl Into<String>, to_metric: impl Into<String>) -> Self {
+        Self {
+            from_metric: from_metric.into(),
+            to_metric: to_metric.into(),
+            kind: DerivationKind::Delta,
+        }
+    }
+}
+
+/// The supported derivations. Deliberately small: only what a real source
+/// needs. `Level` is the implicit default (no derivation at all).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DerivationKind {
+    /// `current - previous` between comparable consecutive observations.
+    ///
+    /// Emits nothing when there is no predecessor (which is not zero) and
+    /// nothing on a counter reset (`current < previous`), so a reset never
+    /// becomes a large negative anomaly.
+    Delta,
+}
+
 impl MeasurementSemantics {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -148,6 +189,15 @@ pub struct Source {
     /// rather than showing a lens as healthy when nothing feeds it.
     #[serde(default)]
     pub feeds_lenses: Vec<String>,
+    /// Derived series this source computes from its own raw series.
+    ///
+    /// Empty for a source whose raw measurement is already the quantity to
+    /// detect. When present, the raw metric named by a derivation becomes
+    /// **evidence-only** (stored and drill-downable, never detected on) and the
+    /// derived metric takes its place as the detection series. See
+    /// `docs/decisions/0014-derived-metrics.md`.
+    #[serde(default)]
+    pub derivations: Vec<Derivation>,
 }
 
 fn default_tier() -> SourceTier {
@@ -186,6 +236,7 @@ impl Source {
             tier: SourceTier::Tier4,
             measurement: MeasurementSemantics::StableSeries,
             feeds_lenses: Vec::new(),
+            derivations: Vec::new(),
         }
     }
 
@@ -205,6 +256,20 @@ impl Source {
     pub fn feeding(mut self, lenses: impl IntoIterator<Item = impl Into<String>>) -> Self {
         self.feeds_lenses = lenses.into_iter().map(Into::into).collect();
         self
+    }
+
+    /// Declare a derived series computed from one of this source's raw metrics.
+    pub fn deriving(mut self, derivation: Derivation) -> Self {
+        self.derivations.push(derivation);
+        self
+    }
+
+    /// The derivation whose input is `metric`, if this source derives from it.
+    ///
+    /// A metric named here is evidence-only: it is stored and drill-downable
+    /// but never enters detection. See [`Source::derivations`].
+    pub fn derivation_for(&self, metric: &str) -> Option<&Derivation> {
+        self.derivations.iter().find(|d| d.from_metric == metric)
     }
 
     pub fn with_category(mut self, category: impl Into<String>) -> Self {

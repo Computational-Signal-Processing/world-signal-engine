@@ -32,13 +32,13 @@ pub use event::{Event, EventState};
 pub use geo::{haversine_km, Location};
 pub use ids::{fnv1a_hex, AnomalyId, EntityId, EventId, LensId, ObservationId, SignalId, SourceId};
 pub use lens::Lens;
-pub use observation::{series_key, Observation, RawReference};
+pub use observation::{series_key, DerivationProvenance, Observation, RawReference};
 pub use quality::{DataPresence, Quality, QualityFlag};
 pub use signal::{
     DataOrigin, Direction, Evidence, Signal, SignalNarrative, SignalQuality, SignalStatus,
     SignalType,
 };
 pub use source::{
-    AuthKind, Cadence, Cost, DataFormat, FailureKind, HealthStatus, MeasurementSemantics, Protocol,
-    Source, SourceHealth, SourceTier,
+    AuthKind, Cadence, Cost, DataFormat, Derivation, DerivationKind, FailureKind, HealthStatus,
+    MeasurementSemantics, Protocol, Source, SourceHealth, SourceTier,
 };

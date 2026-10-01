@@ -90,6 +90,7 @@ pub fn source() -> Source {
         // comparable measurement rather than a churning search result.
         measurement: wse_model::MeasurementSemantics::FixedUniverse,
         feeds_lenses: vec!["lens_software".to_string()],
+        derivations: Vec::new(),
     }
 }
 

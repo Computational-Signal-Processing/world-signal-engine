@@ -75,6 +75,7 @@ pub fn source() -> Source {
         tier: wse_model::SourceTier::Tier3,
         measurement: wse_model::MeasurementSemantics::FixedUniverse,
         feeds_lenses: vec!["lens_software".to_string()],
+        derivations: Vec::new(),
     }
 }
 

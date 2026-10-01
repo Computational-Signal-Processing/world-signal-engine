@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::{EntityId, ObservationId, SourceId};
 use crate::quality::Quality;
+use crate::source::DerivationKind;
 
 /// A pointer back to the untouched source payload.
 ///
@@ -67,6 +68,33 @@ pub struct Observation {
     /// so the records stay independently observable while still forming one
     /// series for baseline and detection.
     pub identity: Option<String>,
+    /// Set when this observation is a *derived* metric rather than a raw
+    /// measurement, e.g. `preprint_new = preprint_total(t) - preprint_total(t-1)`.
+    ///
+    /// `None` for every observation a collector produces. Carrying the
+    /// provenance here — rather than a parallel store — is what lets the
+    /// drill-down explain the transformation and reach the raw inputs.
+    #[serde(default)]
+    pub derivation: Option<DerivationProvenance>,
+}
+
+/// Provenance for a derived observation: what it was computed from, and over
+/// which measured interval.
+///
+/// The interval is explicit and never inferred later from polling time:
+/// `observed_at` says *when we observed*, `interval_start`/`interval_end` say
+/// *what period was measured*. They coincide for a delta only by coincidence of
+/// this particular derivation, not by definition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DerivationProvenance {
+    pub kind: DerivationKind,
+    /// The input observations, oldest first. For [`DerivationKind::Delta`] this
+    /// is `[previous, current]`.
+    pub inputs: Vec<ObservationId>,
+    pub interval_start: DateTime<Utc>,
+    pub interval_end: DateTime<Utc>,
+    /// Human-readable transformation, e.g. `"current - previous"`.
+    pub formula: String,
 }
 
 impl Observation {
@@ -110,6 +138,7 @@ impl Observation {
             dimensions: BTreeMap::new(),
             attributes: BTreeMap::new(),
             identity: None,
+            derivation: None,
         }
     }
 
@@ -157,6 +186,43 @@ impl Observation {
         let entity_key = self.entity_id.as_ref().map(|e| e.as_str()).unwrap_or("-");
         let series = series_key(&self.source_id, entity_key, &self.metric, &self.unit);
         ObservationId::deterministic(&series, &self.observed_at.to_rfc3339(), record_key)
+    }
+
+    /// Build the derived observation for `previous -> current`, given the
+    /// derivation declaration that produced it.
+    ///
+    /// The result is a normal observation on its **own** series (`to_metric`),
+    /// so it flows through storage, baseline and detection unchanged and the
+    /// raw level stays independently stored. Its id is derived from the same
+    /// record key as `current`, so reprocessing the same input yields the same
+    /// id and re-ingest de-duplicates.
+    ///
+    /// `observed_at` is the interval end (the current point). The interval
+    /// itself is carried in [`DerivationProvenance`], never re-inferred.
+    pub fn derived_from(
+        previous: &Observation,
+        current: &Observation,
+        derivation: &crate::source::Derivation,
+        value: f64,
+    ) -> Self {
+        let mut derived = current.clone();
+        derived.metric = derivation.to_metric.clone();
+        derived.value = value;
+        derived.observed_at = current.observed_at;
+        derived.received_at = current.received_at;
+        derived.derivation = Some(DerivationProvenance {
+            kind: derivation.kind,
+            inputs: vec![previous.id.clone(), current.id.clone()],
+            interval_start: previous.observed_at,
+            interval_end: current.observed_at,
+            formula: "current - previous".to_string(),
+        });
+        // The derived point ends at the current record; using the current
+        // observation's own id as the record key makes recomputation stable
+        // (that id is itself deterministic) and keeps the derived id
+        // collision-free against the raw point, which is a different series.
+        derived.id = derived.derive_id(current.id.as_str());
+        derived
     }
 
     /// Override the receipt timestamp.
@@ -266,6 +332,44 @@ mod tests {
         // The single-record contract: with no record key the payload hash *is*
         // the identity, so a changed payload is a new observation.
         assert_ne!(obs(1.0, "h1").id, obs(1.0, "h2").id);
+    }
+
+    #[test]
+    fn a_derived_point_is_its_own_series_with_provenance() {
+        let mut previous = obs(100.0, "h1");
+        previous.observed_at = ts("2026-01-01T00:00:00Z");
+        let mut current = obs(107.0, "h2");
+        current.observed_at = ts("2026-01-02T00:00:00Z");
+        let declaration = crate::source::Derivation::delta("temperature", "temperature_new");
+
+        let derived = Observation::derived_from(&previous, &current, &declaration, 7.0);
+
+        assert_eq!(derived.metric, "temperature_new");
+        assert_eq!(derived.value, 7.0);
+        assert_ne!(derived.series_key(), current.series_key());
+        assert_ne!(
+            derived.id, current.id,
+            "must not collide with the raw point"
+        );
+        let provenance = derived.derivation.as_ref().unwrap();
+        assert_eq!(
+            provenance.inputs,
+            vec![previous.id.clone(), current.id.clone()]
+        );
+        assert_eq!(provenance.interval_start, previous.observed_at);
+        assert_eq!(provenance.interval_end, current.observed_at);
+        assert_eq!(derived.observed_at, current.observed_at);
+        assert_eq!(derived.received_at, current.received_at);
+    }
+
+    #[test]
+    fn a_derived_id_is_stable_across_recomputation() {
+        let previous = obs(100.0, "h1");
+        let current = obs(107.0, "h2");
+        let declaration = crate::source::Derivation::delta("temperature", "temperature_new");
+        let first = Observation::derived_from(&previous, &current, &declaration, 7.0);
+        let second = Observation::derived_from(&previous, &current, &declaration, 7.0);
+        assert_eq!(first.id, second.id);
     }
 
     #[test]
