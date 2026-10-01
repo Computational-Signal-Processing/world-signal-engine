@@ -174,7 +174,11 @@ is the fix: pin the members, then the count means something.
 - **Notes:** emits two series: `kev_added` (catalogue additions in the recent
   window) and `kev_catalog_total` (catalogue size). A rise in `kev_added` is a
   real increase in vulnerabilities being exploited in the wild — the CYBER lens's
-  home source. Both series are stable and authoritative.
+  home source. `kev_catalog_total` only ever grows, so it is **evidence-only**:
+  the catalogue declares a `Delta` derivation to `kev_catalog_growth` (the
+  vulnerabilities added since the previous poll), and that derived series is
+  what detection runs on. See
+  [docs/decisions/0015-cisa-derived-growth.md](docs/decisions/0015-cisa-derived-growth.md).
 
 ### hackernews_frontpage
 

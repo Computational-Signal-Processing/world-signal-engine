@@ -4,10 +4,14 @@
 //! vulnerabilities **known to be exploited in the wild**, maintained by the US
 //! Cybersecurity and Infrastructure Security Agency. It is a stable series:
 //!
-//! * `kev_added_7d` — how many vulnerabilities were added in the last seven
-//!   days. A rise is a real increase in newly-exploited vulnerabilities.
-//! * `kev_catalog_total` — the size of the whole catalog, a slow monotonic
-//!   series that makes an unusual acceleration visible.
+//! * `kev_added` — how many vulnerabilities were added in the last seven days.
+//!   A rise is a real increase in newly-exploited vulnerabilities.
+//! * `kev_catalog_total` — the size of the whole catalog. It only ever grows, so
+//!   a level z-score on it is close to meaningless. The catalog therefore
+//!   declares a `Delta` derivation to `kev_catalog_growth` — how many
+//!   vulnerabilities were added since the previous poll — which is what
+//!   detection runs on. The raw total is stored and drill-downable but
+//!   **evidence-only**. See `docs/decisions/0014-derived-metrics.md`.
 //!
 //! Feed: <https://www.cisa.gov/known-exploited-vulnerabilities-catalog>
 //!
@@ -18,10 +22,15 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use wse_collector::CollectorError;
-use wse_model::{EntityId, Observation, RawReference, Source, SourceId};
+use wse_model::{Derivation, EntityId, Observation, RawReference, Source, SourceId};
 
 pub const SOURCE_ID: &str = "cisa_kev";
 pub const COLLECTOR_TYPE: &str = "cisa_kev_catalog";
+
+/// The raw cumulative catalog size the collector emits.
+pub const RAW_TOTAL_METRIC: &str = "kev_catalog_total";
+/// The derived per-interval series detection runs on.
+pub const DERIVED_GROWTH_METRIC: &str = "kev_catalog_growth";
 
 /// The machine-readable catalog.
 pub const API_ENDPOINT: &str =
@@ -60,7 +69,7 @@ pub fn source() -> Source {
         tier: wse_model::SourceTier::Tier1,
         measurement: wse_model::MeasurementSemantics::StableSeries,
         feeds_lenses: vec!["lens_cyber".to_string()],
-        derivations: Vec::new(),
+        derivations: vec![Derivation::delta(RAW_TOTAL_METRIC, DERIVED_GROWTH_METRIC)],
     }
 }
 
@@ -147,7 +156,7 @@ pub fn parse(body: &[u8], observed_at: DateTime<Utc>) -> Result<Vec<Observation>
     let size = Observation::new(
         source_id,
         Some(entity),
-        "kev_catalog_total",
+        RAW_TOTAL_METRIC,
         total as f64,
         "vulnerabilities",
         observed_at,
@@ -239,5 +248,38 @@ mod tests {
         assert_eq!(source.tier, wse_model::SourceTier::Tier1);
         assert!(source.feeds_lenses.contains(&"lens_cyber".to_string()));
         assert!(source.measurement.is_comparable());
+    }
+
+    #[test]
+    fn the_catalog_declares_the_growth_derivation() {
+        // The collector emits the raw cumulative size; the catalog is what says
+        // the detection series is its increment. Without this the source would
+        // be detected on a monotonic level.
+        let source = source();
+        let declaration = source
+            .derivations
+            .iter()
+            .find(|d| d.from_metric == RAW_TOTAL_METRIC)
+            .expect("a growth derivation is declared");
+        assert_eq!(declaration.to_metric, DERIVED_GROWTH_METRIC);
+        assert_eq!(declaration.kind, wse_model::DerivationKind::Delta);
+        assert_eq!(
+            source
+                .derivation_for(RAW_TOTAL_METRIC)
+                .map(|d| d.to_metric.as_str()),
+            Some(DERIVED_GROWTH_METRIC),
+        );
+    }
+
+    #[test]
+    fn the_emitted_total_metric_matches_the_declared_input() {
+        // The derivation reads `RAW_TOTAL_METRIC`; the collector must emit
+        // exactly that metric or the derivation never fires.
+        let observations = parse(&fixture(), received()).unwrap();
+        let total = observations
+            .iter()
+            .find(|o| o.metric == RAW_TOTAL_METRIC)
+            .expect("the raw total is emitted under the declared metric name");
+        assert_eq!(total.value, 4.0);
     }
 }

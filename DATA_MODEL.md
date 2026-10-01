@@ -82,6 +82,9 @@ ingest, emitting a normal observation on the **derived metric's own series**:
 ```text
 raw:      arxiv_submissions::arxiv_cs_ai::preprint_total::preprints
 derived:  arxiv_submissions::arxiv_cs_ai::preprint_new::preprints
+
+raw:      cisa_kev::cyber_kev::kev_catalog_total::vulnerabilities
+derived:  cisa_kev::cyber_kev::kev_catalog_growth::vulnerabilities
 ```
 
 The raw observation is kept (stored, queryable, drill-downable) but is

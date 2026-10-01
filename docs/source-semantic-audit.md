@@ -461,6 +461,13 @@ meaningful.
 baselined weekly (window overlap); `kev_catalog_total` only as a differenced
 series.
 
+**Update (CAP-2B):** `kev_catalog_total` is now differenced, not detected on as
+a level. The catalog declares `kev_catalog_growth = Delta(kev_catalog_total)` and
+the raw total is **evidence-only** (stored, not detected on); detection runs on
+the derived growth series. This is the same declared-derivation mechanism as
+arXiv. The `kev_added` weekly-overlap constraint (F5) is unchanged and still
+open. See `docs/decisions/0015-cisa-derived-growth.md`.
+
 ## 10. ecb_exchange_rates — ECB Euro Reference Rates
 
 **Collector:** `crates/sources/src/ecb.rs`, `D.USD.EUR.SP00.A`,
@@ -632,7 +639,7 @@ bounded-scale-aware baselining.
 | gdelt_news_volume | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; treat as attention, not phenomenon |
 | ecb_exchange_rates | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; business-day gaps |
 | noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
-| cisa_kev | DETECTABLE_WITH_CONSTRAINTS | weekly baseline for `kev_added`; difference the total |
+| cisa_kev | DETECTABLE_WITH_CONSTRAINTS | weekly baseline for `kev_added`; `kev_catalog_total` differenced (done, CAP-2B) |
 | crossref_works | DETECTABLE_WITH_CONSTRAINTS | window-overlap baseline; latest point partial |
 | github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
 | nasa_neo | EVIDENCE_ONLY | pooled class series not coherent |
@@ -708,6 +715,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F3 | Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total | `crates/sources/src/arxiv.rs` | two polls → delta metric |
 | F4 | Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance | `crates/sources/src/nasa.rs` | distance-threshold count |
 | F5 | Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline | detector config or source cadence | overlapping-window baseline test |
+| F5a | ~~Difference `kev_catalog_total` instead of detecting the level~~ **DONE (CAP-2B)** — the catalogue declares `kev_catalog_growth = Delta(kev_catalog_total)`; the raw total is evidence-only | `crates/sources/src/cisa_kev.rs` | `crates/cli/tests/cisa_derived_metric.rs` |
 | F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
 | F7 | Mark the Crossref latest point as partial (quality flag) or shift the window back a day | `crates/sources/src/crossref.rs` | partial-deposit flag |
 | F8 | Handle business-day gaps for ECB (absence ≠ zero) | `crates/sources/src/ecb.rs` / baseline | gap-aware baseline test |

@@ -314,7 +314,14 @@ See [docs/deployment.md](docs/deployment.md) for the operational story and
   load-bearing: no predecessor emits nothing (not zero), a counter reset emits
   nothing (not a negative delta), and the interval is explicit on the derived
   observation. See `docs/decisions/0014-derived-metrics.md`; guarded by
-  `crates/engine/tests/derived_metrics.rs`.
+  `crates/engine/tests/derived_metrics.rs`. Applied to `arxiv_submissions`
+  (`preprint_new`) and `cisa_kev` (`kev_catalog_growth`); see
+  `docs/decisions/0015-cisa-derived-growth.md` and
+  `crates/cli/tests/cisa_derived_metric.rs`. **Not** applicable to a source whose
+  records share one series key and differ only by `identity` (e.g. GitHub's
+  per-repo `repo_stars`): the predecessor lookup keys on `series_key` alone, so a
+  delta there would subtract across different records. GitHub's cold-start
+  problem is F9, a baseline concern, not a derivation.
 - **`SqliteStore` wraps its `Connection` in a `std::sync::Mutex`.** One guard per
   function; the mutex is not reentrant. Holding a guard across a call that takes
   it again self-deadlocks — this is what `prune_raw_to` did.
