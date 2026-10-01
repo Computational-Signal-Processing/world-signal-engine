@@ -1,12 +1,23 @@
 /* The studio's single source of truth.
  *
- * It owns the polling loops, the connection state and the current lens, and it
- * publishes changes on the bus. Blocks read snapshots from here and subscribe;
- * they never poll and never fetch. Because there is exactly one poller per
- * resource, adding a region costs no extra requests. */
+ * Data reaches a block through exactly one path:
+ *
+ *     backend → adapters → store → data bus → blocks
+ *
+ * The store owns the polling loops, the live-stream ingestion, the connection
+ * state and the current lens, and it publishes changes on the bus. Blocks read
+ * a snapshot from here and subscribe; they never poll, never fetch, and never
+ * learn an endpoint name.
+ *
+ * Every domain carries its own state — `loading`, `ready`, `stale`, `error`,
+ * `unavailable` — so a reader can tell "we have no data yet" from "the engine
+ * stopped answering" from "the engine answered with nothing". A failed read is
+ * never published as empty data, which is the same distinction the engine makes
+ * between a quiet world and a dead collector. */
 
 import { EventBus } from "../studio/event-bus.js";
 import { ApiClient, ENDPOINTS } from "./api.js";
+import * as adapt from "./adapters.js";
 
 /** Poll cadences, in milliseconds. Matched to how fast each resource moves. */
 const CADENCE = {
@@ -17,6 +28,21 @@ const CADENCE = {
   metrics: 30_000,
   observatory: 60_000,
   sources: 120_000,
+  lenses: 600_000,
+  health: 30_000,
+};
+
+/** How a domain is read: which endpoint, whether it is text, how it adapts. */
+const DOMAINS = {
+  world:       { path: ENDPOINTS.world,       adapt: adapt.world },
+  control:     { path: ENDPOINTS.control,     adapt: adapt.control },
+  signals:     { path: ENDPOINTS.signals,     adapt: adapt.signals },
+  activity:    { path: ENDPOINTS.activity,    adapt: adapt.activity },
+  observatory: { path: ENDPOINTS.observatory, adapt: adapt.observatory },
+  sources:     { path: ENDPOINTS.sources,     adapt: adapt.sources },
+  lenses:      { path: ENDPOINTS.lenses,      adapt: adapt.lenses },
+  health:      { path: ENDPOINTS.health,      adapt: adapt.health },
+  metrics:     { path: ENDPOINTS.metrics,     text: true, adapt: adapt.metrics },
 };
 
 export class Store {
@@ -28,6 +54,9 @@ export class Store {
     this.lens = "";
     this.lenses = [];
 
+    // Domain values. `null` means "nothing read yet"; the matching entry in
+    // `state` says whether that is because we are still loading or because the
+    // read failed.
     this.world = null;
     this.control = null;
     this.signals = [];
@@ -35,8 +64,12 @@ export class Store {
     this.metrics = null;
     this.observatory = null;
     this.sources = [];
-    this.sourceHealth = new Map();   // source_id -> health payload
+    this.health = null;
 
+    this.state = {};
+    for (const name of Object.keys(DOMAINS)) this.state[name] = "loading";
+
+    this.sourceHealth = new Map();   // source_id -> health payload
     this.selection = { signalId: null, eventId: null, observationId: null, sourceId: null };
     this.detail = new Map();         // cache of fetched detail resources
 
@@ -54,17 +87,9 @@ export class Store {
       this.timers.push(setInterval(() => this.refresh(name), ms));
     }
     // The first pass runs immediately and is not awaited, so the shell can paint
-    // before the network settles.
-    this.refresh("world");
-    this.refresh("control");
-    this.refresh("signals");
-    this.refresh("activity");
-    this.refresh("metrics");
-    this.refresh("observatory");
-    // The catalog is static, but it is read on the first paint — the globe asks
-    // it which sources carry coordinates — so waiting for its two-minute poll
-    // would leave those blocks blind on a fresh screen.
-    this.refresh("sources");
+    // before the network settles. `sources` is read on the first paint because
+    // the globe asks the catalog which sources carry coordinates.
+    for (const name of Object.keys(CADENCE)) this.refresh(name);
   }
 
   stop() {
@@ -75,88 +100,149 @@ export class Store {
 
   /* -------------------------------------------------------------- reading */
 
+  /** The state of one domain: loading | ready | stale | error | unavailable. */
+  dataState(name) { return this.state[name] ?? "loading"; }
+
+  /** True when a domain has a value a block may draw. */
+  hasData(name) {
+    const value = this[name];
+    if (value === null || value === undefined) return false;
+    if (Array.isArray(value)) return value.length > 0;
+    return true;
+  }
+
   /**
-   * Refresh one resource and publish it.
+   * Read one domain and publish it.
    *
-   * A failure is published too, as a connection state rather than as empty
-   * data — the distinction the whole project rests on. A source that stops
-   * answering must never look like a world that went quiet.
+   * A failure is published as a domain state, not as empty data. When a value
+   * was already held it is kept and the domain is marked `stale` — the reader is
+   * told the picture is old, rather than being shown a fresh-looking zero.
    */
   async refresh(name) {
+    const domain = DOMAINS[name];
+    if (!domain) return;
+
     try {
-      switch (name) {
-        case "world":       this.world = await this.api.get(ENDPOINTS.world); break;
-        case "control":     this.control = await this.api.get(ENDPOINTS.control); break;
-        case "signals":     this.signals = normalizeSignals(await this.api.get(ENDPOINTS.signals, { query: this.signalQuery() })); break;
-        case "activity":    this.activity = (await this.api.get(ENDPOINTS.activity, { query: { limit: 60 } }))?.items ?? []; break;
-        case "metrics":     this.metrics = parseMetrics(await this.api.getText(ENDPOINTS.metrics)); break;
-        case "observatory": this.observatory = await this.api.get(ENDPOINTS.observatory); break;
-        case "sources":     this.sources = listOf(await this.api.get(ENDPOINTS.sources)); break;
-        default: return;
+      const raw = domain.text
+        ? await this.api.getText(domain.path)
+        : await this.api.get(domain.path, { query: name === "signals" ? this.signalQuery() : null });
+      const value = domain.adapt(raw);
+      if (value === null) {
+        // The engine answered, but not with something this adapter understands.
+        // That is a failure to read, not an empty world.
+        const err = new Error(`${name}: unexpected response shape`);
+        err.kind = "shape";
+        throw err;
       }
+      this[name] = value;
+      this.setState(name, "ready");
       this.setConnection("live", null);
-      this.bus.emit(`data:${name}`, this.snapshot());
-      this.bus.emit("data", { name, snapshot: this.snapshot() });
+      this.publish(name);
     } catch (err) {
       this.lastError = err;
+      // `unavailable` when the shape was wrong and we hold nothing to fall back
+      // on; `stale` when we are still showing a value that is now old.
+      const next = this.hasData(name) ? "stale" : (err?.kind === "shape" ? "unavailable" : "error");
+      this.setState(name, next);
       this.setConnection(connectionStateFor(err), err);
       this.bus.emit(`fail:${name}`, err);
+      this.publish(name);
     }
   }
 
+  /** Publish a domain change on the bus. */
+  publish(name) {
+    this.bus.emit(`data:${name}`, this.snapshot());
+    this.bus.emit("data", { name, snapshot: this.snapshot() });
+  }
+
+  /**
+   * Fold one live-stream event into the store.
+   *
+   * This is the second data path: the initial snapshot builds the state, and a
+   * stream event updates the domain it concerns. A block is never told to reload
+   * the page, and it never sees the stream directly.
+   *
+   * The event kinds are the engine's own (`ActivityKind`, SCREAMING_SNAKE_CASE):
+   * `OBSERVATION`, `SIGNAL`, `SOURCE_FAILED`, `SOURCE_RECOVERED`, and the rest.
+   */
+  ingestActivity(event) {
+    if (!event || typeof event !== "object") return;
+    // Always surface the raw line, so the activity stream block can append it
+    // without waiting for the next poll.
+    this.bus.emit("sse:activity", event);
+
+    switch (event.kind) {
+      case "OBSERVATION":
+        this.refresh("activity");
+        break;
+      case "SIGNAL":
+        this.refresh("signals");
+        this.refresh("world");
+        break;
+      case "EVENT":
+      case "ANOMALY":
+        this.refresh("signals");
+        break;
+      case "SOURCE_FAILED":
+      case "SOURCE_RATE_LIMITED":
+        this.bus.emit("sse:source_failed", event);
+        break;
+      case "SOURCE_RECOVERED":
+        this.bus.emit("sse:source_recovered", event);
+        break;
+      default:
+        break;
+    }
+  }
+
+  /* --------------------------------------------------------------- details */
+
   /** Fetch a signal's full detail and remember it. */
   async loadSignal(id) {
-    if (!id) return null;
-    const key = `signal:${id}`;
-    if (this.detail.has(key)) return this.detail.get(key);
-    const data = await this.api.get(`${ENDPOINTS.signals}/${encodeURIComponent(id)}`, { ttl: 0 });
-    this.detail.set(key, data);
-    this.bus.emit("detail:signal", data);
-    return data;
+    return this.loadDetail("signal", id, () =>
+      this.api.get(`${ENDPOINTS.signals}/${encodeURIComponent(id)}`, { ttl: 0 }).then(adapt.signal));
   }
 
   /** Fetch source health and remember it per source. */
   async loadSource(id) {
-    if (!id) return null;
-    const key = `source:${id}`;
-    if (this.detail.has(key)) return this.detail.get(key);
-    const data = await this.api.get(`${ENDPOINTS.sources}/${encodeURIComponent(id)}`, { ttl: 0 });
-    this.detail.set(key, data);
-    this.sourceHealth.set(id, data?.health ?? null);
-    this.bus.emit("detail:source", data);
+    const data = await this.loadDetail("source", id, () =>
+      this.api.get(`${ENDPOINTS.sources}/${encodeURIComponent(id)}`, { ttl: 0 }).then(adapt.source));
+    if (data) this.sourceHealth.set(id, data.health ?? null);
     return data;
   }
 
   /** Fetch a series' observations plus its baseline. */
   async loadTimeline(seriesKey) {
-    if (!seriesKey) return null;
-    const key = `timeline:${seriesKey}`;
-    if (this.detail.has(key)) return this.detail.get(key);
-    const data = await this.api.get(ENDPOINTS.timeline, { ttl: 0, query: { series: seriesKey, limit: 200 } });
-    this.detail.set(key, data);
-    this.bus.emit("detail:timeline", data);
-    return data;
+    return this.loadDetail("timeline", seriesKey, () =>
+      this.api.get(ENDPOINTS.timeline, { ttl: 0, query: { series: seriesKey, limit: 200 } }).then(adapt.timeline));
   }
 
   /** Fetch a single observation's full record. */
   async loadObservation(id) {
-    if (!id) return null;
-    const key = `observation:${id}`;
-    if (this.detail.has(key)) return this.detail.get(key);
-    const data = await this.api.get(`${ENDPOINTS.observations}/${encodeURIComponent(id)}`, { ttl: 0 });
-    this.detail.set(key, data);
-    this.bus.emit("detail:observation", data);
-    return data;
+    return this.loadDetail("observation", id, () =>
+      this.api.get(`${ENDPOINTS.observations}/${encodeURIComponent(id)}`, { ttl: 0 }).then(adapt.observation));
   }
 
   /** Fetch the raw payload behind an observation. */
   async loadRaw(observationId) {
-    if (!observationId) return null;
-    const key = `raw:${observationId}`;
+    return this.loadDetail("raw", observationId, () =>
+      this.api.get(`${ENDPOINTS.observations}/${encodeURIComponent(observationId)}/raw`, { ttl: 0 }).then(adapt.raw));
+  }
+
+  /** Fetch an event, with the observation chain the drill-down walks. */
+  async loadEvent(id) {
+    return this.loadDetail("event", id, () =>
+      this.api.get(`${ENDPOINTS.events}/${encodeURIComponent(id)}`, { ttl: 0 }).then(adapt.event));
+  }
+
+  async loadDetail(kind, id, fetch) {
+    if (!id) return null;
+    const key = `${kind}:${id}`;
     if (this.detail.has(key)) return this.detail.get(key);
-    const data = await this.api.get(`${ENDPOINTS.observations}/${encodeURIComponent(observationId)}/raw`, { ttl: 0 });
+    const data = await fetch();
     this.detail.set(key, data);
-    this.bus.emit("detail:raw", data);
+    this.bus.emit(`detail:${kind}`, data);
     return data;
   }
 
@@ -176,13 +262,6 @@ export class Store {
     this.lens = lens || "";
     this.refresh("signals");
     this.bus.emit("lens", this.lens);
-  }
-
-  async loadLenses() {
-    try {
-      this.lenses = await this.api.get(ENDPOINTS.lenses, { ttl: 600_000 });
-      this.bus.emit("lenses", this.lenses);
-    } catch (_) { /* the picker simply stays empty */ }
   }
 
   /* ------------------------------------------------------------- selection */
@@ -208,6 +287,12 @@ export class Store {
 
   /* ------------------------------------------------------------ connection */
 
+  setState(name, state) {
+    if (this.state[name] === state) return;
+    this.state[name] = state;
+    this.bus.emit(`state:${name}`, state);
+  }
+
   setConnection(state, error) {
     const changed = this.connection.state !== state;
     this.connection = { state, at: Date.now(), error: error ?? null };
@@ -220,6 +305,7 @@ export class Store {
   snapshot() {
     return {
       connection: this.connection,
+      dataState: this.state,
       lens: this.lens,
       lenses: this.lenses,
       world: this.world,
@@ -229,73 +315,20 @@ export class Store {
       metrics: this.metrics,
       observatory: this.observatory,
       sources: this.sources,
+      health: this.health,
       selection: this.selection,
     };
   }
 
-  /** Force a full refresh, e.g. after the key changes or a scene recomposes. */
+  /** Force a full refresh, e.g. after the key changes or a reconnect. */
   refreshAll() {
     this.api.invalidate();
-    for (const name of Object.keys(CADENCE)) this.refresh(name);
+    for (const name of Object.keys(DOMAINS)) this.refresh(name);
   }
-}
-
-/* ------------------------------------------------------------- normalizing */
-
-/** The signals endpoint may answer with a bare array or an envelope. */
-function normalizeSignals(payload) {
-  if (Array.isArray(payload)) return payload;
-  return payload?.items ?? [];
-}
-
-/**
- * A list resource, whether the engine wrapped it or not.
- *
- * `/sources` answers with `{ items: [...] }` while `/signals` has its own
- * normalizer; unwrapping in one place means a block never has to know which
- * endpoint used which envelope.
- */
-function listOf(payload) {
-  if (Array.isArray(payload)) return payload;
-  return payload?.items ?? [];
 }
 
 function connectionStateFor(err) {
   if (err?.kind === "auth") return "error";
   if (err?.kind === "network") return "offline";
   return "reconnecting";
-}
-
-/**
- * Parse the Prometheus exposition format.
- *
- * Only the counters the studio actually shows are kept, and unlabelled samples
- * are stored as plain numbers while labelled ones keep their labels — the
- * signal-type breakdown needs `wse_signal_types_total{type="ANOMALY"}` and
- * cannot be read from a flat map.
- */
-export function parseMetrics(text) {
-  const values = {};
-  const labelled = {};
-  if (typeof text !== "string") return { values, labelled, at: Date.now() };
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const match = /^([a-zA-Z_:][a-zA-Z0-9_:]*)(\{[^}]*\})?\s+(-?[\d.eE+-]+)$/.exec(trimmed);
-    if (!match) continue;
-    const [, name, labelPart, raw] = match;
-    const value = Number(raw);
-    if (!Number.isFinite(value)) continue;
-    if (labelPart) {
-      const labels = {};
-      for (const pair of labelPart.slice(1, -1).split(",")) {
-        const [k, v] = pair.split("=");
-        if (k) labels[k.trim()] = (v || "").replace(/^"|"$/g, "");
-      }
-      (labelled[name] ??= []).push({ labels, value });
-    } else {
-      values[name] = value;
-    }
-  }
-  return { values, labelled, at: Date.now() };
 }

@@ -171,7 +171,19 @@ export class SceneManager {
     return {
       region: definition,
       theme: this.theme,
-      data: () => store.snapshot(),
+      /**
+       * Read the world. `data()` is the whole snapshot; `data("signals")` is one
+       * domain. A block names a domain — `signals`, `sources`, `world` — never
+       * an endpoint, which is what keeps the network out of the blocks.
+       */
+      data: (name) => {
+        const snapshot = store.snapshot();
+        return name ? snapshot[name] : snapshot;
+      },
+      /** A domain's state: loading | ready | stale | error | unavailable. */
+      state: (name) => store.dataState(name),
+      /** Whether a domain holds a value worth drawing. */
+      hasData: (name) => store.hasData(name),
       /** Subscribe to a bus topic, released when the region is torn down. */
       on: (topic, fn) => {
         const off = store.bus.on(topic, fn);
@@ -182,6 +194,7 @@ export class SceneManager {
       load: {
         signal: (id) => store.loadSignal(id),
         source: (id) => store.loadSource(id),
+        event: (id) => store.loadEvent(id),
         timeline: (key) => store.loadTimeline(key),
         observation: (id) => store.loadObservation(id),
         raw: (id) => store.loadRaw(id),

@@ -89,10 +89,14 @@ export class Studio {
       this.director.observe(this.store.signals);
     }));
 
-    // A signal arriving on the live stream is the moment the broadcast must
-    // react, so it is handled on the event rather than on the next poll.
-    this.unsubscribes.push(bus.on("sse:signal", (signal) => {
-      if (signal) this.director.observe([signal]);
+    // A signal forming on the live stream is the moment the broadcast must
+    // react. The stream carries the id, not the signal, so the studio reads the
+    // full record through the store — the same path every other read takes.
+    this.unsubscribes.push(bus.on("sse:activity", (event) => {
+      if (event?.kind !== "SIGNAL" || !event.signal_id) return;
+      this.store.loadSignal(event.signal_id)
+        .then((signal) => { if (signal) this.director.observe([signal]); })
+        .catch(() => { /* the next poll will pick it up */ });
     }));
 
     this.unsubscribes.push(bus.on("sse:source_failed", (event) => {
@@ -224,6 +228,14 @@ export class Studio {
     const { state } = this.store.connection;
     const collecting = this.store.control?.collection_enabled;
     const monitoring = this.store.control?.monitoring;
+
+    // Surface a stale domain in the chrome. This is independent of the
+    // connection badge: the link can be live while a read fails, and a live link
+    // over an old picture is the one combination that must never pass silently.
+    const staleDomains = Object.entries(this.store.state)
+      .filter(([, s]) => s === "stale")
+      .map(([name]) => name);
+    this.chrome.setStale(staleDomains, t().state.stale);
 
     let message = null;
     let detail = "";

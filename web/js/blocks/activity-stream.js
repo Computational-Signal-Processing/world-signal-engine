@@ -14,15 +14,19 @@ import { clock, stamp } from "../fmt.js";
 
 const MAX_ROWS = 80;
 
+// The engine's own activity kinds (`ActivityKind`, SCREAMING_SNAKE_CASE). A kind
+// with no entry still renders — with its own lowercased name — so a new engine
+// kind appears in the stream instead of silently vanishing.
 const KIND = {
+  STARTED: { glyph: "·", label: "started" },
   OBSERVATION: { glyph: "·", label: "observation" },
-  SIGNAL: { glyph: "◇", label: "signal" },
+  ANOMALY: { glyph: "▲", label: "anomaly" },
   EVENT: { glyph: "◆", label: "event" },
-  COLLECTOR_FAILED: { glyph: "▲", label: "collector failed" },
-  COLLECTOR_RECOVERED: { glyph: "●", label: "collector recovered" },
+  SIGNAL: { glyph: "◇", label: "signal" },
   SOURCE_FAILED: { glyph: "▲", label: "source failed" },
   SOURCE_RECOVERED: { glyph: "●", label: "source recovered" },
-  COLLECTION: { glyph: "◐", label: "collection" },
+  SOURCE_RATE_LIMITED: { glyph: "◐", label: "source rate limited" },
+  CONTROL: { glyph: "◐", label: "collection" },
 };
 
 export const activityStreamBlock = {

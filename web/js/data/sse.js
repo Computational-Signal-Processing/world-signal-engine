@@ -67,6 +67,13 @@ export class ActivityStream {
           this.setState("error");
           return;
         }
+        if (response.status === 404 || response.status === 405) {
+          // The engine does not offer a stream at this path. Retrying a fixed
+          // answer forever would be noise; the studio keeps polling and the
+          // state says the stream is unavailable rather than reconnecting.
+          this.setState("unavailable");
+          return;
+        }
         if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
 
         const reconnected = this.state === "reconnecting";

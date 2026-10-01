@@ -39,7 +39,19 @@ export class Chrome {
     this.zone = el("span", { class: "zone", text: "UTC" });
     this.clockBox = el("div", { class: "chrome-clock" }, [this.clockText, this.zone]);
 
-    this.right = el("div", { class: "chrome-right" }, [this.badge, this.clockBox]);
+    // A second, quieter badge for "the connection is up but this picture is old".
+    // A live link showing stale values is the exact failure the engine's
+    // no-data-vs-zero rule exists to prevent, so it is stated in the chrome and
+    // not only inside the regions that happen to be stale.
+    this.staleText = el("span", { class: "stale-text" });
+    this.staleBadge = el("div", {
+      class: "stale-badge",
+      hidden: true,
+      role: "status",
+      "aria-live": "polite",
+    }, [this.staleText]);
+
+    this.right = el("div", { class: "chrome-right" }, [this.staleBadge, this.badge, this.clockBox]);
 
     this.root = el("header", { class: "chrome", role: "banner" }, [this.brandBox, this.sceneBox, this.right]);
     host.append(this.root);
@@ -87,5 +99,23 @@ export class Chrome {
   setStaleSince(iso) {
     if (!iso) return;
     this.clockBox.title = `last event ${clock(iso)}`;
+  }
+
+  /**
+   * Reflect whether any domain is stale.
+   *
+   * Kept apart from the connection badge because the two are independent: the
+   * link can be live while a read is failing, and that combination must be
+   * visible. The badge names the stale domains so the reader knows which part of
+   * the picture is old, not merely that something is.
+   */
+  setStale(domains, label) {
+    if (!domains || domains.length === 0) {
+      this.staleBadge.hidden = true;
+      this.staleText.textContent = "";
+      return;
+    }
+    this.staleBadge.hidden = false;
+    this.staleText.textContent = `${label}: ${domains.join(", ")}`;
   }
 }

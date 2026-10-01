@@ -146,6 +146,24 @@
 
 .chrome-clock .zone { font-size: var(--fs-micro); color: var(--text-faint); margin-left: 0.25em; }
 
+/* The stale badge sits beside the live badge on purpose. A live link over an
+ * old picture is the combination the engine's no-data-vs-zero rule exists to
+ * prevent, so the two facts are stated together and the reader can see that the
+ * connection is up while a specific domain is not current. */
+.stale-badge {
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--alert);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  color: var(--alert);
+  white-space: nowrap;
+}
+
+.stale-badge[hidden] { display: none; }
+
 /* --- stage -------------------------------------------------------------
  *
  * The scene root. Fills the height left between chrome and ticker and gives a

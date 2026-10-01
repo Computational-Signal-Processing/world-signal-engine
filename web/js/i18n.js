@@ -71,12 +71,15 @@ const I18N = {
       on: "on",
       off: "off",
       neverRan: "never ran",
+      stale: "data is not current",
+      loadFailed: "source error",
     },
     reason: {
       noSignal: "No signal is active right now.",
       noLocation: "These observations carry no coordinates, so nothing can be placed on a map.",
       quietFeed: "Coverage is limited to the connected sources; a quiet feed is not a quiet world.",
       collectorFailed: "A collector failure is recorded here. It never means world activity is zero.",
+      stale: "The last read failed, so this value may be old. It is shown as it was, not as zero.",
     },
     why: {
       noData: "the engine has not reported a value for this",
@@ -174,12 +177,15 @@ const I18N = {
       on: "açık",
       off: "kapalı",
       neverRan: "hiç çalışmadı",
+      stale: "veri güncel değil",
+      loadFailed: "kaynak hatası",
     },
     reason: {
       noSignal: "Şu anda aktif bir sinyal yok.",
       noLocation: "Bu gözlemler koordinat taşımıyor, bu yüzden haritaya yerleştirilecek bir şey yok.",
       quietFeed: "Kapsam bağlı kaynaklarla sınırlı; sakin bir besleme sakin bir dünya demek değildir.",
       collectorFailed: "Burada bir toplayıcı hatası kayıtlı. Bu asla dünya aktivitesinin sıfır olduğu anlamına gelmez.",
+      stale: "Son okuma başarısız oldu, bu değer eski olabilir. Sıfır olarak değil, olduğu gibi gösteriliyor.",
     },
     why: {
       noData: "motor bu alan için bir değer bildirmedi",

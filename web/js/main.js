@@ -96,17 +96,11 @@ async function boot() {
     apiKey,
     onResync: () => store.refreshAll(),
   });
-  stream.bus.on("activity", (event) => {
-    // The stream is the studio's fastest signal. It refreshes the resource the
-    // event concerns rather than patching a list, so there is one code path for
-    // a value whether it arrived by poll or by push.
-    if (event?.kind === "OBSERVATION") store.refresh("activity");
-    if (event?.kind === "SIGNAL") store.refresh("signals");
-    store.bus.emit("sse:activity", event);
-    if (event?.kind === "COLLECTOR_FAILED") store.bus.emit("sse:source_failed", event);
-    if (event?.kind === "COLLECTOR_RECOVERED") store.bus.emit("sse:source_recovered", event);
-    if (event?.signal) store.bus.emit("sse:signal", event.signal);
-  });
+  // The stream reader only parses frames; what an event *means* for the store is
+  // the store's decision, so the reader hands it over rather than switching on
+  // the kind itself. The engine's kinds are its own (SCREAMING_SNAKE_CASE), and
+  // the store maps each to the domain it refreshes.
+  stream.bus.on("activity", (event) => store.ingestActivity(event));
   stream.bus.on("state", (state) => store.setConnection(state, null));
 
   const initial = sceneFromHash() || "overview";

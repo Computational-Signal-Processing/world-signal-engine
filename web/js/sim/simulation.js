@@ -41,7 +41,14 @@ export function runSimulation({ studio, store, breaking }) {
     },
     /** A collector dying — the case that must never read as a quiet world. */
     sourceFailure(id = "usgs_earthquakes") {
-      store.bus.emit("sse:source_failed", { source_id: id });
+      // Through the store's own ingestion, so the simulation exercises the real
+      // contract rather than a shortcut the engine would never take.
+      store.ingestActivity({
+        at: new Date().toISOString(),
+        kind: "SOURCE_FAILED",
+        message: `${id}: collector failed`,
+        source_id: id,
+      });
     },
     resolved() {
       const signal = fakeSignal({ sigma: 2.1, status: "RESOLVED" });
