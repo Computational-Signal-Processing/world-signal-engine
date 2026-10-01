@@ -513,12 +513,12 @@ business-day gap handling.
 ## 11. crossref_works — Crossref Scholarly Works
 
 **Collector:** `crates/sources/src/crossref.rs`, five fixed topics, `rows=0`
-`total-results` over a `WINDOW_DAYS = 2` created-date window, every 86400s.
-**Observation:** count of works registered in the window, per topic
+`total-results` over a `WINDOW_DAYS = 1` created-date window, every 86400s.
+**Observation:** count of works registered on the measured day, per topic
 (`research_<slug>`).
 
 1. **What one observation represents:** how many works matching the topic were
-   *registered with Crossref* in the trailing 2 days.
+   *registered with Crossref* on the measured day (the day before collection).
 2. **Type:** registry activity (metadata registration).
 3. **Population stable?** Yes — fixed topic, fixed window length.
 4. **Aggregate usable?** Yes.
@@ -526,24 +526,24 @@ business-day gap handling.
    not *publication*.
 6. **False increases:** (a) registration lag — publishers deposit in batches, so
    a batch day spikes; (b) the query is `query.bibliographic`, a fuzzy match, so
-   a topic's count can drift with wording; (c) **window overlap**: a daily poll
-   over a 2-day window means consecutive values share a day (weaker overlap than
-   KEV, but real); (d) the window is `from-created-date` to *today*, so the
-   newest day is always partially deposited — the most recent point is
-   structurally depressed.
-7. **Appropriate baseline:** weekly or longer, and the *first difference*;
-   a daily z-score on a 2-day overlapping count is noisy.
-8. **Temporal resolution:** daily poll, 2-day window.
+   a topic's count can drift with wording; (c) ~~window overlap~~ **fixed
+   (CAP-2D/0019)**: the window is now a single completed day, so consecutive
+   polls share no day; (d) ~~the newest day is always partially deposited~~ **fixed
+   (CAP-2D/0019)**: the measured day is yesterday, fully deposited, so the latest
+   point is no longer structurally depressed.
+7. **Appropriate baseline:** the day's count over time; a daily z-score is
+   meaningful now that the series is a non-overlapping, completed-day count.
+8. **Temporal resolution:** daily poll, one completed day (yesterday).
 9. **Independent?** Yes, but overlaps arXiv (see §12).
 10. **Same event as another source?** Yes — a preprint often becomes a Crossref
     work. **This is the strongest same-event pair in the network.**
 11. **Lenses:** SCIENCE, AI.
-12. **Never infer:** that a count is *publication* (it is registration); that a
-    single day's count is stable (partial deposit); that AI-topic growth is
-    global research growth.
+12. **Never infer:** that a count is *publication* (it is registration); that AI
+    topic growth is global research growth.
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: window-overlap-aware
-baseline and awareness that the latest point is partially deposited.
+**Eligibility: DETECTABLE (CAP-2D)** — the series is a single completed day, so
+the window-overlap and partial-latest-point constraints are both resolved. See
+`docs/decisions/0019-crossref-single-day-window.md`.
 
 ## 12. arxiv_submissions — arXiv Preprint Velocity
 
@@ -650,7 +650,7 @@ bounded-scale-aware baselining.
 | ecb_exchange_rates | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; business-day gaps |
 | noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
 | cisa_kev | **DETECTABLE** | `kev_added` non-overlapping daily (CAP-2D); `kev_catalog_total` differenced (CAP-2B) |
-| crossref_works | DETECTABLE_WITH_CONSTRAINTS | window-overlap baseline; latest point partial |
+| crossref_works | **DETECTABLE** | single completed day; no overlap, no partial latest point (CAP-2D) |
 | github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
 | nasa_neo | **DETECTABLE** | daily approach count is coherent (CAP-2D) |
 | arxiv_submissions | **DETECTABLE** | detection runs on the derived `preprint_new`; raw level evidence-only (CAP-2A) |
@@ -700,8 +700,8 @@ an `O` against almost every event source by nature — it reports *on* them.
    (CAP-2D).** It is now a non-overlapping daily count.
 6. **AFAD `isEventUpdate` rows are appended as new events.** A magnitude
    correction looks like new seismic activity.
-7. **Crossref latest-day partial deposit.** The newest point is structurally
-   depressed because deposits lag; a "drop" is an artifact.
+7. ~~**Crossref latest-day partial deposit.**~~ **RESOLVED (CAP-2D).** The
+   measured day is now a completed day (yesterday), not a window ending today.
 8. **ECB business-day gaps.** Weekends/holidays are absent, not zero; a
    time-based baseline misreads the gap.
 9. **GitHub cold-start level deviation.** Star counts are near-monotonic and
@@ -728,7 +728,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F5 | ~~Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline~~ **DONE (CAP-2D)** — `kev_added` is now the count dated to the collection day, a non-overlapping daily series; no `WindowCount` kind was needed | `crates/sources/src/cisa_kev.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/cisa_kev.rs` tests |
 | F5a | ~~Difference `kev_catalog_total` instead of detecting the level~~ **DONE (CAP-2B)** — the catalogue declares `kev_catalog_growth = Delta(kev_catalog_total)`; the raw total is evidence-only | `crates/sources/src/cisa_kev.rs` | `crates/cli/tests/cisa_derived_metric.rs` |
 | F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
-| F7 | Mark the Crossref latest point as partial (quality flag) or shift the window back a day | `crates/sources/src/crossref.rs` | partial-deposit flag |
+| F7 | ~~Mark the Crossref latest point as partial (quality flag) or shift the window back a day~~ **DONE (CAP-2D)** — the collector measures one completed day (yesterday), so consecutive polls never overlap and the latest point is fully deposited | `crates/sources/src/crossref.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/crossref.rs` tests |
 | F8 | Handle business-day gaps for ECB (absence ≠ zero) | `crates/sources/src/ecb.rs` / baseline | gap-aware baseline test |
 | F9 | Cold-start guard: no level deviation before a per-repo baseline exists | `crates/detection/src/anomaly.rs` or GitHub config | first-point no-signal test |
 | F10 | Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view | `config/lenses/*` | lens-coverage test update |
@@ -748,7 +748,7 @@ Meaningful after the named constraint is met (all hinge on F1 first):
 
 - usgs_earthquakes, afad_earthquakes, ecb_exchange_rates, noaa_kp_index,
   gdelt_news_volume (F1);
-- crossref_works (F7), github_rust_activity (F9).
+- github_rust_activity (F9).
 
 # 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
 

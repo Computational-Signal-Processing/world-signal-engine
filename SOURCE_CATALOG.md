@@ -218,11 +218,13 @@ is the fix: pin the members, then the count means something.
 - **Endpoint:** `https://api.crossref.org/works`
 - **License:** Crossref REST API terms; metadata is open
 - **Entities:** `research_*` (one series per tracked topic)
-- **Parameters:** `window_days=2`, a fixed topic list
-- **Notes:** counts works registered in a recent window for each of a fixed set
-  of topics (artificial intelligence, machine learning, climate change, CRISPR,
-  quantum computing). The topic list is fixed, so a change is a change in
-  research output. Feeds the SCIENCE and AI lenses.
+- **Parameters:** `window_days=1`, a fixed topic list
+- **Notes:** counts works registered on one completed day (the day before
+  collection) for each of a fixed set of topics (artificial intelligence,
+  machine learning, climate change, CRISPR, quantum computing). The topic list is
+  fixed and the day never overlaps the previous poll, so a change is a change in
+  research output. Feeds the SCIENCE and AI lenses. See
+  [docs/decisions/0019-crossref-single-day-window.md](docs/decisions/0019-crossref-single-day-window.md).
 
 ### arxiv_submissions
 

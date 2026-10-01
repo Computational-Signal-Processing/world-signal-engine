@@ -2,7 +2,8 @@
 //!
 //! All specs are active: they pass under the fixed contracts (per-record
 //! observation identity for F1, a committed universe for F2, a coherent daily
-//! count for F4, a non-overlapping daily count for F5) and fail without them.
+//! count for F4, a non-overlapping daily count for F5, a single completed day
+//! for F7) and fail without them.
 
 use chrono::{DateTime, Utc};
 
@@ -363,5 +364,37 @@ fn cisa_kev_counts_only_the_collection_day() {
     assert_ne!(
         added.id, next_added.id,
         "each day is its own record, never a sliding window"
+    );
+}
+
+/// F7 — Crossref must measure a single completed day, not a trailing window
+/// ending today. A 2-day window sampled daily shares a day between consecutive
+/// polls, and a window ending today counts a day whose deposits are still
+/// arriving (the newest point structurally depressed). The window is now
+/// `[yesterday, yesterday)`: one day, never today.
+#[test]
+fn crossref_measures_one_completed_day_never_today() {
+    use wse_sources::crossref::{observation_for, window};
+
+    let morning = DateTime::parse_from_rfc3339("2026-10-01T06:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let (from, until) = window(morning);
+    // A single day, and it is yesterday, not the collection day.
+    assert_eq!(from, "2026-09-30");
+    assert_eq!(until, "2026-09-30");
+    assert_ne!(until, "2026-10-01", "today must never be measured");
+
+    // The window is stable across the collection day, so a re-poll keeps one id.
+    let evening = DateTime::parse_from_rfc3339("2026-10-01T23:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let a = observation_for("crispr", "CRISPR", 100, morning, b"{}");
+    let b = observation_for("crispr", "CRISPR", 100, evening, b"{}");
+    assert_eq!(a.id, b.id, "the same measured day keeps one identity");
+    // The observation is timestamped at the measured day, not the poll time.
+    assert_eq!(
+        a.observed_at,
+        DateTime::parse_from_rfc3339("2026-09-30T00:00:00Z").unwrap()
     );
 }

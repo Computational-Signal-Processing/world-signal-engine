@@ -50,7 +50,7 @@ web UI. Current state:
 | Operations | `/control`, pause/resume, per-source enable/run, live activity over SSE |
 | Web UI | World, signal, event, observation, source, lenses, timeline, map, system |
 
-472 tests pass across the workspace.
+475 tests pass across the workspace.
 
 ## Quick start
 

@@ -2,9 +2,16 @@
 //!
 //! Crossref's `/works` endpoint returns `total-results` for a query, i.e. how
 //! many works match. Used with a fixed time window it becomes a stable series:
-//! "how many works were registered in the last day matching topic X". The
-//! query and the window are fixed; only the window's contents change, which is
-//! exactly the world change we want to measure.
+//! "how many works were registered on day X matching topic Y". The query and
+//! the window are fixed; only the window's contents change, which is exactly
+//! the world change we want to measure.
+//!
+//! The window is a **single, non-overlapping day** — the day before collection.
+//! A trailing multi-day window sampled daily would share days between
+//! consecutive polls (autocorrelated series), and a window ending *today* would
+//! count a day whose deposits are still arriving (the newest point structurally
+//! depressed). Both are avoided by measuring one completed day at a time. See
+//! `docs/decisions/0019-crossref-single-day-window.md`.
 //!
 //! This is the SCIENCE lens's institutional backbone and, via the AI topic, the
 //! AI lens's research-velocity sensor.
@@ -17,7 +24,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use wse_collector::CollectorError;
 use wse_model::{EntityId, Observation, RawReference, Source, SourceId};
@@ -48,8 +55,10 @@ pub const TOPICS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// The measurement window, in days, ending at collection time.
-pub const WINDOW_DAYS: i64 = 2;
+/// The measurement window, in days. One completed day per poll: the day is the
+/// record, so consecutive polls never overlap and today's still-arriving
+/// deposits are never counted.
+pub const WINDOW_DAYS: i64 = 1;
 
 /// The catalog entry.
 pub fn source() -> Source {
@@ -131,13 +140,16 @@ pub fn parse_count(body: &[u8]) -> Result<u64, CollectorError> {
 
 /// Turn one topic's count into an observation.
 ///
-/// The metric is a count of works registered in the window; the topic is the
-/// entity, so each topic is its own series and the AI topics can be told apart.
+/// The metric is a count of works registered on the measured day; the topic is
+/// the entity, so each topic is its own series and the AI topics can be told
+/// apart. `received_at` is the collection time; the observation's `observed_at`
+/// is the measured day's UTC midnight, so a re-poll of the same day yields the
+/// same id and is de-duplicated.
 pub fn observation_for(
     slug: &str,
     label: &str,
     count: u64,
-    observed_at: DateTime<Utc>,
+    received_at: DateTime<Utc>,
     body: &[u8],
 ) -> Observation {
     let source_id = SourceId::new(SOURCE_ID);
@@ -149,6 +161,12 @@ pub fn observation_for(
         content_type: Some("application/json".to_string()),
         bytes: Some(body.len() as u64),
     };
+    let day = window(received_at).0;
+    let observed_at = NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|d| Utc.from_utc_datetime(&d))
+        .unwrap_or(received_at);
     Observation::new(
         source_id,
         Some(entity),
@@ -158,18 +176,23 @@ pub fn observation_for(
         observed_at,
         raw,
     )
-    .with_received_at(observed_at)
+    .with_received_at(received_at)
+    // The measured day is the record, so a day re-polled keeps its identity.
+    .with_record_key(day.clone())
+    .with_attribute("day", day)
     .with_attribute("topic", label.to_string())
     .with_attribute("window_days", WINDOW_DAYS.to_string())
 }
 
-/// The default window `(from, until)` for a collection at `now`.
+/// The window `(from, until)` for a collection at `now`.
+///
+/// One completed day: the day before collection. `until` is exclusive in the
+/// Crossref filter, so `[from, until)` is exactly that single day, and it is
+/// the same window for every poll within the collection day.
 pub fn window(now: DateTime<Utc>) -> (String, String) {
-    let from = now - Duration::days(WINDOW_DAYS);
-    (
-        from.format("%Y-%m-%d").to_string(),
-        now.format("%Y-%m-%d").to_string(),
-    )
+    let day = now - Duration::days(WINDOW_DAYS);
+    let day = day.format("%Y-%m-%d").to_string();
+    (day.clone(), day)
 }
 
 #[cfg(test)]
@@ -207,6 +230,48 @@ mod tests {
         assert!(url.contains("from-created-date:2026-09-01"));
         assert!(url.contains("until-created-date:2026-09-30"));
         assert!(url.contains("rows=0"));
+    }
+
+    #[test]
+    fn the_window_is_a_single_completed_day() {
+        // A collection at any time on 2026-10-01 measures 2026-09-30, and only
+        // that day: `from == until` (Crossref's `until` is exclusive), so
+        // consecutive daily polls never share a day and today's still-arriving
+        // deposits are never counted.
+        let morning = DateTime::parse_from_rfc3339("2026-10-01T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let evening = DateTime::parse_from_rfc3339("2026-10-01T23:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(
+            window(morning),
+            ("2026-09-30".to_string(), "2026-09-30".to_string())
+        );
+        assert_eq!(
+            window(evening),
+            ("2026-09-30".to_string(), "2026-09-30".to_string()),
+            "the measured day does not move within a collection day"
+        );
+    }
+
+    #[test]
+    fn a_re_poll_of_the_same_day_keeps_its_id() {
+        let morning = DateTime::parse_from_rfc3339("2026-10-01T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let evening = DateTime::parse_from_rfc3339("2026-10-01T23:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let a = observation_for("crispr", "CRISPR", 100, morning, b"{}");
+        let b = observation_for("crispr", "CRISPR", 100, evening, b"{}");
+        assert_eq!(a.id, b.id, "the same measured day keeps one identity");
+        // The next collection day measures a different day, a new record.
+        let next = DateTime::parse_from_rfc3339("2026-10-02T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let c = observation_for("crispr", "CRISPR", 100, next, b"{}");
+        assert_ne!(a.id, c.id);
     }
 
     #[test]
