@@ -609,14 +609,23 @@ function errorView(err) {
 
 /* ---------------------------------------------------------------- WORLD -- */
 
+/* Bumped on every navigation. A view that awaits a fetch must check it before
+ * rendering: otherwise an in-flight World refresh lands after the reader has
+ * already left for another screen and paints over it. */
+let viewEpoch = 0;
+
 async function worldView(options = {}) {
   const remount = options.remount !== false;
+  const epoch = viewEpoch;
   const lens = activeLens();
   const world = await api("/world").catch(() => null);
   const query = lens ? `&lens=${encodeURIComponent(lens)}` : "";
   const page = await api(`/signals?limit=100${query}`);
   const signals = page.items || [];
   const lenses = await loadLenses();
+
+  // The reader navigated away while this was loading; drop the result.
+  if (epoch !== viewEpoch) return;
 
   const subtitle = lens
     ? t().world.subtitleLens(lensName(lens, lenses))
@@ -1544,7 +1553,9 @@ function applyChrome() {
 /* --------------------------------------------------------------- ROUTER -- */
 
 async function route() {
-  // A view that starts a stream must stop it when we navigate away.
+  // Invalidate any view that is still awaiting a fetch, then stop the streams
+  // a leaving view owns.
+  viewEpoch += 1;
   stopActivityStream();
 
   const hash = window.location.hash || "#/world";

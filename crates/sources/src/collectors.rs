@@ -19,7 +19,7 @@ use wse_collector::{
 use wse_model::SourceId;
 use wse_scheduler::{Clock, LiveClock};
 
-use crate::{gdelt, github, hackernews, nasa, nws, usgs};
+use crate::{eonet, gdelt, github, hackernews, nasa, nws, usgs};
 
 /// A single HTTP GET, plus the headers the source needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,6 +399,20 @@ http_collector!(
     "application/geo+json"
 );
 
+fn eonet_request() -> Request {
+    Request::get(eonet::EVENTS_ENDPOINT).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// NASA EONET natural events, polled every 30 minutes.
+    EonetCollector,
+    eonet::source,
+    Schedule::Interval { seconds: 1800 },
+    eonet_request,
+    eonet::parse,
+    "application/json"
+);
+
 /// Build one live collector per catalog entry.
 ///
 /// This is the bridge from the catalog to the pipeline: adding a source means
@@ -411,6 +425,7 @@ pub fn live_collectors() -> Vec<Box<dyn Collector>> {
         Box::new(HackerNewsCollector::live()),
         Box::new(GitHubCollector::live()),
         Box::new(NwsAlertsCollector::live()),
+        Box::new(EonetCollector::live()),
     ]
 }
 

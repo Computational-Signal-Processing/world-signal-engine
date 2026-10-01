@@ -1,0 +1,97 @@
+{
+  "title": "EONET Events",
+  "description": "Natural events from EONET.",
+  "link": "https://eonet.gsfc.nasa.gov/api/v3/events",
+  "events": [
+    {
+      "id": "EONET_24909",
+      "title": "Tropical Storm Hanna",
+      "description": null,
+      "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_24909",
+      "closed": null,
+      "categories": [{ "id": "severeStorms", "title": "Severe Storms" }],
+      "sources": [{ "id": "JTWC", "url": "https://www.metoc.navy.mil/jtwc/jtwc.html" }],
+      "geometry": [
+        {
+          "magnitudeValue": 40.0,
+          "magnitudeUnit": "kts",
+          "date": "2026-09-28T15:00:00Z",
+          "type": "Point",
+          "coordinates": [-50.4, 36.6]
+        }
+      ]
+    },
+    {
+      "id": "EONET_24904",
+      "title": "Wildfire Rafter 4B, Schleicher, Texas",
+      "description": null,
+      "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_24904",
+      "closed": null,
+      "categories": [{ "id": "wildfires", "title": "Wildfires" }],
+      "sources": [{ "id": "InciWeb", "url": "https://inciweb.nwcg.gov/" }],
+      "geometry": [
+        {
+          "magnitudeValue": 2125.0,
+          "magnitudeUnit": "acres",
+          "date": "2026-09-26T15:18:00Z",
+          "type": "Point",
+          "coordinates": [-100.49806, 30.76633]
+        }
+      ]
+    },
+    {
+      "id": "EONET_24905",
+      "title": "Wildfire SECOND STREET, Benton, Washington",
+      "description": null,
+      "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_24905",
+      "closed": null,
+      "categories": [{ "id": "wildfires", "title": "Wildfires" }],
+      "sources": [{ "id": "InciWeb", "url": "https://inciweb.nwcg.gov/" }],
+      "geometry": [
+        {
+          "magnitudeValue": 1151.0,
+          "magnitudeUnit": "acres",
+          "date": "2026-09-25T18:57:00Z",
+          "type": "Point",
+          "coordinates": [-119.470139, 46.253671]
+        }
+      ]
+    },
+    {
+      "id": "EONET_24880",
+      "title": "Volcano Eruption, Mount Etna",
+      "description": null,
+      "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_24880",
+      "closed": null,
+      "categories": [{ "id": "volcanoes", "title": "Volcanoes" }],
+      "sources": [{ "id": "Smithsonian GVP", "url": "https://volcano.si.edu/" }],
+      "geometry": [
+        {
+          "magnitudeValue": null,
+          "magnitudeUnit": null,
+          "date": "2026-09-20T09:00:00Z",
+          "type": "Point",
+          "coordinates": [15.0, 37.75]
+        }
+      ]
+    },
+    {
+      "id": "EONET_24000",
+      "title": "An event that has already closed",
+      "description": null,
+      "link": "https://eonet.gsfc.nasa.gov/api/v3/events/EONET_24000",
+      "closed": "2026-09-01T00:00:00Z",
+      "categories": [{ "id": "wildfires", "title": "Wildfires" }],
+      "sources": [],
+      "geometry": [
+        {
+          "magnitudeValue": 100.0,
+          "magnitudeUnit": "acres",
+          "date": "2026-08-20T00:00:00Z",
+          "type": "Point",
+          "coordinates": [-120.0, 40.0]
+        }
+      ]
+    }
+  ]
+}

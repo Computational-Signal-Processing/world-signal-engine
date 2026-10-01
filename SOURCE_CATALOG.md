@@ -44,6 +44,8 @@ more important.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `usgs_earthquakes` | geophysics | https | geojson | event | none | free | yes | 10 |
 | `nasa_neo` | space | https | json | daily 06:00Z | api key | free w/ registration | no | 20 |
+| `nws_alerts` | weather | https | geojson | 600s | none | free | yes | 20 |
+| `nasa_eonet` | earth | https | json | 1800s | none | free | yes | 25 |
 | `gdelt_news_volume` | global_events | https | json | 900s | none | free | no | 30 |
 | `hackernews_frontpage` | technology | https | json | 600s | none | free | no | 40 |
 | `github_rust_activity` | technology | https | json | 3600s | token | free w/ registration | no | 50 |
@@ -66,6 +68,28 @@ more important.
 - **Entities:** `near_earth_object`
 - **Notes:** daily cadence. Requires an API key, but works with the `DEMO_KEY`
   default so the engine is runnable out of the box.
+
+### nws_alerts
+
+- **Provider:** U.S. National Weather Service
+- **Endpoint:** `https://api.weather.gov/alerts/active?status=actual&message_type=alert`
+- **License:** public domain (US Government)
+- **Entities:** `weather`, `united_states`
+- **Notes:** a real-time public-safety feed. Tracks the count of active alerts
+  per severity, nationally (`weather_united_states`) and per US state
+  (`weather_us_tx`). It is a snapshot, so the count falls as well as rises — a
+  useful test of the baseline in both directions. A severity with no alerts is
+  recorded as `0`, not omitted.
+
+### nasa_eonet
+
+- **Provider:** NASA Earth Observatory
+- **Endpoint:** `https://eonet.gsfc.nasa.gov/api/v3/events?status=open`
+- **License:** public domain (NASA)
+- **Entities:** `natural_events`, `earth`
+- **Notes:** open natural events — wildfires, severe storms, volcanoes — counted
+  per category. Geospatial: each category carries the newest event's coordinate
+  so the map has a real position. Closed events are not counted.
 
 ### gdelt_news_volume
 

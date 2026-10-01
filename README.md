@@ -38,8 +38,8 @@ web UI. Current state:
 
 | Stage | State |
 | --- | --- |
-| Source catalog | 5 sources across 4 categories |
-| Collectors | USGS, NASA NEO, GDELT, Hacker News, GitHub |
+| Source catalog | 7 sources across 7 categories |
+| Collectors | USGS, NASA NEO, NASA EONET, NWS alerts, GDELT, Hacker News, GitHub |
 | Normalization | Observation model with dimensions and attributes |
 | Storage | In-memory or SQLite `Observation`/`Event`/`Signal`/`Source`/`Baseline`/`Raw` stores |
 | Baseline | Rolling and robust statistics |

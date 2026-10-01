@@ -16,6 +16,7 @@
 //! fails only affects its own source.
 
 pub mod collectors;
+pub mod eonet;
 pub mod gdelt;
 pub mod github;
 pub mod hackernews;
@@ -24,9 +25,9 @@ pub mod nws;
 pub mod usgs;
 
 pub use collectors::{
-    live_collectors, CollectorContext, GdeltCollector, GitHubCollector, HackerNewsCollector,
-    LiveTransport, NasaNeoCollector, NwsAlertsCollector, Request, Transport, TransportError,
-    UsgsCollector,
+    live_collectors, CollectorContext, EonetCollector, GdeltCollector, GitHubCollector,
+    HackerNewsCollector, LiveTransport, NasaNeoCollector, NwsAlertsCollector, Request, Transport,
+    TransportError, UsgsCollector,
 };
 
 use wse_model::Source;
@@ -43,6 +44,7 @@ pub fn catalog() -> Vec<Source> {
         hackernews::source(),
         github::source(),
         nws::source(),
+        eonet::source(),
     ]
 }
 
