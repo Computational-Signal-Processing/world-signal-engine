@@ -1,0 +1,326 @@
+/* Broadcast shell: the fixed frame the scenes are composed inside.
+ *
+ * The screen is a stack of full-height rows, none of which scrolls the page:
+ *
+ *   chrome   the only persistent UI, and it is metadata rather than navigation
+ *   stage    where a scene lives; fills the remaining height
+ *   ticker   the running headline strip
+ *
+ * `stage` is the scene root. A scene paints into `stage` and is responsible
+ * for its own internal overflow. The shell never grows. */
+
+.shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  /* TV overscan: the outer edges of a wall display are often cropped, so the
+   * composition keeps a margin the scene can rely on. */
+  padding: var(--sp-2) var(--sp-3);
+  gap: var(--sp-2);
+  overflow: hidden;
+}
+
+/* --- chrome ------------------------------------------------------------
+ *
+ * Deliberately not a navigation bar. It states that the picture is live, what
+ * the system is, which scene is on air, and the time. Nothing here is a link,
+ * because navigating a broadcast by clicking is what made the old UI read as a
+ * website. Scene changes belong to the director and the control room. */
+
+.chrome {
+  flex: 0 0 auto;
+  height: var(--chrome-h);
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(var(--blur-panel));
+  box-shadow: var(--shadow-panel);
+}
+
+.chrome-brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.chrome-mark {
+  width: 0.62rem;
+  height: 0.62rem;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 0.6rem var(--cyan-glow);
+  flex: 0 0 auto;
+  align-self: center;
+}
+
+.chrome-name {
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.chrome-scene {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.chrome-scene-name {
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  color: var(--cyan);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chrome-right {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+}
+
+/* The live badge is the one thing that must never be ambiguous: a recorded
+ * stream must not be mistakable for a live one. When the engine is unreachable
+ * the word changes and the dot stops, rather than the dot merely changing hue. */
+.live-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-pill);
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  color: var(--ok);
+  white-space: nowrap;
+}
+
+.live-badge[data-state="offline"],
+.live-badge[data-state="error"] { color: var(--critical); border-color: var(--critical); }
+.live-badge[data-state="reconnecting"],
+.live-badge[data-state="connecting"] { color: var(--alert); border-color: var(--alert); }
+
+.live-dot {
+  width: 0.42rem;
+  height: 0.42rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0.5rem currentColor;
+}
+
+.live-badge[data-state="live"] .live-dot { animation: live-pulse 2.4s ease-in-out infinite; }
+.live-badge[data-state="offline"] .live-dot,
+.live-badge[data-state="error"] .live-dot { animation: none; }
+
+/* A slow breath, not a blink: fast flashing is both fatiguing on a wall and a
+ * photosensitivity hazard. */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.chrome-clock {
+  font-size: var(--fs-title);
+  font-weight: var(--fw-regular);
+  color: var(--text);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.chrome-clock .zone { font-size: var(--fs-micro); color: var(--text-faint); margin-left: 0.25em; }
+
+/* --- stage -------------------------------------------------------------
+ *
+ * The scene root. Fills the height left between chrome and ticker and gives a
+ * scene a positioning context. `overflow: hidden` here is the last line of
+ * defence: if a scene overflows, it is clipped rather than turning the whole
+ * page into a scroller. */
+
+.stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;                  /* lets the grid children actually shrink */
+  overflow: hidden;
+}
+
+/* A scene's grid. Region placement comes entirely from the scene JSON through
+ * `--r` custom properties, so moving a region never touches CSS. */
+.scene {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  gap: var(--sp-3);
+  grid-template-columns: repeat(var(--grid-cols, 12), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--grid-rows, 8), minmax(0, 1fr));
+  padding: var(--safe-top, 0) var(--safe-right, 0) var(--safe-bottom, 0) var(--safe-left, 0);
+}
+
+/* A region is a positioned box a block paints into. It never clips silently:
+ * `overflow` is chosen per region in the scene JSON (rotate / scroll / clip). */
+.region {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  grid-area: var(--area);
+}
+
+.region[data-overflow="scroll"] { overflow: auto; }
+.region[data-overflow="visible"] { overflow: visible; }
+/* A rotating region shows every card in turn instead of clipping the ones that
+ * did not fit, so it must not scroll: its height is a budget the block divides
+ * into pages, not a window onto a longer list. */
+.region[data-rotate="1"] { overflow: hidden; }
+
+/* Internal scrollbars are styled thin and dim: they are a working detail of a
+ * region, not chrome the viewer is meant to interact with. */
+.region[data-overflow="scroll"]::-webkit-scrollbar { width: 6px; height: 6px; }
+.region[data-overflow="scroll"]::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+}
+.region[data-overflow="scroll"]::-webkit-scrollbar-track { background: transparent; }
+
+/* --- ticker ------------------------------------------------------------
+ *
+ * The running headline. Present whenever there is something to say and
+ * collapses to nothing when there is not, so an empty world does not show an
+ * empty strip pretending to be a feed. */
+
+.ticker {
+  flex: 0 0 auto;
+  height: var(--ticker-h);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  padding: 0 var(--sp-4);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(var(--blur-panel));
+  overflow: hidden;
+}
+
+.ticker[hidden] { display: none; }
+
+.ticker-badge {
+  flex: 0 0 auto;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-sm);
+  background: var(--critical);
+  color: #fff;
+  font-size: var(--fs-micro);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  white-space: nowrap;
+}
+
+.ticker-track {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  height: 100%;
+}
+
+.ticker-run {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-7);
+  white-space: nowrap;
+  will-change: transform;
+  animation: ticker-run var(--ticker-duration, 60s) linear infinite;
+}
+
+@keyframes ticker-run {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+.ticker-item { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-body); }
+.ticker-item .glyph { color: var(--cyan); }
+
+/* --- watermark ---------------------------------------------------------
+ *
+ * Shown when the engine is not collecting, so a frozen picture cannot be read
+ * as a quiet world. This is the shell's half of the "no data is not zero data"
+ * rule; the other half is in the blocks. */
+
+.stage-watermark {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  background: radial-gradient(ellipse at center, rgba(4, 7, 15, 0.55), rgba(4, 7, 15, 0.85));
+}
+
+.stage-watermark[hidden] { display: none; }
+
+.stage-watermark-text {
+  padding: var(--sp-4) var(--sp-6);
+  border: 1px solid var(--alert);
+  border-radius: var(--r-md);
+  background: rgba(7, 12, 23, 0.92);
+  color: var(--alert);
+  font-size: var(--fs-title);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  text-align: center;
+}
+
+.stage-watermark-text small {
+  display: block;
+  margin-top: var(--sp-2);
+  font-size: var(--fs-label);
+  letter-spacing: normal;
+  text-transform: none;
+  font-weight: var(--fw-regular);
+  color: var(--text-dim);
+}
+
+/* --- boot --------------------------------------------------------------
+ *
+ * Shown only while the first scene is being composed. It states what is
+ * happening rather than showing a spinner over an empty frame. */
+
+.boot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: var(--sp-3);
+  text-align: center;
+  color: var(--text-faint);
+}
+.boot[hidden] { display: none; }
+.boot-title { font-size: var(--fs-title); letter-spacing: var(--ls-label); text-transform: uppercase; color: var(--text-dim); }
+.boot-steps { display: grid; gap: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-label); }
+.boot-step[data-state="ok"] { color: var(--ok); }
+.boot-step[data-state="pending"] { color: var(--text-faint); }
+.boot-step[data-state="fail"] { color: var(--critical); }

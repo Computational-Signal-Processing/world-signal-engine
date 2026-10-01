@@ -1,0 +1,121 @@
+/* Design tokens for the broadcast studio.
+ *
+ * Everything the studio draws resolves to a variable here, so the look can be
+ * retuned in one place and no block carries its own magic numbers.
+ *
+ * Sizing is fluid: values are expressed in `rem` against a root that tracks the
+ * viewport (see base.css). A 4K wall and a 1080p desk then differ only in
+ * physical scale, not in proportion, and nothing has to be shrunk with a
+ * transform — which would blur text and move hit targets off their marks. */
+
+:root {
+  color-scheme: dark;
+
+  /* --- surface -------------------------------------------------------- */
+  /* Deep space, not flat black: the gradient in base.css gives the void a
+   * centre so a large empty globe still reads as depth rather than a hole. */
+  --bg-void: #04070f;
+  --bg-deep: #070c17;
+  --panel: rgba(11, 19, 34, 0.62);
+  --panel-solid: #0b1322;
+  --panel-raised: rgba(16, 27, 47, 0.78);
+
+  /* --- line ----------------------------------------------------------- */
+  --line: rgba(96, 140, 190, 0.14);
+  --line-strong: rgba(96, 150, 210, 0.3);
+  --grid-line: rgba(120, 170, 220, 0.045);
+
+  /* --- text ----------------------------------------------------------- */
+  --text: #e8eef8;
+  --text-dim: #93a4c0;
+  --text-faint: #5d6d8c;
+
+  /* --- accent --------------------------------------------------------- */
+  --cyan: #38bdf8;
+  --cyan-deep: #0e7490;
+  --cyan-glow: rgba(56, 189, 248, 0.42);
+
+  /* --- severity ------------------------------------------------------- */
+  /* Severity never travels alone. Each level is paired with a glyph and a word
+   * in the block that draws it, because colour alone is not readable by
+   * everyone and a wall display is often seen from across a room. */
+  --critical: #ef4444;
+  --critical-glow: rgba(239, 68, 68, 0.4);
+  --alert: #f59e0b;
+  --alert-glow: rgba(245, 158, 11, 0.34);
+  --ok: #10b981;
+  --ok-glow: rgba(16, 185, 129, 0.32);
+  --idle: #64748b;
+
+  /* --- signal type ---------------------------------------------------- */
+  /* Presentation priority (how loud the broadcast is) is separate from the
+   * engine's signal type (what kind of change it is). Both have a hue so a
+   * glance separates "how urgent" from "what kind". */
+  --type-now: #38bdf8;
+  --type-anomaly: #a78bfa;
+  --type-early: #fbbf24;
+  --type-convergence: #34d399;
+  --type-impact: #f472b6;
+
+  /* --- type scale ----------------------------------------------------- */
+  /* Tuned for a wall: the headline is legible from across a room, the label
+   * scale from a desk. Every step is a distinct role, not a size grab-bag. */
+  --fs-display: clamp(3.2rem, 5.6vw, 7.4rem);
+  --fs-headline: clamp(1.5rem, 2.1vw, 2.6rem);
+  --fs-title: clamp(1.05rem, 1.2vw, 1.5rem);
+  --fs-body: clamp(0.86rem, 0.82vw, 1.05rem);
+  --fs-label: clamp(0.68rem, 0.62vw, 0.82rem);
+  --fs-micro: clamp(0.6rem, 0.53vw, 0.72rem);
+
+  --lh-tight: 1.08;
+  --lh-body: 1.45;
+
+  --ls-display: -0.02em;
+  --ls-label: 0.14em;
+
+  --fw-light: 300;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-bold: 700;
+
+  /* Numbers must not jitter as they tick. Any element showing a live value
+   * opts into the tabular face so digits keep their column. */
+  --font-ui: "Inter", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: "SFMono-Regular", "JetBrains Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+
+  /* --- space ---------------------------------------------------------- */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.5rem;
+  --sp-6: 2rem;
+  --sp-7: 3rem;
+
+  /* --- radius --------------------------------------------------------- */
+  --r-sm: 3px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-pill: 999px;
+
+  /* --- chrome --------------------------------------------------------- */
+  /* The bar carries only what a viewer needs to trust the picture: that it is
+   * live, what it is, and what time it is. Everything else is in the control
+   * room, which is invisible until asked for. */
+  --chrome-h: 3.1rem;
+  --ticker-h: 2.6rem;
+
+  /* --- motion --------------------------------------------------------- */
+  /* Broadcast motion is meaningful or absent. Durations are long enough to read
+   * as a cut rather than a glitch. */
+  --dur-cut: 180ms;
+  --dur-fade: 420ms;
+  --dur-scene: 620ms;
+  --ease-cut: cubic-bezier(0.2, 0, 0, 1);
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* --- depth ---------------------------------------------------------- */
+  --shadow-panel: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  --shadow-float: 0 12px 40px rgba(0, 0, 0, 0.5);
+  --blur-panel: 10px;
+}

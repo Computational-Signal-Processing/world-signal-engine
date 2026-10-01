@@ -1,0 +1,12 @@
+{
+  "enabled": false,
+  "min_priority": "HIGH",
+  "cooldown_seconds": 120,
+  "dismiss_after_seconds": 30,
+  "transition": "fade",
+  "rules": [
+    { "when": "priority >= CRITICAL", "action": "takeover" },
+    { "when": "priority >= HIGH", "action": "transition", "to": "signal" },
+    { "when": "default", "action": "update" }
+  ]
+}

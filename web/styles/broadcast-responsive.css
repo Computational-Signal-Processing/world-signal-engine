@@ -1,0 +1,101 @@
+/* Broadcast formats.
+ *
+ * The axis here is aspect ratio, not device class. A studio screen is judged by
+ * whether the composition holds at 16:9, at ultrawide, on a 4K wall and on a
+ * vertical display — not by whether it fits a phone. So the rules below change
+ * the *composition*, and the fluid root size in base.css handles scale.
+ *
+ * Nothing is shrunk with a transform: that would blur type and move hit targets
+ * away from their marks. */
+
+/* --- 16:10 and 3:2 ------------------------------------------------------ */
+
+@media (max-aspect-ratio: 16/9) and (min-aspect-ratio: 4/3) {
+  /* Slightly less width per column: the metric column can afford to be a touch
+   * wider than the globe. */
+  .scene { --grid-cols: 12; }
+}
+
+/* --- 4:3 ----------------------------------------------------------------
+ *
+ * Side columns give way. The globe and the feed are what a viewer reads; the
+ * metric column folds to two rows so it stays visible without squeezing the
+ * centre. */
+
+@media (max-aspect-ratio: 4/3) {
+  .scene { --grid-cols: 10; }
+  .metric-grid { flex-direction: row; flex-wrap: wrap; }
+  .metric-card { flex: 1 1 45%; }
+  .health-grid { grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); }
+}
+
+/* --- ultrawide / 21:9 ---------------------------------------------------
+ *
+ * A wide screen wants the composition to spread rather than to grow: the globe
+ * keeps its proportion and the side columns take the extra room, so the picture
+ * does not become a stretched version of the 16:9 one. */
+
+@media (min-aspect-ratio: 21/9) {
+  .scene { --grid-cols: 16; }
+  .chrome { padding: 0 var(--sp-6); }
+  .metric-grid { flex-direction: row; }
+  .metric-card { flex: 1 1 0; }
+}
+
+/* --- vertical -----------------------------------------------------------
+ *
+ * A vertical display gets a vertical composition, not a shrunken horizontal
+ * one. The scene JSON for these sizes is chosen by the studio; these rules make
+ * the shared blocks behave in a single column. */
+
+@media (max-aspect-ratio: 3/4) {
+  .scene { --grid-cols: 4; }
+  .shell { padding: var(--sp-2); }
+  .chrome {
+    grid-template-columns: 1fr auto;
+    height: auto;
+    padding: var(--sp-2) var(--sp-3);
+    gap: var(--sp-2);
+  }
+  .chrome-scene { grid-column: 1 / -1; justify-content: flex-start; }
+  .chrome-clock { font-size: var(--fs-body); }
+
+  .pipeline { flex-direction: column; }
+  .pipe-link { display: none; }
+  .type-row { grid-template-columns: 6rem 1fr auto; }
+  .evidence-row { grid-template-columns: 1fr; gap: var(--sp-1); }
+  .chain-link { grid-template-columns: 1rem 1fr; }
+  .chain-value { grid-column: 2; }
+}
+
+/* --- 4K ----------------------------------------------------------------
+ *
+ * At 4K the fluid root already scales the type. What changes is density: more
+ * rows fit, so the blocks that scroll can show more at once without becoming a
+ * wall of text. */
+
+@media (min-width: 2400px) {
+  .health-grid { grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); }
+  .strip-track { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
+  .activity-row { font-size: var(--fs-body); }
+}
+
+/* --- short viewports ----------------------------------------------------
+ *
+ * A wide but short screen — a control-room monitor in a rack — must not let the
+ * chrome and ticker eat the stage. Both shrink; the stage keeps its share. */
+
+@media (max-height: 700px) {
+  :root { --chrome-h: 2.6rem; --ticker-h: 2.1rem; }
+  .region-head { padding-top: var(--sp-1); padding-bottom: 0; }
+}
+
+/* --- print / screenshots ------------------------------------------------
+ *
+ * A still of the studio is often what gets shared. Keep the composition and
+ * drop the motion. */
+
+@media print {
+  .ticker-run { animation: none; }
+  .live-badge .live-dot { animation: none; }
+}

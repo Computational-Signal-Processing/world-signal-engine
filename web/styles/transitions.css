@@ -1,0 +1,163 @@
+/* Scene transitions and the breaking takeover.
+ *
+ * A transition exists to make a change of scene legible, so each one resolves
+ * quickly and none of them loops. The takeover is the same principle at full
+ * screen: the alert arrives deliberately, states its case, and leaves.
+ *
+ * Nothing here flashes faster than about 1 Hz, and everything collapses to an
+ * instant cut under `prefers-reduced-motion`. A broadcast that a viewer cannot
+ * look away from safely is not a good broadcast. */
+
+/* --- scene transitions -------------------------------------------------- */
+
+.scene[data-transition-in] { animation-duration: var(--transition-ms, 420ms); animation-timing-function: var(--ease-out); animation-fill-mode: both; }
+.scene[data-transition-out] { animation-duration: var(--transition-ms, 420ms); animation-timing-function: var(--ease-cut); animation-fill-mode: both; position: absolute; inset: 0; }
+
+.scene[data-transition-in="fade"] { animation-name: fade-in; }
+.scene[data-transition-out="fade"] { animation-name: fade-out; }
+
+.scene[data-transition-in="slide"] { animation-name: slide-in; }
+.scene[data-transition-out="slide"] { animation-name: slide-out; }
+
+.scene[data-transition-in="zoom"] { animation-name: zoom-in; }
+.scene[data-transition-out="zoom"] { animation-name: zoom-out; }
+
+.scene[data-transition-in="orbit"] { animation-name: orbit-in; }
+.scene[data-transition-out="orbit"] { animation-name: orbit-out; }
+
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes fade-out { from { opacity: 1; } to { opacity: 0; } }
+
+@keyframes slide-in { from { opacity: 0; transform: translateX(2.5rem); } to { opacity: 1; transform: none; } }
+@keyframes slide-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(-2.5rem); } }
+
+@keyframes zoom-in { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes zoom-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.015); } }
+
+/* The orbit reads as a camera move: the incoming scene arrives with a slight
+ * rotation, as if the globe were being turned to it. */
+@keyframes orbit-in { from { opacity: 0; transform: scale(0.97) rotate(-0.6deg); } to { opacity: 1; transform: none; } }
+@keyframes orbit-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: scale(1.02) rotate(0.6deg); } }
+
+/* --- pre-alert ----------------------------------------------------------
+ *
+ * The announcement that a cut is coming. One slow breath at the edge of the
+ * frame, then gone. It must be long enough to notice and short enough not to
+ * delay the alert itself. */
+
+.pre-alert {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  pointer-events: none;
+  border: 3px solid var(--critical);
+  animation: pre-alert 800ms var(--ease-out) 1 both;
+}
+
+@keyframes pre-alert {
+  0% { opacity: 0; }
+  35% { opacity: 0.9; }
+  100% { opacity: 0; }
+}
+
+/* --- takeover -----------------------------------------------------------
+ *
+ * The alert owns the screen. The composition is deliberately vertical: kicker,
+ * title, the one number that matters, then the evidence. A viewer who looks up
+ * for a second should be able to read the deviation and stop. */
+
+#overlay { position: relative; z-index: 60; }
+
+.breaking {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: var(--sp-5);
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(60, 12, 14, 0.55), rgba(4, 7, 15, 0.94) 70%);
+  backdrop-filter: blur(6px);
+  animation: breaking-in 420ms var(--ease-out) 1 both;
+}
+
+@keyframes breaking-in {
+  from { opacity: 0; transform: translateY(1.5rem); }
+  to { opacity: 1; transform: none; }
+}
+
+.breaking-panel {
+  width: min(72rem, 100%);
+  max-height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  padding: var(--sp-6);
+  border: 1px solid var(--critical);
+  border-radius: var(--r-lg);
+  background: rgba(9, 14, 26, 0.96);
+  box-shadow: var(--shadow-float);
+}
+
+.breaking-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); }
+
+.breaking-kicker {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  font-size: var(--fs-title);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  color: var(--critical);
+}
+.breaking-dot { width: 0.55rem; height: 0.55rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 0.7rem currentColor; }
+.breaking-live { font-size: var(--fs-micro); font-weight: var(--fw-regular); }
+.breaking-countdown { font-size: var(--fs-label); color: var(--text-faint); white-space: nowrap; }
+
+.breaking-types { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
+.breaking-title { color: var(--text); }
+.breaking-summary { font-size: var(--fs-body); }
+
+.breaking-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: var(--sp-4) 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.breaking-sigma { color: var(--critical); }
+.breaking-sigma-label { }
+
+.breaking-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: var(--sp-4); }
+.breaking-cell { display: flex; flex-direction: column; gap: 2px; }
+.breaking-cell .num { font-size: var(--fs-title); }
+
+/* Evidence reveals in order, so the eye is led rather than flooded. */
+.breaking [data-reveal] { opacity: 0; transform: translateY(0.5rem); transition: opacity 260ms var(--ease-out), transform 260ms var(--ease-out); }
+.breaking [data-reveal][data-shown="1"] { opacity: 1; transform: none; }
+
+.breaking-actions { display: flex; gap: var(--sp-3); }
+.breaking-button {
+  flex: 1 1 0;
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-bold);
+  color: var(--text-dim);
+  transition: background var(--dur-cut) var(--ease-cut), color var(--dur-cut) var(--ease-cut);
+}
+.breaking-button:hover, .breaking-button:focus-visible { background: var(--panel-raised); color: var(--text); }
+.breaking-button.primary { background: var(--critical); border-color: var(--critical); color: #fff; }
+.breaking-button.primary:hover, .breaking-button.primary:focus-visible { background: #dc2626; color: #fff; }
+
+/* While an alert owns the screen, the scene behind it must not keep moving:
+ * two sources of motion at once read as a fault. */
+body[data-takeover="1"] .ticker-run { animation-play-state: paused; }
+body[data-takeover="1"] .live-badge .live-dot { animation-play-state: paused; }

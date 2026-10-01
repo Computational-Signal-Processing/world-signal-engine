@@ -1,0 +1,30 @@
+{
+  "id": "system",
+  "name": { "tr": "SİSTEM OPERASYON", "en": "SYSTEM OPERATIONS" },
+  "grid": { "cols": 12, "rows": 8 },
+  "safe_area": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+  "transition": "fade",
+  "regions": [
+    {
+      "id": "pipeline",
+      "area": "1 / 1 / 5 / 13",
+      "block": "system-pipeline",
+      "overflow": "hidden",
+      "priority": 100
+    },
+    {
+      "id": "telemetry",
+      "area": "5 / 1 / 9 / 6",
+      "block": "telemetry",
+      "overflow": "scroll",
+      "priority": 85
+    },
+    {
+      "id": "activity",
+      "area": "5 / 6 / 9 / 13",
+      "block": "activity-stream",
+      "overflow": "scroll",
+      "priority": 80
+    }
+  ]
+}

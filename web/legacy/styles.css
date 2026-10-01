@@ -1,0 +1,864 @@
+/* World Signal Engine — instrument panel.
+ *
+ * Design rules, from the brief:
+ *  - A signal type is never communicated by colour alone. Every type carries
+ *    an icon, a label and a shape, so the feed reads in grayscale and to a
+ *    colour-blind eye.
+ *  - The interface states facts ("+4.1σ, 18 min, 4 sources"), never a bare
+ *    "important". Numbers are the interface.
+ *  - Light-first is wrong here: this is a monitoring surface that runs for
+ *    hours. Dark, low-chroma, calm; the data is the only thing that shouts.
+ */
+
+:root {
+  --bg: #0a0d12;
+  --bg-raised: #10141b;
+  --bg-sunken: #070a0e;
+  --line: #1d2431;
+  --line-strong: #2b3546;
+  --text: #e6ebf2;
+  --text-dim: #9aa7b8;
+  --text-faint: #64707f;
+
+  /* Signal-type accents. Used on icons/labels, never as the sole carrier of
+   * meaning. */
+  --now: #4ea1ff;
+  --anomaly: #ff8a5b;
+  --early: #c58bff;
+  --convergence: #7ee0b0;
+  --impact: #ffd166;
+
+  --ok: #4cc38a;
+  --warn: #e0b341;
+  --bad: #f2685f;
+  --idle: #5a6675;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+  --gap: 16px;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: inherit; text-decoration: none; }
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--now);
+  color: #04121f;
+  padding: 8px 14px;
+  border-radius: 0 0 var(--radius-sm) 0;
+  z-index: 100;
+}
+.skip-link:focus { left: 0; }
+
+/* ---------------------------------------------------------------- topbar */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--gap);
+  padding: 10px 18px;
+  background: rgba(10, 13, 18, 0.92);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { display: flex; align-items: center; gap: 10px; flex: 0 0 auto; }
+.brand-mark {
+  width: 20px; height: 20px; border-radius: 6px;
+  background:
+    linear-gradient(135deg, var(--now), var(--convergence));
+  box-shadow: 0 0 0 1px var(--line-strong) inset;
+}
+.brand-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  color: var(--text-dim);
+}
+
+.nav { display: flex; gap: 2px; flex: 1 1 auto; }
+.nav a {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+}
+.nav a:hover { color: var(--text); background: var(--bg-raised); }
+.nav a.active { color: var(--text); background: var(--bg-raised); box-shadow: 0 0 0 1px var(--line-strong) inset; }
+
+.controls { display: flex; align-items: center; gap: 12px; flex: 0 0 auto; }
+
+.field { display: flex; flex-direction: column; gap: 2px; }
+.field-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.field select, .field input {
+  background: var(--bg-sunken);
+  border: 1px solid var(--line-strong);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+  min-width: 120px;
+}
+.field input { width: 160px; }
+.field select:focus, .field input:focus { outline: 2px solid var(--now); outline-offset: 0; }
+#key-field[hidden] { display: none; }
+
+.conn { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+.conn-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+.conn[data-state="live"] .conn-dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 2.4s infinite; }
+.conn[data-state="reconnecting"] .conn-dot { background: var(--warn); }
+.conn[data-state="error"] .conn-dot { background: var(--bad); }
+.conn[data-state="offline"] .conn-dot { background: var(--idle); }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* ------------------------------------------------------------------ view */
+
+.view { max-width: 1180px; margin: 0 auto; padding: 22px 18px 60px; }
+
+.page-head { margin-bottom: 18px; }
+.page-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.page-sub { margin: 6px 0 0; color: var(--text-faint); font-size: 13px; max-width: 70ch; }
+
+.bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 18px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  user-select: none;
+}
+.chip:hover { color: var(--text); }
+.chip[aria-pressed="true"] { color: var(--text); border-color: var(--now); box-shadow: 0 0 0 1px var(--now) inset; }
+.chip .chip-ico { font-size: 12px; }
+
+/* --------------------------------------------------------------- signals */
+
+.feed { display: grid; gap: 12px; }
+
+.sig {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 14px 16px 14px 18px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color .15s, transform .05s;
+}
+.sig:hover { border-color: var(--line-strong); }
+.sig:active { transform: translateY(1px); }
+.sig::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--accent, var(--line-strong));
+}
+.sig[data-primary="NOW"] { --accent: var(--now); }
+.sig[data-primary="ANOMALY"] { --accent: var(--anomaly); }
+.sig[data-primary="EARLY_SIGNAL"] { --accent: var(--early); }
+.sig[data-primary="CONVERGENCE"] { --accent: var(--convergence); }
+.sig[data-primary="IMPACT"] { --accent: var(--impact); }
+
+.sig-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.sig-types { display: flex; gap: 6px; flex-wrap: wrap; }
+.type-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid currentColor;
+  color: var(--text-dim);
+}
+.type-badge[data-type="NOW"] { color: var(--now); }
+.type-badge[data-type="ANOMALY"] { color: var(--anomaly); }
+.type-badge[data-type="EARLY_SIGNAL"] { color: var(--early); }
+.type-badge[data-type="CONVERGENCE"] { color: var(--convergence); }
+.type-badge[data-type="IMPACT"] { color: var(--impact); }
+.type-badge .glyph { font-size: 11px; line-height: 1; }
+
+.sig-title { font-size: 16px; font-weight: 600; margin: 2px 0 4px; }
+.sig-summary { color: var(--text-dim); font-size: 13px; margin: 0 0 10px; }
+
+.sig-facts { display: flex; gap: 16px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.fact { display: flex; flex-direction: column; gap: 1px; }
+.fact b { color: var(--text-dim); font-weight: 500; }
+.fact span { color: var(--text); }
+
+.spark { display: block; width: 100%; height: 46px; margin: 10px 0 6px; }
+.spark path.line { fill: none; stroke: var(--accent, var(--now)); stroke-width: 2; }
+.spark path.area { fill: var(--accent, var(--now)); opacity: 0.10; stroke: none; }
+.spark line.base { stroke: var(--text-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+
+.quality { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 12px; }
+.qbar { display: flex; flex-direction: column; gap: 3px; }
+.qbar .q-label { font-family: var(--mono); font-size: 9px; letter-spacing: .08em; color: var(--text-faint); text-transform: uppercase; }
+.qbar .q-track { height: 4px; border-radius: 2px; background: var(--bg-sunken); overflow: hidden; }
+.qbar .q-fill { height: 100%; background: var(--accent, var(--now)); opacity: .8; }
+
+.empty {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-faint);
+}
+.empty h3 { color: var(--text-dim); margin: 0 0 6px; font-weight: 600; }
+.empty p { margin: 0; font-size: 13px; }
+
+/* -------------------------------------------------------------- detail -- */
+
+.crumb { display: flex; gap: 6px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; color: var(--text-faint); margin-bottom: 14px; }
+.crumb a { color: var(--text-dim); }
+.crumb a:hover { color: var(--text); }
+.crumb .sep { color: var(--text-faint); }
+
+.panel { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-raised); padding: 16px; margin-bottom: 14px; }
+.panel-title { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-faint); margin: 0 0 12px; }
+
+.kv { display: grid; grid-template-columns: 180px 1fr; gap: 6px 16px; font-size: 13px; }
+.kv dt { color: var(--text-faint); font-family: var(--mono); font-size: 11px; padding-top: 2px; }
+.kv dd { margin: 0; color: var(--text); word-break: break-word; }
+.kv dd.mono { font-family: var(--mono); font-size: 12px; }
+
+.reasons { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.reasons li { display: flex; gap: 10px; font-size: 13px; color: var(--text-dim); }
+.reasons li::before { content: "—"; color: var(--text-faint); }
+
+.evidence { display: grid; gap: 8px; }
+.ev {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+}
+.ev-top { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.ev-metric { font-family: var(--mono); font-size: 12px; color: var(--text); }
+.ev-sigma { font-family: var(--mono); font-size: 12px; color: var(--anomaly); }
+.ev-statement { color: var(--text-dim); font-size: 13px; }
+.ev-links { display: flex; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 11px; }
+.ev-links a { color: var(--now); }
+.ev-links a:hover { text-decoration: underline; }
+
+.link-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+.btn {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 7px 14px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line-strong); background: var(--bg-sunken); color: var(--text-dim);
+  cursor: pointer;
+}
+.btn:hover { color: var(--text); border-color: var(--text-faint); }
+.btn[disabled] { opacity: .45; cursor: not-allowed; }
+.btn.primary { border-color: var(--now); color: var(--now); }
+.btn.danger { border-color: var(--bad); color: var(--bad); }
+
+/* -------------------------------------------------------------- tables -- */
+
+.table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.table th {
+  text-align: left; font-family: var(--mono); font-size: 10px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--text-faint); padding: 8px 10px;
+  border-bottom: 1px solid var(--line-strong);
+}
+.table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.table tr:hover td { background: var(--bg-sunken); }
+.table td.mono, .table td .mono { font-family: var(--mono); font-size: 12px; }
+.table a.row-link { color: var(--text); }
+
+.health { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 11px; }
+.health .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); }
+.health[data-status="Healthy"] .dot { background: var(--ok); }
+.health[data-status="Degraded"] .dot { background: var(--warn); }
+.health[data-status="RateLimited"] .dot { background: var(--warn); }
+.health[data-status="Down"] .dot { background: var(--bad); }
+.health[data-status="Unknown"] .dot { background: var(--idle); }
+
+.pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-family: var(--mono); font-size: 10px; border: 1px solid var(--line-strong); color: var(--text-dim); }
+.pill.on { border-color: var(--ok); color: var(--ok); }
+.pill.off { border-color: var(--idle); color: var(--idle); }
+
+/* ------------------------------------------------------------ activity -- */
+
+.activity { display: grid; gap: 2px; max-height: 360px; overflow-y: auto; }
+.act {
+  display: grid; grid-template-columns: 74px 20px 1fr; gap: 8px; align-items: baseline;
+  padding: 5px 6px; border-radius: var(--radius-sm); font-size: 12.5px;
+}
+.act:hover { background: var(--bg-sunken); }
+.act-time { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.act-ico { text-align: center; }
+.act-msg { color: var(--text-dim); }
+.act[data-kind="SIGNAL"] .act-msg { color: var(--text); }
+.act[data-kind="SOURCE_FAILED"] .act-msg,
+.act[data-kind="SOURCE_RATE_LIMITED"] .act-msg { color: var(--bad); }
+.act[data-kind="CONTROL"] .act-msg { color: var(--warn); }
+
+/* --------------------------------------------------------------- system -- */
+
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg-raised); padding: 14px; }
+.stat .stat-label { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-faint); }
+.stat .stat-value { font-size: 24px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.stat .stat-note { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); margin-top: 8px; }
+.legend .item { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ------------------------------------------------------------------ map -- */
+
+.map-wrap { position: relative; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--bg-sunken); }
+.map-wrap svg { display: block; width: 100%; height: auto; }
+.map-dot { cursor: pointer; }
+.map-dot:hover { stroke: var(--text); stroke-width: 1.5; }
+
+/* ---------------------------------------------------------------- misc --- */
+
+.loading { color: var(--text-faint); font-family: var(--mono); font-size: 12px; padding: 30px 0; text-align: center; }
+
+.toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: var(--bg-raised); border: 1px solid var(--line-strong);
+  color: var(--text); padding: 10px 16px; border-radius: var(--radius-sm);
+  font-size: 13px; z-index: 50; box-shadow: 0 8px 30px rgba(0,0,0,.5);
+}
+.toast[data-tone="error"] { border-color: var(--bad); }
+
+.foot {
+  display: flex; justify-content: space-between; gap: 16px;
+  max-width: 1180px; margin: 0 auto; padding: 14px 18px 30px;
+  color: var(--text-faint); font-size: 11px; font-family: var(--mono);
+}
+
+.timeline-svg { width: 100%; height: 220px; }
+.timeline-svg .axis { stroke: var(--line-strong); stroke-width: 1; }
+.timeline-svg .grid { stroke: var(--line); stroke-width: 1; stroke-dasharray: 2 4; }
+.timeline-svg .series { fill: none; stroke: var(--now); stroke-width: 2; }
+.timeline-svg .point { fill: var(--now); }
+.timeline-svg text { fill: var(--text-faint); font-family: var(--mono); font-size: 9px; }
+
+/* ------------------------------------------------------ human language -- */
+
+/* The NOW strip: the freshest signals as one glanceable row, before the feed.
+ * Each item keeps the same type accent and shape as its card, so the strip and
+ * the feed describe the same thing the same way. */
+.now-strip {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.now-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.now-label {
+  font-family: var(--mono); font-size: 11px; letter-spacing: .14em;
+  color: var(--now); text-transform: uppercase;
+}
+.now-hint { font-size: 11px; color: var(--text-faint); }
+.now-row { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(240px, 1fr); gap: 8px; overflow-x: auto; padding-bottom: 2px; }
+.now-item {
+  text-align: left; cursor: pointer; font: inherit; color: inherit;
+  border: 1px solid var(--line); border-left: 3px solid var(--accent, var(--now));
+  border-radius: var(--radius-sm); background: var(--bg-sunken);
+  padding: 9px 11px; display: flex; flex-direction: column; gap: 4px;
+}
+.now-item:hover { border-color: var(--line-strong); }
+.now-item[data-primary="NOW"] { --accent: var(--now); }
+.now-item[data-primary="ANOMALY"] { --accent: var(--anomaly); }
+.now-item[data-primary="EARLY_SIGNAL"] { --accent: var(--early); }
+.now-item[data-primary="CONVERGENCE"] { --accent: var(--convergence); }
+.now-item[data-primary="IMPACT"] { --accent: var(--impact); }
+.now-title { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.now-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+
+/* The world header: how much is changing, of what kind, and source health. */
+.world-stats { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; }
+.stat-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg-raised); padding: 5px 12px;
+  font-size: 12px; color: var(--text-dim);
+}
+.stat-chip b { color: var(--text); font-family: var(--mono); font-size: 13px; }
+.stat-chip[data-type="NOW"] { border-color: var(--now); }
+.stat-chip[data-type="ANOMALY"] { border-color: var(--anomaly); }
+.stat-chip[data-type="EARLY_SIGNAL"] { border-color: var(--early); }
+.stat-chip[data-type="CONVERGENCE"] { border-color: var(--convergence); }
+.stat-chip[data-type="IMPACT"] { border-color: var(--impact); }
+.world-health { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+/* The monitoring banner: whether the world is being watched, and how fresh the
+ * data is. The dot is decoration; the state word carries the meaning, so a
+ * colour-blind reader loses nothing. "Watching", "paused" and "not watching"
+ * are three different truths and are never shown as one. */
+.world-notice {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg-raised); padding: 9px 14px; margin: 0 0 16px;
+  font-size: 12px;
+}
+.world-notice:empty { display: none; }
+.watch-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); flex: none; }
+.watch-dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 2.4s infinite; }
+.watch-dot.paused { background: var(--warn); }
+.watch-dot.off { background: var(--bad); }
+.watch-state { font-weight: 600; color: var(--text); text-transform: lowercase; }
+.watch-hint { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
+.watch-warn { color: var(--warn); font-family: var(--mono); font-size: 11px; }
+.new-banner {
+  margin-left: auto; border: 1px solid var(--now); border-radius: 999px;
+  background: transparent; color: var(--now); cursor: pointer;
+  font: inherit; font-size: 11px; padding: 3px 12px;
+}
+.new-banner:hover { background: color-mix(in srgb, var(--now) 14%, transparent); }
+
+/* Lifecycle status: a plain word, in the reader's language. Never a bare
+ * colour — the word is the carrier, the tint only supports it. */
+.status-pill {
+  display: inline-flex; align-items: center;
+  border: 1px solid var(--line-strong); border-radius: 999px;
+  padding: 2px 9px; font-size: 10px; letter-spacing: .04em;
+  font-family: var(--mono); color: var(--text-dim); text-transform: uppercase;
+}
+.status-pill[data-status="NEW"] { border-color: var(--now); color: var(--now); }
+.status-pill[data-status="CONFIRMED"] { border-color: var(--ok); color: var(--ok); }
+.status-pill[data-status="FADING"] { border-color: var(--warn); color: var(--warn); }
+.status-pill[data-status="RESOLVED"] { opacity: .6; }
+
+/* The card's "what we do not know" line: present on every signal, quiet. */
+.sig-unknown {
+  margin: 0 0 10px; font-size: 12px; color: var(--text-faint);
+  border-left: 2px solid var(--line-strong); padding-left: 9px;
+}
+
+/* The narrative panel on the signal page: the engine's answer, in order. */
+.narrative-headline { font-size: 19px; font-weight: 600; margin: 0 0 14px; line-height: 1.3; }
+.narrative-kv { grid-template-columns: 130px 1fr; }
+.narrative-kv dt { color: var(--text-faint); }
+.narrative-kv dd { color: var(--text); }
+.unknown-panel { border-color: var(--line-strong); }
+.unknown-panel .reasons li { color: var(--text-faint); }
+.ev-record { font-size: 13px; color: var(--text); font-weight: 500; }
+
+.lang-toggle { padding: 6px 10px; font-family: var(--mono); font-size: 11px; letter-spacing: .06em; }
+
+/* ------------------------------------------------------ OBSERVATORY --
+ *
+ * The control room: one screen, no scroll, the world's state at a glance. It
+ * is a broadcast surface as much as a working one, so it must read from across
+ * a room (large numerals, high contrast) and survive being captured for a
+ * stream (no chrome in broadcast mode).
+ *
+ * The layout is a fixed grid, not a flowing document: every region gets a row
+ * it cannot grow out of, and the scrollable ones (feed, ticker) scroll inside
+ * themselves. That is what keeps the screen single-viewport regardless of how
+ * many signals arrive.
+ *
+ * The palette is the board's own (`--obs-*` below): a cool, near-black space
+ * rather than the neutral grey the rest of the app uses, so a wall-mounted
+ * board reads as a monitoring surface and not as a page. Nothing in it invents
+ * data; every number drawn here traces to a stored observation.
+ */
+
+/* The board takes the whole viewport below the chrome, so it never scrolls the
+ * page: the chrome keeps its natural height and `.obs` fills what is left. */
+body.obs-active { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+body.obs-active .topbar, body.obs-active .foot { flex: 0 0 auto; }
+body.obs-active .view { flex: 1 1 auto; min-height: 0; max-width: none; padding: 0; }
+
+.obs {
+  --obs-bg: #060a14;
+  --obs-panel: #0d1526;
+  --obs-panel-2: #101a30;
+  --obs-line: #1d2c48;
+  --obs-line-2: #2b3f66;
+  --obs-text: #e8eef8;
+  --obs-dim: #93a4c0;
+  --obs-faint: #5d6d8c;
+  --obs-accent: #38bdf8;
+  --obs-crit: #f2545b;
+  --obs-warn: #f0a836;
+  --obs-ok: #35c48d;
+  --obs-num: 30px;
+
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: 9px;
+  height: 100%;
+  padding: 11px 13px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(29, 78, 160, .20) 0%, rgba(6, 10, 20, 0) 62%),
+    linear-gradient(rgba(120, 170, 255, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(120, 170, 255, .035) 1px, transparent 1px),
+    var(--obs-bg);
+  background-size: 100% 100%, 34px 34px, 34px 34px, 100% 100%;
+  color: var(--obs-text);
+  overflow: hidden;
+}
+
+/* --- header ------------------------------------------------------------ */
+
+.obs-head {
+  display: flex; align-items: center; gap: 14px; flex-wrap: nowrap;
+  padding-bottom: 8px; border-bottom: 1px solid var(--obs-line);
+}
+.obs-brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.obs-title {
+  font-family: var(--mono); font-size: 15px; letter-spacing: .18em;
+  text-transform: uppercase; font-weight: 700; color: var(--obs-accent); white-space: nowrap;
+  text-shadow: 0 0 18px rgba(56, 189, 248, .35);
+}
+.obs-sub {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--obs-dim); border: 1px solid var(--obs-line-2); border-radius: 3px;
+  padding: 2px 7px; white-space: nowrap;
+}
+
+.obs-nav { display: flex; gap: 4px; margin-left: auto; }
+.obs-nav a {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--obs-dim); padding: 5px 10px; border: 1px solid var(--obs-line); border-radius: 4px;
+  background: rgba(0, 0, 0, .25);
+}
+.obs-nav a:hover { color: var(--obs-text); border-color: var(--obs-line-2); }
+.obs-nav a[aria-current="page"] { color: #04121f; background: var(--obs-accent); border-color: var(--obs-accent); font-weight: 700; }
+
+.obs-clock { display: flex; align-items: center; gap: 10px; font-family: var(--mono); }
+.obs-live {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;
+  color: #fff; background: var(--obs-crit); border-radius: 3px; padding: 3px 8px;
+  box-shadow: 0 0 16px rgba(242, 84, 91, .55);
+}
+.obs-live[data-idle="true"] { background: var(--obs-faint); box-shadow: none; }
+.obs-live-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: #fff;
+  animation: obs-pulse 1.2s ease-in-out infinite alternate;
+}
+@keyframes obs-pulse { from { opacity: 1; } to { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .obs-live-dot { animation: none; } }
+
+.obs-clock-time { font-size: 19px; font-weight: 700; color: var(--obs-text); font-variant-numeric: tabular-nums; }
+.obs-clock-zone { font-size: 10px; color: var(--obs-faint); letter-spacing: .1em; }
+#obs-broadcast { font-family: var(--mono); font-size: 12px; line-height: 1; padding: 4px 7px; }
+
+/* --- category strip ----------------------------------------------------
+ *
+ * One card per category, and the card *is* the reading: the label, the newest
+ * measured value, and how far that value sits from the category's own recent
+ * normal. A category with no series behind it says so in words rather than
+ * drawing a zero, which would be a claim the data does not support.
+ */
+
+.obs-cats {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr);
+  grid-template-rows: 132px; gap: 8px; flex: 0 0 auto; overflow: hidden;
+}
+.obs-cat {
+  border: 1px solid var(--obs-line); border-radius: 6px; background: var(--obs-panel);
+  padding: 8px 10px; display: flex; flex-direction: column; gap: 3px; min-width: 0;
+  border-top-width: 2px; border-top-color: var(--obs-line-2); cursor: pointer;
+  position: relative; overflow: hidden;
+}
+.obs-cat:hover { border-color: var(--obs-line-2); background: var(--obs-panel-2); }
+.obs-cat[data-sev="CRITICAL"] { border-top-color: var(--obs-crit); background: linear-gradient(180deg, rgba(242, 84, 91, .14), var(--obs-panel) 70%); }
+.obs-cat[data-sev="HIGH"] { border-top-color: var(--obs-warn); background: linear-gradient(180deg, rgba(240, 168, 54, .10), var(--obs-panel) 70%); }
+.obs-cat[data-empty="true"] { opacity: .58; }
+
+.obs-cat-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.obs-cat-name {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--obs-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.obs-cat-badge {
+  margin-left: auto; font-family: var(--mono); font-size: 8px; letter-spacing: .08em; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; white-space: nowrap; color: var(--obs-dim);
+  border: 1px solid var(--obs-line-2);
+}
+.obs-cat-badge[data-type="ANOMALY"] { color: var(--obs-crit); border-color: var(--obs-crit); }
+.obs-cat-badge[data-type="EARLY_SIGNAL"] { color: #c58bff; border-color: #c58bff; }
+.obs-cat-badge[data-type="CONVERGENCE"] { color: var(--obs-ok); border-color: var(--obs-ok); }
+.obs-cat-badge[data-type="IMPACT"] { color: #ffd166; border-color: #ffd166; }
+.obs-cat-badge[data-type="NOW"] { color: var(--obs-accent); border-color: var(--obs-accent); }
+
+.obs-cat-value {
+  font-family: var(--mono); font-size: var(--obs-num); font-weight: 700; line-height: 1.05;
+  color: var(--obs-text); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.obs-cat-value[data-empty="true"] { font-size: 11px; font-weight: 500; color: var(--obs-faint); white-space: normal; }
+.obs-cat-unit { font-size: 9px; color: var(--obs-faint); margin-left: 4px; font-weight: 500; }
+.obs-cat-delta { font-family: var(--mono); font-size: 10.5px; font-weight: 700; color: var(--obs-dim); }
+.obs-cat-delta[data-dir="up"] { color: var(--obs-crit); }
+.obs-cat-delta[data-dir="down"] { color: var(--obs-ok); }
+.obs-cat-spark { display: block; width: 100%; height: 22px; margin-top: 1px; }
+.obs-cat-spark .line { fill: none; stroke: var(--obs-accent); stroke-width: 1.3; }
+.obs-cat-spark .base { stroke: var(--obs-faint); stroke-width: 1; stroke-dasharray: 3 3; }
+.obs-cat-reason {
+  font-family: var(--mono); font-size: 8px; color: var(--obs-faint); line-height: 1.3;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.obs-cat[data-more="true"] { justify-content: center; border-style: dashed; border-top-style: solid; }
+.obs-cat-more-list {
+  font-family: var(--mono); font-size: 9px; color: var(--obs-dim); line-height: 1.45;
+  overflow: hidden;
+}
+
+/* --- body: activity + globe + feed ------------------------------------ */
+
+.obs-body {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1.15fr);
+  gap: 9px; min-height: 0;
+}
+.obs-col { display: flex; flex-direction: column; gap: 9px; min-height: 0; min-width: 0; }
+.obs-col > .obs-panel { flex: 1 1 auto; }
+
+.obs-panel {
+  border: 1px solid var(--obs-line); border-radius: 6px; background: var(--obs-panel);
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden;
+}
+.obs-panel-head {
+  display: flex; align-items: center; gap: 8px; padding: 7px 11px;
+  border-bottom: 1px solid var(--obs-line); flex: 0 0 auto;
+}
+.obs-panel-title {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase;
+  color: var(--obs-accent); margin: 0;
+}
+.obs-panel-meta { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--obs-faint); }
+.obs-panel-body { flex: 1 1 auto; min-height: 0; overflow: hidden; position: relative; }
+
+/* The globe: an orthographic graticule with real signal hotspots on it. */
+.obs-globe { display: block; width: 100%; height: 100%; }
+.obs-globe .grid { stroke: var(--obs-line); stroke-width: 1; fill: none; }
+.obs-globe .limb { stroke: var(--obs-line-2); stroke-width: 1; fill: none; }
+.obs-globe .disc { fill: rgba(29, 78, 160, .18); stroke: none; }
+.obs-globe .dot { stroke: var(--obs-panel); stroke-width: 1.5; cursor: pointer; }
+.obs-globe .dot:hover { stroke: var(--obs-text); }
+.obs-globe .ring { fill: none; stroke-width: 1.2; opacity: .55; }
+.obs-globe .label { font-family: var(--mono); font-size: 8px; fill: var(--obs-dim); }
+
+/* The activity chart: measured arrivals per bucket, with the mean as a
+ * dashed rule. */
+.obs-chart { display: block; width: 100%; height: 100%; }
+.obs-chart .area { fill: var(--obs-accent); opacity: .12; }
+.obs-chart .line { fill: none; stroke: var(--obs-accent); stroke-width: 1.6; }
+.obs-chart .mean { stroke: var(--obs-faint); stroke-width: 1; stroke-dasharray: 4 4; }
+.obs-chart .mean-label { font-family: var(--mono); font-size: 8px; fill: var(--obs-faint); }
+.obs-chart .bar { fill: var(--obs-warn); opacity: .8; }
+.obs-chart .point { fill: var(--obs-accent); }
+
+/* The readout under the chart: the selected signal's own numbers. */
+.obs-kv { display: flex; flex-direction: column; gap: 0; padding: 4px 0; }
+.obs-kv-row {
+  display: flex; align-items: baseline; gap: 10px; padding: 5px 11px;
+  border-bottom: 1px solid var(--obs-line);
+}
+.obs-kv-row:last-child { border-bottom: 0; }
+.obs-kv-key {
+  font-family: var(--mono); font-size: 9px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--obs-faint); flex: 0 0 108px;
+}
+.obs-kv-val { font-family: var(--mono); font-size: 12px; color: var(--obs-text); font-variant-numeric: tabular-nums; }
+.obs-kv-val[data-tone="bad"] { color: var(--obs-crit); }
+.obs-kv-val[data-tone="ok"] { color: var(--obs-ok); }
+.obs-kv-val[data-tone="warn"] { color: var(--obs-warn); }
+
+/* The flash card: the signal the board is currently about, inline under the
+ * globe. It is the same signal the feed row and the alert modal describe —
+ * never a separate, more dramatic invention. */
+.obs-flash { border-color: var(--obs-crit); box-shadow: inset 0 0 22px rgba(242, 84, 91, .12); }
+.obs-flash .obs-panel-title { color: var(--obs-crit); }
+.obs-flash-body { padding: 9px 11px; display: flex; flex-direction: column; gap: 7px; }
+.obs-flash-title { font-size: 15px; font-weight: 700; line-height: 1.25; margin: 0; }
+.obs-flash-summary { font-size: 11.5px; color: var(--obs-dim); margin: 0; line-height: 1.35; }
+.obs-flash-reason {
+  font-family: var(--mono); font-size: 10px; color: var(--obs-text);
+  background: rgba(0, 0, 0, .35); border: 1px solid var(--obs-line); border-radius: 4px; padding: 6px 8px;
+}
+.obs-flash-facts { display: flex; flex-wrap: wrap; gap: 14px; font-family: var(--mono); }
+.obs-flash-facts > span { display: flex; flex-direction: column; gap: 1px; }
+.obs-flash-facts b {
+  font-size: 8.5px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--obs-faint);
+}
+.obs-flash-facts span span { font-size: 13px; color: var(--obs-text); font-variant-numeric: tabular-nums; }
+.obs-flash-actions { display: flex; gap: 8px; }
+.obs-flash-actions .btn {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  padding: 5px 10px; border-radius: 4px; border: 1px solid var(--obs-line-2);
+  background: transparent; color: var(--obs-text); cursor: pointer;
+}
+.obs-flash-actions .btn:hover { border-color: var(--obs-accent); color: var(--obs-accent); }
+.obs-flash-actions .btn.primary { background: var(--obs-crit); border-color: var(--obs-crit); color: #fff; font-weight: 700; }
+
+/* --- the feed ---------------------------------------------------------- */
+
+.obs-feed-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; height: 100%; }
+.obs-feed-row {
+  display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 9px; align-items: baseline;
+  padding: 7px 10px; border-bottom: 1px solid var(--obs-line); border-left: 3px solid var(--obs-line-2);
+  cursor: pointer;
+}
+.obs-feed-row:hover { background: var(--obs-panel-2); }
+.obs-feed-row:last-child { border-bottom: 0; }
+.obs-feed-row[data-sev="CRITICAL"] { border-left-color: var(--obs-crit); background: linear-gradient(90deg, rgba(242, 84, 91, .10), transparent 55%); }
+.obs-feed-row[data-sev="HIGH"] { border-left-color: var(--obs-warn); background: linear-gradient(90deg, rgba(240, 168, 54, .08), transparent 55%); }
+.obs-feed-row[data-sev="MEDIUM"] { border-left-color: var(--obs-warn); }
+.obs-feed-glyph { font-size: 11px; line-height: 1.5; }
+.obs-feed-main { min-width: 0; }
+.obs-feed-title { font-size: 12px; color: var(--obs-text); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-feed-sub { font-family: var(--mono); font-size: 9.5px; color: var(--obs-faint); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.obs-feed-right { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.obs-feed-age { font-family: var(--mono); font-size: 10px; color: var(--obs-dim); font-variant-numeric: tabular-nums; }
+.obs-feed-sev {
+  font-family: var(--mono); font-size: 8px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor;
+}
+.obs-feed-sev[data-sev="CRITICAL"] { color: var(--obs-crit); }
+.obs-feed-sev[data-sev="HIGH"] { color: var(--obs-warn); }
+.obs-feed-sev[data-sev="MEDIUM"] { color: var(--obs-warn); }
+.obs-feed-sev[data-sev="LOW"] { color: var(--obs-dim); }
+
+.obs-empty { padding: 14px 12px; color: var(--obs-faint); font-size: 11.5px; line-height: 1.4; }
+
+/* --- ticker ------------------------------------------------------------ */
+
+.obs-ticker {
+  display: flex; align-items: center; gap: 10px; border: 1px solid var(--obs-line);
+  border-radius: 5px; background: var(--obs-panel); padding: 6px 10px; overflow: hidden; flex: 0 0 auto;
+}
+.obs-ticker-tag {
+  font-family: var(--mono); font-size: 9px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+  color: #fff; background: var(--obs-crit); border-radius: 3px; padding: 3px 7px; white-space: nowrap;
+}
+.obs-ticker-tag[data-idle="true"] { color: var(--obs-faint); background: transparent; border: 1px solid var(--obs-line-2); }
+.obs-ticker-track { flex: 1 1 auto; overflow: hidden; white-space: nowrap; }
+.obs-ticker-item { font-family: var(--mono); font-size: 11.5px; color: var(--obs-dim); padding-right: 42px; }
+.obs-ticker-item b { color: var(--obs-text); font-weight: 600; }
+.obs-ticker-item .obs-ticker-sev { color: var(--obs-crit); font-weight: 700; }
+.obs-ticker-run { display: inline-block; animation: ticker-run 60s linear infinite; }
+@keyframes ticker-run { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) { .obs-ticker-run { animation: none; } }
+
+/* --- alert modal ------------------------------------------------------- */
+
+.obs-alert-scrim {
+  position: fixed; inset: 0; background: rgba(3, 6, 12, .74); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; z-index: 50; padding: 24px;
+}
+.obs-alert {
+  width: min(620px, 100%); background: #0d1526; border: 1px solid var(--bad);
+  border-radius: 10px; padding: 18px 20px; box-shadow: 0 18px 60px rgba(0, 0, 0, .65);
+}
+.obs-alert-kicker {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .2em; text-transform: uppercase; color: var(--bad);
+  display: flex; align-items: center; gap: 8px;
+}
+.obs-alert-title { font-size: 21px; font-weight: 700; margin: 10px 0 6px; line-height: 1.25; color: #e8eef8; }
+.obs-alert-summary { color: #93a4c0; font-size: 13px; margin: 0 0 12px; }
+.obs-alert-reason { font-family: var(--mono); font-size: 11px; color: #e8eef8; background: rgba(0,0,0,.35); border: 1px solid #1d2c48; border-radius: 5px; padding: 9px 11px; }
+.obs-alert-facts { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0; font-family: var(--mono); font-size: 10px; color: #5d6d8c; }
+.obs-alert-facts b { display: block; color: #93a4c0; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; font-size: 9px; }
+.obs-alert-facts span { color: #e8eef8; font-size: 12px; }
+.obs-alert-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+
+/* --- broadcast mode ---------------------------------------------------- */
+
+/* The watermark carries the context the hidden chrome would otherwise provide:
+ * whether the engine is watching, how fresh the data is, and the wall clock.
+ * A recorded stream must not be mistakable for a live one. */
+.obs-watermark {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--obs-faint);
+  border-top: 1px solid var(--obs-line);
+  padding-top: 6px;
+}
+.obs-watermark span:last-child { margin-left: auto; }
+body.broadcast .obs-watermark { display: flex; }
+
+/* `?broadcast=1` strips everything that is chrome rather than world state: the
+ * nav, the lens picker, the key field, the footer. What remains is the board,
+ * which is what a stream should be showing. */
+body.broadcast .topbar,
+body.broadcast .foot,
+body.broadcast .toast,
+body.broadcast .skip-link { display: none !important; }
+body.broadcast .obs { height: 100vh; padding: 10px 12px; }
+
+@media (max-width: 1500px) {
+  .obs-cats { grid-template-rows: 128px; }
+}
+@media (max-width: 1180px) {
+  .obs { grid-template-rows: auto auto auto minmax(0, 1fr) auto; height: auto; overflow: visible; }
+  .obs-body { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .obs-col-feed { grid-column: 1 / -1; min-height: 240px; }
+}
+@media (max-width: 860px) {
+  .obs-body { grid-template-columns: minmax(0, 1fr); }
+  .obs-clock-time { font-size: 16px; }
+  .obs-nav { display: none; }
+}
+
+/* The topbar holds the brand, six nav links, a lens picker and a key field. That
+ * does not fit on one row below ~1160px, and the row must wrap before it starts
+ * scrolling: a horizontally scrolling header hides the lens picker, which is how
+ * the reader narrows the whole board. */
+@media (max-width: 1160px) {
+  .topbar { flex-wrap: wrap; row-gap: 8px; }
+  .nav { order: 3; width: 100%; overflow-x: auto; }
+  .controls { margin-left: auto; flex-wrap: wrap; }
+}
+
+@media (max-width: 720px) {
+  .kv { grid-template-columns: 1fr; }
+  .quality { grid-template-columns: repeat(4, 1fr); }
+  .world-health { margin-left: 0; }
+  .now-row { grid-auto-columns: minmax(200px, 82%); }
+  .narrative-kv { grid-template-columns: 1fr; }
+  .sig-title { font-size: 15px; }
+  .narrative-headline { font-size: 17px; }
+}

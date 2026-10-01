@@ -1,0 +1,23 @@
+{
+  "id": "evidence",
+  "name": { "tr": "KANIT / HAM VERİ", "en": "EVIDENCE / RAW" },
+  "grid": { "cols": 12, "rows": 8 },
+  "safe_area": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+  "transition": "slide",
+  "regions": [
+    {
+      "id": "chain",
+      "area": "1 / 1 / 9 / 5",
+      "block": "evidence-chain",
+      "overflow": "scroll",
+      "priority": 100
+    },
+    {
+      "id": "raw",
+      "area": "1 / 5 / 9 / 13",
+      "block": "raw-viewer",
+      "overflow": "scroll",
+      "priority": 90
+    }
+  ]
+}

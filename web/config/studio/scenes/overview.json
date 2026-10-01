@@ -1,0 +1,52 @@
+{
+  "id": "overview",
+  "name": { "tr": "GENEL BAKIŞ", "en": "GLOBAL OVERVIEW" },
+  "grid": { "cols": 12, "rows": 8 },
+  "safe_area": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+  "transition": "fade",
+  "regions": [
+    {
+      "id": "metrics",
+      "area": "1 / 1 / 6 / 3",
+      "block": "metric-group",
+      "overflow": "scroll",
+      "priority": 90
+    },
+    {
+      "id": "globe",
+      "area": "1 / 3 / 7 / 9",
+      "block": "globe",
+      "overflow": "hidden",
+      "priority": 100
+    },
+    {
+      "id": "feed",
+      "area": "1 / 9 / 7 / 13",
+      "block": "signal-feed",
+      "overflow": "scroll",
+      "priority": 95
+    },
+    {
+      "id": "strip",
+      "area": "6 / 1 / 9 / 3",
+      "block": "category-strip",
+      "overflow": "rotate",
+      "rotate": { "every": 9, "count": true },
+      "priority": 70
+    },
+    {
+      "id": "activity",
+      "area": "7 / 3 / 9 / 9",
+      "block": "activity-chart",
+      "overflow": "hidden",
+      "priority": 60
+    },
+    {
+      "id": "health",
+      "area": "7 / 9 / 9 / 13",
+      "block": "source-health",
+      "overflow": "scroll",
+      "priority": 65
+    }
+  ]
+}

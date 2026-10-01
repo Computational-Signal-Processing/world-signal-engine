@@ -3,65 +3,47 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <title>World Signal Engine</title>
-  <meta name="description" content="Machine observes the world. Human investigates what changed." />
+  <title>World Signal Engine — Kozmik Sinyal Merkezi</title>
+  <meta name="description" content="Live world observation and broadcast studio." />
   <meta name="color-scheme" content="dark" />
-  <meta name="theme-color" content="#0a0d12" />
   <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/styles/tokens.css" />
+  <link rel="stylesheet" href="/styles/base.css" />
+  <link rel="stylesheet" href="/styles/broadcast.css" />
+  <link rel="stylesheet" href="/styles/blocks.css" />
+  <link rel="stylesheet" href="/styles/transitions.css" />
+  <link rel="stylesheet" href="/styles/broadcast-responsive.css" />
 </head>
 <body>
-  <a class="skip-link" href="#view">Skip to content</a>
+  <a class="skip-link" href="#stage">Skip to the broadcast</a>
 
-  <header class="topbar">
-    <a class="brand" href="#/observatory" aria-label="World Signal Engine home">
-      <span class="brand-mark" aria-hidden="true"></span>
-      <span class="brand-name">WORLD SIGNAL ENGINE</span>
-    </a>
+  <div class="shell">
+    <!-- The only persistent UI: is this live, what is it, which scene, what time. -->
+    <div id="chrome"></div>
 
-    <nav class="nav" aria-label="Primary">
-      <a href="#/observatory" data-nav="observatory">Observatory</a>
-      <a href="#/world" data-nav="world">World</a>
-      <a href="#/sources" data-nav="sources">Sources</a>
-      <a href="#/lenses" data-nav="lenses">Lenses</a>
-      <a href="#/map" data-nav="map">Map</a>
-      <a href="#/system" data-nav="system">System</a>
-    </nav>
-
-    <div class="controls">
-      <label class="field" id="lens-field">
-        <span class="field-label" data-i18n="field.lens">Lens</span>
-        <select id="lens-select" aria-label="Filter the world by lens">
-          <option value="">all</option>
-        </select>
-      </label>
-
-      <button class="btn lang-toggle" id="lang-toggle" type="button"
-              aria-label="Change language" title="Change language">TR</button>
-
-      <label class="field" id="key-field">
-        <span class="field-label" data-i18n="field.key">Key</span>
-        <input id="api-key" type="password" autocomplete="off" spellcheck="false"
-               placeholder="API key" aria-label="API key" />
-      </label>
-
-      <div class="conn" id="conn" role="status" aria-live="polite">
-        <span class="conn-dot" aria-hidden="true"></span>
-        <span class="conn-text" id="conn-text">connecting</span>
+    <!-- Where scenes are composed. Nothing here scrolls the page. -->
+    <main id="stage" class="stage" role="main" aria-label="Broadcast stage">
+      <div id="boot" class="boot">
+        <div class="boot-title">Composing the broadcast</div>
+        <div class="boot-steps">
+          <div class="boot-step" data-state="ok">blocks registered</div>
+          <div class="boot-step" data-state="pending">scene composed</div>
+          <div class="boot-step" data-state="pending">stream connected</div>
+        </div>
       </div>
-    </div>
-  </header>
+      <div id="watermark" class="stage-watermark" hidden>
+        <div class="stage-watermark-text"></div>
+      </div>
+    </main>
 
-  <main id="view" class="view" aria-live="polite"></main>
+    <!-- The running headline strip. Hidden when there is nothing to say. -->
+    <div id="ticker"></div>
+  </div>
 
-  <footer class="foot">
-    <span>Machine observes. Human investigates what changed.</span>
-    <span id="metrics" class="metrics" aria-hidden="true"></span>
-  </footer>
+  <!-- Takeover layer. Empty until the director hands over the screen. -->
+  <div id="overlay"></div>
 
-  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-
-  <script src="/app.js"></script>
+  <script type="module" src="/js/main.js"></script>
 </body>
 </html>

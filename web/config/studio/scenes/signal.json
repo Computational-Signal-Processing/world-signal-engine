@@ -1,0 +1,30 @@
+{
+  "id": "signal",
+  "name": { "tr": "SİNYAL İNCELEME", "en": "SIGNAL INVESTIGATION" },
+  "grid": { "cols": 12, "rows": 8 },
+  "safe_area": { "top": 0, "right": 0, "bottom": 0, "left": 0 },
+  "transition": "slide",
+  "regions": [
+    {
+      "id": "card",
+      "area": "1 / 1 / 5 / 8",
+      "block": "signal-card",
+      "overflow": "scroll",
+      "priority": 100
+    },
+    {
+      "id": "timeline",
+      "area": "1 / 8 / 5 / 13",
+      "block": "timeline",
+      "overflow": "hidden",
+      "priority": 95
+    },
+    {
+      "id": "evidence",
+      "area": "5 / 1 / 9 / 13",
+      "block": "evidence-chain",
+      "overflow": "scroll",
+      "priority": 90
+    }
+  ]
+}

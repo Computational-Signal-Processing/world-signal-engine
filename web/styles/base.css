@@ -1,0 +1,153 @@
+/* Base layer: reset, the root scale, and the typographic roles.
+ *
+ * The studio is a broadcast surface, so the page itself never scrolls. A
+ * scrollbar appearing means a region failed to manage its own overflow, which
+ * is a layout bug — not a feature the viewer should work around. */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  /* The root size tracks the viewport so every `rem` token scales with the
+   * screen. This is what makes a 4K wall a bigger version of the same
+   * composition rather than a different, shrunken one. */
+  font-size: clamp(13px, 0.86vw + 6px, 20px);
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;               /* the studio never scrolls the page */
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  color: var(--text);
+  background: var(--bg-void);
+  /* Depth rather than flatness: a centred glow reads as a field of view, and
+   * the faint grid gives large empty areas a scale to be judged against. */
+  background-image:
+    radial-gradient(ellipse 120% 90% at 50% 42%, rgba(18, 42, 78, 0.55) 0%, rgba(4, 7, 15, 0) 68%),
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 100% 100%, 4rem 4rem, 4rem 4rem;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Nothing in a broadcast surface should be selectable by a stray drag, but
+ * evidence and raw payloads are the exception and opt back in. */
+body { user-select: none; }
+
+h1, h2, h3, h4, p, dl, dd, dt, figure { margin: 0; }
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+/* Focus must stay visible: the studio is fully keyboard operable (scenes 1-9,
+ * control room K/Esc), so the ring is part of the design, not an afterthought. */
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+/* --- typographic roles -------------------------------------------------
+ *
+ * Six roles, each used for one job. A value that ticks gets `.num`; a label
+ * that names a field gets `.label`; anything the viewer reads as prose gets
+ * body. Keeping these named stops blocks from inventing their own sizes. */
+
+.display {
+  font-size: var(--fs-display);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--ls-display);
+  font-weight: var(--fw-light);
+}
+
+.headline {
+  font-size: var(--fs-headline);
+  line-height: var(--lh-tight);
+  letter-spacing: -0.01em;
+  font-weight: var(--fw-medium);
+}
+
+.title {
+  font-size: var(--fs-title);
+  line-height: 1.25;
+  font-weight: var(--fw-medium);
+}
+
+.label {
+  font-size: var(--fs-label);
+  letter-spacing: var(--ls-label);
+  text-transform: uppercase;
+  font-weight: var(--fw-medium);
+  color: var(--text-faint);
+}
+
+/* Live numbers: tabular so digits do not shift the layout as they change. */
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.mono { font-family: var(--font-mono); }
+
+.dim { color: var(--text-dim); }
+.faint { color: var(--text-faint); }
+
+/* Placeholder for a value the engine does not measure. Never a zero, never a
+ * guess: the em dash is the studio's word for "not measured". */
+.void {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+/* --- accessibility ---------------------------------------------------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  top: -100%;
+  left: var(--sp-4);
+  z-index: 100;
+  padding: var(--sp-2) var(--sp-4);
+  background: var(--panel-solid);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+}
+.skip-link:focus { top: var(--sp-2); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
