@@ -219,6 +219,29 @@ Rules that hold across the client:
 - Every number on the board is a real measurement. Do not add a synthetic
   "index" or "risk score" to fill a slot.
 
+### Studio composition
+
+- **A scene has a composition per format.** `loadScene(id, format)` prefers
+  `scenes/<id>.<format>.json` and falls back to the base file. A vertical
+  display is not a shrunken horizontal one: when a scene has no
+  `*.portrait.json`, `portraitise()` re-stacks its regions in priority order
+  down one column instead of showing a letterboxed desktop. Author a portrait
+  file only when the derived stacking genuinely does not hold (see
+  `overview.portrait.json`). The derived scene is marked `derived: "portrait"`.
+- **Region liveness is per region, not per scene.** `ctx.stale()` reads a token
+  owned by the region. Do not reintroduce a scene-wide counter: recomposing one
+  region would mark every other region's in-flight read stale, and a slow block
+  (the globe reading its series) stayed empty forever. `disposeRegion` flips the
+  token before unmounting.
+- **A block reads through `ctx`, never the network.** `ctx.data(domain)`,
+  `ctx.load.*` and `ctx.on(topic)` are the whole surface. A block that calls
+  `fetch` is a bug; the studio suite asserts no file under `js/blocks/` does.
+- **The globe is oriented to its data.** It shows one hemisphere, so a fixed
+  centre (Greenwich) hides readings that are really there. `centerMeridian()`
+  turns the view to the mean longitude of the points on screen, and points that
+  still fall behind the horizon are counted in the caption (`N on the far side`)
+  rather than dropped. Coincident readings (same lat/lon to 3 dp) are drawn once.
+
 ## Replay and backtesting (Phase 10)
 
 Two run modes: `LIVE` and `REPLAY`. Replay is how the detector is measured, not

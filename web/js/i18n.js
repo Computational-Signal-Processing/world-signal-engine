@@ -72,6 +72,7 @@ const I18N = {
       off: "off",
       neverRan: "never ran",
       stale: "data is not current",
+      farSide: "on the far side",
       loadFailed: "source error",
     },
     reason: {
@@ -178,6 +179,7 @@ const I18N = {
       off: "kapalı",
       neverRan: "hiç çalışmadı",
       stale: "veri güncel değil",
+      farSide: "kürenin arka yüzünde",
       loadFailed: "kaynak hatası",
     },
     reason: {

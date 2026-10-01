@@ -13,7 +13,7 @@ import { SceneManager } from "./scene.js";
 import { transition } from "./transition.js";
 import { Director } from "./director.js";
 import { grade } from "./priority.js";
-import { loadScene, loadPolicy } from "../scenes/load.js";
+import { loadScene, loadPolicy, formatFor } from "../scenes/load.js";
 import { t, sceneLabel } from "../i18n.js";
 
 export class Studio {
@@ -65,7 +65,34 @@ export class Studio {
       // signal again rather than a stale pick from before.
       this.store.clearSelection();
     });
+    this.watchFormat();
     return this.cutTo("overview", { reason: "boot", transition: "cut" });
+  }
+
+  /**
+   * Re-cut the current scene when the display's aspect ratio crosses a boundary.
+   *
+   * A vertical wall is not a small horizontal one, so it gets a different
+   * composition rather than the same one scaled. The scene files carry that
+   * arrangement and this swaps between them; the swap only happens when the
+   * format actually changes, so ordinary window resizing stays cheap.
+   */
+  watchFormat() {
+    if (typeof window === "undefined" || !window.addEventListener) return;
+    this.format = formatFor(window);
+    let timer = null;
+    const onResize = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const next = formatFor(window);
+        if (next === this.format) return;
+        this.format = next;
+        const id = this.currentScene;
+        if (id) this.cutTo(id, { reason: `format ${next}` });
+      }, 180);
+    };
+    window.addEventListener("resize", onResize);
+    this.unsubscribes.push(() => window.removeEventListener("resize", onResize));
   }
 
   /** Connect the studio to the store's events. */
@@ -117,13 +144,15 @@ export class Studio {
    */
   async cutTo(id, { reason = "", transition: kind = null } = {}) {
     if (!id) return false;
-    if (this.currentScene === id) return true;
+    const format = formatFor(window);
+    const key = `${id}@${format}`;
+    if (this.currentScene === id && this.composedKey === key) return true;
 
-    let scene = this.sceneCache.get(id);
+    let scene = this.sceneCache.get(key);
     if (!scene) {
       try {
-        scene = await loadScene(id);
-        this.sceneCache.set(id, scene);
+        scene = await loadScene(id, format);
+        this.sceneCache.set(key, scene);
       } catch (err) {
         this.recordError(`scene "${id}": ${err.message}`);
         return false;
@@ -140,6 +169,7 @@ export class Studio {
 
     if (!accepted) return false;
     this.currentScene = id;
+    this.composedKey = key;
     this.chrome.setScene(sceneLabel(id));
     this.store.bus.emit("scene:changed", { id, previous, reason });
     this.note(`scene ${id}${reason ? ` (${reason})` : ""}`);

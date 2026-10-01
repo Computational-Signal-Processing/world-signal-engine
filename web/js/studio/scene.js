@@ -30,7 +30,6 @@ export class SceneManager {
     this.scene = null;
     this.regions = new Map();   // region id -> { definition, element, instance }
     this.unsubscribes = [];
-    this.epoch = 0;
     this.history = [];          // scene ids, for returning after a takeover
 
     // A block that draws to a measured box has to be told when that box
@@ -104,8 +103,6 @@ export class SceneManager {
 
     const previous = this.regions;
     const next = new Map();
-    this.epoch += 1;
-    const epoch = this.epoch;
 
     for (const definition of scene.regions) {
       const existing = previous.get(definition.id);
@@ -120,7 +117,7 @@ export class SceneManager {
           this.disposeRegion(existing);
           previous.delete(definition.id);
         }
-        next.set(definition.id, this.createRegion(definition, epoch));
+        next.set(definition.id, this.createRegion(definition));
       }
     }
 
@@ -136,7 +133,7 @@ export class SceneManager {
     return true;
   }
 
-  createRegion(definition, epoch) {
+  createRegion(definition) {
     const element = document.createElement("div");
     element.className = "region";
     applyRegionFrame(element, definition);
@@ -145,15 +142,22 @@ export class SceneManager {
     // exactly what it opened. A screen left on for weeks recomposes often, and
     // a shared list would keep every dead listener alive.
     const bucket = [];
+    // Liveness is per region, not per scene. A region whose element survives a
+    // recomposition is still the same region on screen, so an async read it
+    // started before the recomposition is still valid and must not be dropped.
+    // A scene-wide counter made every region's in-flight read "stale" the
+    // moment any region changed, which left a slow block — the globe reading
+    // its series — permanently empty.
+    const token = { alive: true };
     const instance = hasBlock(definition.block)
-      ? createBlock(definition.block, element, this.contextFor(definition, epoch, bucket))
+      ? createBlock(definition.block, element, this.contextFor(definition, token, bucket))
       : createMissingBlock(definition.block, element);
 
     instance.mount();
     this.root.append(element);
     // A region that arrives after the watcher was installed still gets watched.
     if (this.observer) this.observer.observe(element);
-    return { definition, element, instance, bucket };
+    return { definition, element, instance, bucket, token };
   }
 
   /**
@@ -163,11 +167,12 @@ export class SceneManager {
    * itself. Keeping the surface this small is what stops blocks coupling to
    * each other's internals.
    */
-  contextFor(definition, epoch, bucket) {
+  contextFor(definition, token, bucket) {
     const store = this.store;
     const hooks = this.hooks;
     const region = this.regions.get(definition.id);
     const listeners = bucket ?? region?.bucket ?? [];
+    const live = token ?? region?.token;
     return {
       region: definition,
       theme: this.theme,
@@ -204,14 +209,16 @@ export class SceneManager {
       /** Update the current selection, e.g. from a clicked evidence row. */
       select: (patch) => store.select(patch),
       bus: store.bus,
-      /** True once the region has been replaced, so a late async reply is dropped. */
-      stale: () => epoch !== this.epoch,
-      epoch,
+      /** True once this region has been replaced, so a late async reply is dropped. */
+      stale: () => !live?.alive,
     };
   }
 
   /** Tear a region down: block first, then the listeners it registered. */
   disposeRegion(region) {
+    // Invalidate first: a block that had an async read in flight will drop its
+    // reply rather than write into an element that is being removed.
+    if (region.token) region.token.alive = false;
     region.instance.unmount();
     this.observer?.unobserve(region.element);
     this.sizes?.delete(region.element);
@@ -222,9 +229,8 @@ export class SceneManager {
 
   /** Push new data into every region. Called on each store change. */
   update() {
-    const epoch = this.epoch;
     for (const [, region] of this.regions) {
-      region.instance.update(this.contextFor(region.definition, epoch));
+      region.instance.update(this.contextFor(region.definition, region.token));
     }
   }
 
@@ -232,14 +238,13 @@ export class SceneManager {
   resizeRegion(id) {
     const region = this.regions.get(id);
     if (!region) return;
-    region.instance.resize(this.contextFor(region.definition, this.epoch));
+    region.instance.resize(this.contextFor(region.definition, region.token));
   }
 
   /** Tell every region its box changed. */
   resize() {
-    const epoch = this.epoch;
     for (const [, region] of this.regions) {
-      region.instance.resize(this.contextFor(region.definition, epoch));
+      region.instance.resize(this.contextFor(region.definition, region.token));
     }
   }
 

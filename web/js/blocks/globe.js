@@ -18,7 +18,12 @@ import { el, replace, svg } from "../dom.js";
 import { t } from "../i18n.js";
 import { seriesLabel } from "../fmt.js";
 
-const VIEW = { width: 620, height: 460, radius: 186 };
+/* A square viewBox, so the sphere fills whichever dimension of its region is
+ * smaller. A rectangular one would letterbox the globe into the middle of a
+ * wide region — the disc would sit in a pool of dead space, which reads as a
+ * graphic pasted onto the screen rather than the instrument the composition is
+ * built around. */
+const VIEW = { width: 1000, height: 1000, radius: 470 };
 
 export const globeBlock = {
   mount(host, ctx) {
@@ -42,8 +47,9 @@ export const globeBlock = {
       replace(host, [emptyNode(data, series.length)]);
       return;
     }
-    replace(host, [buildFrame(), caption(points, series.length)]);
-    draw(host.querySelector("svg"), points);
+    replace(host, [buildFrame()]);
+    const hidden = draw(host.querySelector("svg"), points);
+    host.append(caption(points, series.length, hidden));
   },
 
   unmount(host) { host.replaceChildren(); },
@@ -121,7 +127,29 @@ function buildFrame() {
     preserveAspectRatio: "xMidYMid meet",
     role: "img",
   });
-  return el("div", { class: "globe-frame" }, [surface, el("div", { class: "globe-caption" })]);
+  return el("div", { class: "globe-frame" }, [surface]);
+}
+
+/**
+ * The meridian to face.
+ *
+ * An orthographic globe shows one hemisphere, so a fixed centre can hide the
+ * very readings the screen exists to show. The view is turned to the mean
+ * longitude of what is actually on it, which keeps the visible points on the
+ * disc and is itself an honest choice: the globe is oriented to its data, not
+ * to a convention. Points that still fall behind the horizon are reported in
+ * the caption rather than silently dropped.
+ */
+function centerMeridian(points) {
+  if (!points.length) return 0;
+  let x = 0;
+  let y = 0;
+  for (const point of points) {
+    const lambda = (point.longitude * Math.PI) / 180;
+    x += Math.cos(lambda);
+    y += Math.sin(lambda);
+  }
+  return (Math.atan2(y, x) * 180) / Math.PI;
 }
 
 /** Draw the sphere and its points. Redrawn wholesale: the point count is small. */
@@ -130,6 +158,7 @@ function draw(surface, points) {
   const { width, height, radius } = VIEW;
   const cx = width / 2;
   const cy = height / 2;
+  const lon0 = centerMeridian(points);
 
   surface.append(svg("circle", { cx, cy, r: radius, class: "globe-disc" }));
   surface.append(svg("circle", { cx, cy, r: radius, class: "globe-limb" }));
@@ -142,7 +171,7 @@ function draw(surface, points) {
   for (let lon = -180; lon < 180; lon += 30) {
     const path = [];
     for (let lat = -90; lat <= 90; lat += 5) {
-      const [px, py] = ortho(lat, lon, cx, cy, radius);
+      const [px, py] = ortho(lat, lon, cx, cy, radius, lon0);
       if (px !== null) path.push(`${px},${py}`);
     }
     if (path.length > 1) surface.append(svg("polyline", { points: path.join(" "), class: "globe-grid" }));
@@ -150,29 +179,50 @@ function draw(surface, points) {
 
   // Newest points drawn last, so at a shared place the current reading is on top.
   const ordered = [...points].sort((a, b) => String(a.observed_at).localeCompare(String(b.observed_at)));
+  let hidden = 0;
   for (const point of ordered) {
-    const [px, py] = ortho(point.latitude, point.longitude, cx, cy, radius);
-    if (px === null) continue;   // far side of the globe
-    const dot = svg("circle", { cx: px, cy: py, r: 4, class: "globe-dot", fill: "var(--cyan)" });
+    const [px, py] = ortho(point.latitude, point.longitude, cx, cy, radius, lon0);
+    if (px === null) { hidden += 1; continue; }   // far side of the globe
+    const mark = svg("g", { class: "globe-mark" });
+    // The reading is a measurement, so it is drawn as an instrument would draw
+    // it: a ring around the place, not a decorative dot.
+    mark.append(svg("circle", { cx: px, cy: py, r: 26, class: "globe-ring" }));
+    mark.append(svg("circle", { cx: px, cy: py, r: 13, class: "globe-dot" }));
     const title = svg("title");
     title.textContent = `${seriesLabel(point.series_key)} — ${point.metric} ${point.value}${point.unit ? ` ${point.unit}` : ""}`;
-    dot.append(title);
-    surface.append(dot);
+    mark.append(title);
+    surface.append(mark);
   }
+  return hidden;
 }
 
-function caption(points, seriesCount) {
-  return el("div", { class: "globe-caption" }, [
+/**
+ * The caption under the globe.
+ *
+ * It states what was drawn and, when the view had to turn away from a point,
+ * how many readings sit on the far side. A hemisphere can only show half the
+ * world; the number drawn is the number drawn, and the rest is named rather
+ * than dropped.
+ */
+function caption(points, seriesCount, hidden = 0) {
+  const rows = [
     el("span", { class: "globe-count num", text: `${points.length}` }),
     el("span", { class: "faint", text: t().field.observations }),
     el("span", { class: "globe-note faint", text: `${seriesCount} ${t().field.sources}` }),
-  ]);
+  ];
+  if (hidden) rows.push(el("span", { class: "globe-far faint", text: `${hidden} ${t().state.farSide}` }));
+  return el("div", { class: "globe-caption" }, rows);
 }
 
-/** Orthographic projection; `null` when the point faces away from the viewer. */
-export function ortho(lat, lon, cx, cy, radius) {
+/** Orthographic projection; `null` when the point faces away from the viewer.
+ *
+ * `lon0` is the meridian at the centre of the disc. A globe fixed on Greenwich
+ * would put most of the world behind the horizon — at the time of writing every
+ * reading the engine held was on the far side — so the view is turned to the
+ * data instead. */
+export function ortho(lat, lon, cx, cy, radius, lon0 = 0) {
   const phi = (lat * Math.PI) / 180;
-  const lambda = (lon * Math.PI) / 180;
+  const lambda = ((lon - lon0) * Math.PI) / 180;
   const cosC = Math.cos(phi) * Math.cos(lambda);
   if (cosC < 0) return [null, null];
   return [cx + radius * Math.cos(phi) * Math.sin(lambda), cy - radius * Math.sin(phi)];
