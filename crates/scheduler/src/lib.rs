@@ -144,14 +144,73 @@ impl ScheduleState {
     }
 
     /// Whether this collector should run at `now`.
+    ///
+    /// `Daily { hour_utc }` is a *calendar* schedule, not a 24-hour period: it
+    /// is due at the first scheduler pass at or after `hour_utc` each UTC day.
+    /// Converting it to `Interval { 86_400 }` would make the source run 24h
+    /// after process launch, which is not what the catalog says and is not what
+    /// a source whose data is published at a fixed UTC time wants.
     pub fn is_due(&self, now: DateTime<Utc>) -> bool {
-        match self.schedule.poll_seconds() {
+        match &self.schedule {
             // Manual collectors only run when explicitly triggered.
-            None => false,
-            Some(interval) => match self.last_run {
-                None => true,
-                Some(last) => (now - last).num_seconds() >= interval as i64,
+            Schedule::Manual => false,
+            Schedule::Daily { hour_utc } => {
+                let hour = u32::from(*hour_utc).min(23);
+                let Some(today_at) = now
+                    .date_naive()
+                    .and_hms_opt(hour, 0, 0)
+                    .map(|n| n.and_utc())
+                else {
+                    return false;
+                };
+                match self.last_run {
+                    // Never run: due once today's target hour has passed.
+                    None => now >= today_at,
+                    // Already ran today: not due again until tomorrow.
+                    Some(last) => {
+                        last < today_at && now >= today_at && last.date_naive() < now.date_naive()
+                    }
+                }
+            }
+            _ => match self.schedule.poll_seconds() {
+                None => false,
+                Some(interval) => match self.last_run {
+                    None => true,
+                    Some(last) => (now - last).num_seconds() >= interval as i64,
+                },
             },
+        }
+    }
+
+    /// When this collector is next due at or after `now`, if it can be known
+    /// from the schedule alone.
+    ///
+    /// Interval schedules depend on the last run, which the caller knows better
+    /// than this struct; `Daily` is knowable here and that is the case worth
+    /// exposing, because it is the one the UI would otherwise get wrong.
+    pub fn next_due(&self, now: DateTime<Utc>) -> Option<DateTime<Utc>> {
+        match &self.schedule {
+            Schedule::Daily { hour_utc } => {
+                let hour = u32::from(*hour_utc).min(23);
+                let today_at = now
+                    .date_naive()
+                    .and_hms_opt(hour, 0, 0)
+                    .map(|n| n.and_utc())?;
+                // Ran today already: next occurrence is tomorrow's hour.
+                if self
+                    .last_run
+                    .is_some_and(|last| last.date_naive() >= now.date_naive())
+                {
+                    Some(today_at + Duration::days(1))
+                } else {
+                    Some(today_at)
+                }
+            }
+            _ => self.schedule.poll_seconds().map(|seconds| {
+                self.last_run
+                    .map(|last| last + Duration::seconds(seconds as i64))
+                    .unwrap_or(now)
+            }),
         }
     }
 
@@ -242,6 +301,44 @@ mod tests {
     fn manual_collectors_are_never_due() {
         let s = ScheduleState::new(SourceId::new("s"), Schedule::Manual);
         assert!(!s.is_due(at(0)));
+    }
+
+    #[test]
+    fn daily_schedules_align_to_the_declared_utc_hour() {
+        // 06:00Z. The point of the fix: a source that says 06:00Z must not run
+        // 24h after process launch.
+        let mut s = ScheduleState::new(SourceId::new("s"), Schedule::Daily { hour_utc: 6 });
+        let six = DateTime::parse_from_rfc3339("2023-11-14T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let before = six - Duration::minutes(1);
+        let after = six + Duration::seconds(30);
+
+        assert!(!s.is_due(before));
+        assert!(s.is_due(after));
+        assert_eq!(s.next_due(before), Some(six));
+
+        // Ran at the hour: not due again today, due the next day.
+        s.record_run(after, true);
+        assert!(!s.is_due(after));
+        assert!(!s.is_due(six + Duration::hours(17)));
+        let next_day = six + Duration::days(1);
+        assert!(s.is_due(next_day));
+        assert_eq!(s.next_due(after), Some(next_day));
+    }
+
+    #[test]
+    fn a_daily_source_that_never_ran_waits_for_its_hour() {
+        let s = ScheduleState::new(SourceId::new("s"), Schedule::Daily { hour_utc: 6 });
+        let early = DateTime::parse_from_rfc3339("2023-11-14T03:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(!s.is_due(early), "must not fire before 06:00Z");
+    }
+
+    #[test]
+    fn daily_reports_a_24h_period_for_period_only_consumers() {
+        assert_eq!(Schedule::Daily { hour_utc: 6 }.poll_seconds(), Some(86_400));
     }
 
     #[test]

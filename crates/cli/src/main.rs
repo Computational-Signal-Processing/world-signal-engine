@@ -65,13 +65,20 @@ enum Command {
         /// Seconds between synthetic collection cycles.
         #[arg(long, default_value_t = 1)]
         interval_seconds: u64,
-        /// Also run the real source collectors, continuously, while serving.
+        /// Run the real source collectors continuously while serving.
         ///
-        /// This is what makes the served instance show the real world: the
-        /// API and UI are then backed by live USGS/NASA/GDELT/HN/GitHub data,
-        /// with the synthetic world (if enabled) running alongside it.
-        #[arg(long)]
+        /// Accepted for compatibility only: watching the world is now the
+        /// default, so this flag no longer changes anything. Use `--no-collect`
+        /// to turn monitoring off.
+        #[arg(long, hide = true)]
         collect: bool,
+        /// Serve without monitoring: a static snapshot for UI work or fixtures.
+        ///
+        /// The alternative to the default is explicit, and the UI then says
+        /// monitoring is off rather than showing a static page as if it were
+        /// live. Nothing is collected and no scheduler loop starts.
+        #[arg(long)]
+        no_collect: bool,
         /// Override every interval source's cadence, in seconds.
         ///
         /// For live acceptance testing only: a 1-hour source can then be
@@ -285,18 +292,23 @@ async fn main() -> Result<()> {
             live,
             interval_seconds,
             collect,
+            no_collect,
             cadence_override,
             data_dir,
             rehydrate_history,
             retention_days,
             raw_max_bytes,
         } => {
+            // Watching the world is the default. `--no-collect` opts out;
+            // the deprecated `--collect` is accepted and implies nothing
+            // because it is already on.
+            let _ = collect;
             serve(ServeOptions {
                 port,
                 synthetic,
                 live,
                 interval_seconds,
-                collect,
+                collect: !no_collect,
                 cadence_override,
                 data_dir,
                 rehydrate_history,
@@ -769,9 +781,10 @@ fn schedule_for(source: &Source, default_event_poll: u64) -> wse_collector::Sche
         wse_model::Cadence::Event => wse_collector::Schedule::Event {
             poll_seconds: default_event_poll,
         },
-        wse_model::Cadence::Daily { hour_utc: _ } => {
-            wse_collector::Schedule::Interval { seconds: 86_400 }
-        }
+        // Daily is a calendar schedule, not a 24-hour period. Keeping the hour
+        // is what makes the catalog describe reality: a source that publishes
+        // at 06:00Z runs at 06:00Z, not 24h after process launch.
+        wse_model::Cadence::Daily { hour_utc } => wse_collector::Schedule::Daily { hour_utc },
         wse_model::Cadence::Irregular => wse_collector::Schedule::Manual,
     }
 }
@@ -974,12 +987,15 @@ async fn run_served<S: wse_storage::Store + 'static>(
                     .unwrap_or_else(|| Source::new(source_id.clone(), "unknown", "unknown")),
                 DEFAULT_EVENT_POLL_SECONDS,
             );
-            if let (Some(seconds), wse_collector::Schedule::Interval { seconds: s }) =
-                (cadence_override, &mut schedule)
-            {
-                // A test/demo override: lets a 1-hour source be exercised inside
-                // a 15-minute window without pretending the cadence changed.
-                *s = seconds;
+            if let Some(seconds) = cadence_override {
+                // A test/demo override: lets a daily or 1-hour source be
+                // exercised inside a short window without pretending the
+                // catalog changed. It applies to every periodic schedule,
+                // including an aligned daily one.
+                schedule = match schedule {
+                    wse_collector::Schedule::Manual => wse_collector::Schedule::Manual,
+                    _ => wse_collector::Schedule::Interval { seconds },
+                };
             }
             cadences.insert(source_id.clone(), schedule.poll_seconds());
             scheduler.register(source_id, schedule);
@@ -999,6 +1015,17 @@ async fn run_served<S: wse_storage::Store + 'static>(
                     },
                 );
             }
+            // Mark the loop as running *before* the first pass, so the UI's
+            // "WORLD WATCH" badge is true from the first frame rather than
+            // after the first collection.
+            engine.runtime().set_collector_active(true);
+            engine.runtime().record(Activity::new(
+                ActivityKind::Started,
+                format!(
+                    "monitoring started — {} collectors on schedule",
+                    cadences.len()
+                ),
+            ));
         }
 
         let driver = state.clone();
@@ -1061,18 +1088,16 @@ async fn run_served<S: wse_storage::Store + 'static>(
                     scheduler.record_run(&source_id, Utc::now(), ok);
 
                     // Reflect the run in the Control screen's schedule view.
+                    // `next_run` comes from the schedule itself, so an aligned
+                    // daily source shows tomorrow's 06:00Z rather than "last run
+                    // + 24h" — the difference the catalog bug hid.
                     let view = {
                         let state = scheduler.state(&source_id);
                         ScheduleView {
                             cadence_seconds: cadences.get(&source_id).copied().flatten(),
                             last_run: state.and_then(|s| s.last_run),
                             last_success: state.and_then(|s| s.last_success),
-                            next_run: state
-                                .and_then(|s| s.last_run)
-                                .zip(cadences.get(&source_id).copied().flatten())
-                                .map(|(last, seconds)| {
-                                    last + chrono::Duration::seconds(seconds as i64)
-                                }),
+                            next_run: state.and_then(|s| s.next_due(Utc::now())),
                             consecutive_failures: state
                                 .map(|s| s.consecutive_failures)
                                 .unwrap_or(0),
@@ -1143,6 +1168,19 @@ mod tests {
     fn interval_cadence_maps_to_an_interval_schedule() {
         let schedule = schedule_for(&source_with(Cadence::Interval { seconds: 900 }), 60);
         assert_eq!(schedule, wse_collector::Schedule::Interval { seconds: 900 });
+    }
+
+    #[test]
+    fn daily_cadence_keeps_its_utc_hour() {
+        // The bug this fixes: `daily 06:00Z` used to become a generic 24h
+        // interval, so the source ran at launch time instead of 06:00Z.
+        let schedule = schedule_for(&source_with(Cadence::Daily { hour_utc: 6 }), 60);
+        assert_eq!(schedule, wse_collector::Schedule::Daily { hour_utc: 6 });
+        assert_ne!(
+            schedule,
+            wse_collector::Schedule::Interval { seconds: 86_400 },
+            "daily must not be flattened to an interval"
+        );
     }
 
     #[test]

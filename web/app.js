@@ -113,6 +113,16 @@ function fmtLag(ms) {
   return `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
+/** A coarse "how long ago", for the freshness line. */
+function fmtAgo(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h`;
+  return `${Math.floor(s / 86400)}d`;
+}
+
 function fmtBytes(n) {
   if (n === null || n === undefined) return "—";
   const units = ["B", "KB", "MB", "GB", "TB"];
@@ -270,6 +280,18 @@ const I18N = {
       openSystem: "Open system status",
       sourcesHealthy: (up, total) => `${up}/${total} sources healthy`,
       observed: "observed",
+      watching: "watching the world",
+      paused: "monitoring paused",
+      notWatching: "not watching",
+      watchingHint: (age) => `new signals appear here on their own · last data ${age} ago`,
+      pausedHint: "collection is paused — the feed will not change until it resumes",
+      notWatchingHint: "no collection loop is running, so this is a static snapshot, not a live world",
+      noDataYet: "no data collected yet",
+      stale: (age) => `no fresh data for ${age}`,
+      newBanner: (n) => `${n} new signal${n === 1 ? "" : "s"} since you started watching`,
+      newBannerAction: "show",
+      delivery: (ms) => `delivered in ${ms} ms`,
+      streamDown: "live updates are not connected",
     },
     signal: {
       why: "Why this signal exists",
@@ -299,7 +321,18 @@ const I18N = {
       empty: "No active signal currently carries a location. Location appears when a source reports it — the engine will not invent one.",
       count: (n) => `${n} located signal${n === 1 ? "" : "s"}`,
     },
-    system: { title: "System" },
+    system: {
+      title: "System",
+      collectionOn: "monitoring on",
+      collectionPaused: "monitoring paused",
+      noLoop: "no collection loop",
+      latency: "Latency (measured, not estimated)",
+      lagObservation: "source lag",
+      lagCollector: "collector fetch",
+      lagDetection: "detection",
+      lagNewest: "newest signal age",
+      lagHint: "Source lag is data freshness, not a defect: a daily feed arrives all at once.",
+    },
   },
   tr: {
     lang: "tr",
@@ -336,6 +369,18 @@ const I18N = {
       openSystem: "Sistem durumunu aç",
       sourcesHealthy: (up, total) => `${total} kaynağın ${up} tanesi sağlıklı`,
       observed: "gözlem",
+      watching: "dünya izleniyor",
+      paused: "izleme duraklatıldı",
+      notWatching: "izlenmiyor",
+      watchingHint: (age) => `yeni sinyaller burada kendiliğinden görünür · son veri ${age} önce`,
+      pausedHint: "toplama duraklatıldı — yeniden başlatılana kadar akış değişmez",
+      notWatchingHint: "çalışan bir toplama döngüsü yok; bu canlı bir dünya değil, sabit bir görüntü",
+      noDataYet: "henüz veri toplanmadı",
+      stale: (age) => `${age} boyunca taze veri yok`,
+      newBanner: (n) => `izlemeye başladığınızdan beri ${n} yeni sinyal`,
+      newBannerAction: "göster",
+      delivery: (ms) => `${ms} ms'de ulaştı`,
+      streamDown: "canlı güncellemeler bağlı değil",
     },
     signal: {
       why: "Bu sinyal neden var",
@@ -365,7 +410,18 @@ const I18N = {
       empty: "Şu anda konum taşıyan aktif sinyal yok. Konum, bir kaynak bildirdiğinde görünür — motor konum uydurmaz.",
       count: (n) => `${n} konumlu sinyal`,
     },
-    system: { title: "Sistem" },
+    system: {
+      title: "Sistem",
+      collectionOn: "izleme açık",
+      collectionPaused: "izleme duraklatıldı",
+      noLoop: "toplama döngüsü yok",
+      latency: "Gecikme (tahmin değil, ölçüm)",
+      lagObservation: "kaynak gecikmesi",
+      lagCollector: "toplayıcı çekme",
+      lagDetection: "tespit",
+      lagNewest: "en yeni sinyal yaşı",
+      lagHint: "Kaynak gecikmesi veri tazeliğidir, kusur değil: günlük besleme bir kerede gelir.",
+    },
   },
 };
 
@@ -553,7 +609,8 @@ function errorView(err) {
 
 /* ---------------------------------------------------------------- WORLD -- */
 
-async function worldView() {
+async function worldView(options = {}) {
+  const remount = options.remount !== false;
   const lens = activeLens();
   const world = await api("/world").catch(() => null);
   const query = lens ? `&lens=${encodeURIComponent(lens)}` : "";
@@ -565,9 +622,24 @@ async function worldView() {
     ? t().world.subtitleLens(lensName(lens, lenses))
     : t().world.subtitle;
 
+  // Count signals that appeared since this screen started watching, before we
+  // replace the known set. A change is never silent: the banner says how many.
+  // The full feed is used, not just the NOW strip, so nothing new is missed.
+  if (worldLive) {
+    for (const signal of signals) {
+      if (!worldLive.knownSignalIds.has(signal.id)) worldLive.newCount += 1;
+      worldLive.knownSignalIds.add(signal.id);
+    }
+  }
+
+  worldLastSummary = world;
+  worldKnownSignalIds = signals.map((s) => s.id);
+
   if (signals.length === 0) {
+    // An empty world is only "quiet" if we are actually watching. Say which.
     render("world", t().world.title, subtitle,
       el("div", { class: "empty" }, [
+        el("div", { class: "world-notice", id: "world-notice" }),
         el("h3", { text: t().world.emptyTitle }),
         el("p", { text: lens ? t().world.emptyLens(lensName(lens, lenses)) : t().world.empty }),
         el("div", { class: "link-row", style: "justify-content:center" }, [
@@ -575,10 +647,19 @@ async function worldView() {
         ]),
       ])
     );
+    paintWorldNotice();
+    startActivityStream();
+    if (remount) startWorldStream();
     return;
   }
 
   const nodes = [];
+
+  // The monitoring banner: whether the world is being watched, and how fresh
+  // the data is. Rendered from the summary and updated in place, so it can
+  // never claim "live" while nothing is running.
+  nodes.push(el("div", { class: "world-notice", id: "world-notice" }));
+  paintWorldNotice();
 
   // The NOW strip: what is changing, in one glance, before the long feed.
   // It only appears on the unfiltered view — a lens is already a filter.
@@ -611,13 +692,7 @@ async function worldView() {
   // the sources behind it are healthy. This is the answer to "is the engine
   // seeing anything, and can I trust it?" before reading a single card.
   if (world) {
-    nodes.push(el("div", { class: "world-stats" }, [
-      statChip(String(world.active_signals), t().world.title.toLowerCase(), null),
-      ...world.by_type.filter((x) => x.count > 0).map((x) =>
-        statChip(String(x.count), typeLabel(x.type), x.type)
-      ),
-      el("span", { class: "world-health", text: t().world.sourcesHealthy(world.sources_healthy, world.sources_total) }),
-    ]));
+    nodes.push(el("div", { class: "world-stats", id: "world-stats" }, worldStatChips(world)));
   }
 
   const cards = signals.map((signal) =>
@@ -651,8 +726,77 @@ async function worldView() {
     ])
   );
 
-  nodes.push(el("div", { class: "feed" }, cards));
+  nodes.push(el("div", { class: "feed", id: "world-feed" }, cards));
   render("world", t().world.title, subtitle, nodes);
+
+  // The world screen is live: it opens the event stream and re-fetches when a
+  // signal forms, so a change appears on its own.
+  startActivityStream();
+  if (remount) startWorldStream();
+}
+
+/** The header chips for a world summary, reused on live refresh. */
+function worldStatChips(world) {
+  return [
+    statChip(String(world.active_signals), t().world.title.toLowerCase(), null),
+    ...(world.by_type || []).filter((x) => x.count > 0).map((x) =>
+      statChip(String(x.count), typeLabel(x.type), x.type)
+    ),
+    el("span", {
+      class: "world-health",
+      text: t().world.sourcesHealthy(world.sources_healthy, world.sources_total),
+    }),
+  ];
+}
+
+/** Paint the monitoring banner from the last summary. */
+function paintWorldNotice() {
+  const notice = document.getElementById("world-notice");
+  if (!notice) return;
+  const world = worldLastSummary;
+  const nodes = [];
+
+  if (world && world.monitoring) {
+    nodes.push(el("span", { class: "watch-dot live", "aria-hidden": "true" }));
+    nodes.push(el("span", { class: "watch-state", text: t().world.watching }));
+    const age = world.last_collection_at ? fmtAgo(world.data_age_seconds) : t().world.noDataYet;
+    nodes.push(el("span", { class: "watch-hint", text: t().world.watchingHint(age) }));
+  } else if (world && world.collector_active && !world.collection_enabled) {
+    nodes.push(el("span", { class: "watch-dot paused", "aria-hidden": "true" }));
+    nodes.push(el("span", { class: "watch-state", text: t().world.paused }));
+    nodes.push(el("span", { class: "watch-hint", text: t().world.pausedHint }));
+  } else {
+    // Either no loop was ever started, or we could not reach the engine.
+    nodes.push(el("span", { class: "watch-dot off", "aria-hidden": "true" }));
+    nodes.push(el("span", { class: "watch-state", text: t().world.notWatching }));
+    nodes.push(el("span", { class: "watch-hint", text: t().world.notWatchingHint }));
+  }
+
+  if (connEl && connEl.dataset.state !== "live") {
+    nodes.push(el("span", { class: "watch-warn", text: t().world.streamDown }));
+  }
+
+  // A change is never silent: if signals arrived since this screen opened, say
+  // so, and let the reader jump to the top of the feed.
+  if (worldLive && worldLive.newCount > 0) {
+    nodes.push(el("button", {
+      class: "new-banner",
+      type: "button",
+      text: `${t().world.newBanner(worldLive.newCount)} · ${t().world.newBannerAction}`,
+      onclick: () => {
+        if (worldLive) worldLive.newCount = 0;
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        paintWorldNotice();
+      },
+    }));
+  }
+
+  notice.replaceChildren(...nodes);
+}
+
+/** Re-render the banner in place, for staleness, without a network call. */
+function updateWorldHeader() {
+  paintWorldNotice();
 }
 
 /** A small count chip for the world header. */
@@ -1073,6 +1217,18 @@ const ACTIVITY_ICON = {
 };
 
 let activityLog = [];
+/* Signal ids the world screen has already shown, so a newly arriving signal
+ * can be counted as new without re-fetching on every frame. */
+let worldKnownSignalIds = [];
+/* The world screen's last fetched summary, kept so the header can be re-rendered
+ * (for staleness) without a network round-trip. */
+let worldLastSummary = null;
+/* Subscribers to live SSE frames, beyond the activity log. The World screen
+ * registers one; the System screen does not need to. */
+const sseHandlers = new Set();
+
+function addSseHandler(fn) { sseHandlers.add(fn); }
+function removeSseHandler(fn) { sseHandlers.delete(fn); }
 let stream = null;
 
 function activityRow(entry) {
@@ -1134,6 +1290,7 @@ async function systemView() {
   const collectionToggle = el("button", {
     class: `btn ${control.collection_enabled ? "danger" : "primary"}`,
     text: control.collection_enabled ? "Pause collection" : "Resume collection",
+    disabled: !control.collector_active,
     onclick: async () => {
       try {
         await post("/control/collection", { enabled: !control.collection_enabled });
@@ -1143,11 +1300,33 @@ async function systemView() {
     },
   });
 
+  // The three states are different truths and are labelled differently: a
+  // loop running, a loop paused, and no loop at all. The last is the case that
+  // used to look identical to a healthy but quiet world.
+  const statePill = control.monitoring
+    ? el("span", { class: "pill on", text: t().system.collectionOn })
+    : control.collector_active
+      ? el("span", { class: "pill off", text: t().system.collectionPaused })
+      : el("span", { class: "pill off", text: t().system.noLoop });
+
+  // Real latency, each figure measured from stored timestamps.
+  const lat = control.latency || {};
+  const latencyPanel = el("div", { class: "panel" }, [
+    el("h2", { class: "panel-title", text: t().system.latency }),
+    el("div", { class: "stat-grid" }, [
+      stat(t().system.lagObservation, fmtLag(lat.observation_lag_ms)),
+      stat(t().system.lagCollector, fmtLag(lat.collector_ms)),
+      stat(t().system.lagDetection, fmtLag(lat.detection_ms)),
+      stat(t().system.lagNewest, fmtLag(lat.newest_signal_age_ms)),
+    ]),
+    el("p", { class: "page-sub", text: t().system.lagHint }),
+  ]);
+
   const feed = el("div", { class: "activity", id: "activity-feed" }, activityLog.map(activityRow));
 
   render("system", "System", "The engine's real operational state: what is running, what it is doing, and the live stream of changes.", [
     el("div", { class: "bar" }, [
-      el("span", { class: "pill " + (control.collection_enabled ? "on" : "off"), text: control.collection_enabled ? "collection on" : "collection paused" }),
+      statePill,
       collectionToggle,
       el("span", { class: "pill", text: `up ${fmtDuration(control.uptime_seconds)}` }),
       el("span", { class: "pill", text: `v${control.version}` }),
@@ -1159,6 +1338,7 @@ async function systemView() {
       stat("sources", (control.sources || []).length, `${(control.sources || []).filter((s) => s.enabled).length} enabled`),
       stat("disk", fmtBytes(control.disk.total_bytes), `${fmtBytes(control.disk.raw_bytes)} raw · ${control.disk.raw_files} files`),
     ]),
+    latencyPanel,
     el("div", { class: "panel" }, [
       el("h2", { class: "panel-title", text: "Live activity" }),
       feed,
@@ -1183,6 +1363,11 @@ async function systemView() {
 function appendActivity(entry) {
   activityLog.push(entry);
   if (activityLog.length > 200) activityLog.shift();
+  // Forward the frame to whoever is listening (the World screen re-fetches on
+  // signal frames). The activity feed below is a separate concern.
+  for (const handler of sseHandlers) {
+    try { handler(entry); } catch (_) { /* a broken listener must not stop the stream */ }
+  }
   const feed = document.getElementById("activity-feed");
   if (!feed) return;
   feed.prepend(activityRow(entry));
@@ -1198,7 +1383,9 @@ function appendActivity(entry) {
 let streamController = null;
 
 function startActivityStream() {
-  stopActivityStream();
+  // Idempotent: both the World and System screens want the stream open, and
+  // neither should tear it down for the other. `route()` stops it on leave.
+  if (streamController) return;
   const controller = new AbortController();
   streamController = controller;
   runStream(controller);
@@ -1206,6 +1393,66 @@ function startActivityStream() {
 
 function stopActivityStream() {
   if (streamController) { streamController.abort(); streamController = null; }
+  // The world screen and the system screen share one stream but not one
+  // consumer; stop it for whichever view is leaving.
+  stopWorldStream();
+}
+
+/* The World screen's live wiring.
+ *
+ * The stream is already open (startActivityStream); all the World screen does
+ * is listen to the frames the API forwards. It re-fetches the world when a
+ * signal frame arrives, coalescing bursts into one request, and it counts what
+ * is new since the reader started watching so a change is never silent.
+ *
+ * It also knows *why* nothing may be arriving: monitoring paused, no loop at
+ * all, or data simply stale. "Quiet" and "not being watched" are different
+ * states and the header says which one it is. */
+let worldLive = null;
+
+function stopWorldStream() {
+  if (worldLive) {
+    if (worldLive.sseHandler) removeSseHandler(worldLive.sseHandler);
+    if (worldLive.refreshTimer) clearTimeout(worldLive.refreshTimer);
+    if (worldLive.ageTimer) clearInterval(worldLive.ageTimer);
+    worldLive = null;
+  }
+}
+
+/** Mount the World screen's live wiring, once per visit. */
+function startWorldStream() {
+  if (worldLive) return;
+  const state = {
+    // Seed with the signals already on screen so only genuinely new ones count.
+    knownSignalIds: new Set(worldKnownSignalIds),
+    newCount: 0,
+    sseHandler: null,
+    refreshTimer: null,
+    ageTimer: null,
+  };
+  worldLive = state;
+
+  // A signal frame is the only thing that can add a signal to the world.
+  state.sseHandler = (activity) => {
+    if (activity.kind !== "signal") return;
+    scheduleWorldRefresh();
+  };
+  addSseHandler(state.sseHandler);
+
+  // Refresh the header's "last data" line every few seconds so staleness is
+  // visible even when no frame arrives.
+  state.ageTimer = setInterval(updateWorldHeader, 5000);
+}
+
+function scheduleWorldRefresh() {
+  if (!worldLive || worldLive.refreshTimer) return;
+  // Coalesce a burst of frames into a single world fetch, and re-render in
+  // place: the stream stays open, the reader's scroll stays put.
+  worldLive.refreshTimer = setTimeout(async () => {
+    if (!worldLive) return;
+    worldLive.refreshTimer = null;
+    await worldView({ remount: false });
+  }, 400);
 }
 
 async function runStream(controller) {
@@ -1236,6 +1483,9 @@ async function runStream(controller) {
         const feed = document.getElementById("activity-feed");
         if (feed) feed.replaceChildren(...activityLog.map(activityRow));
       }
+      // The world screen is also resynced on reconnect: a signal that formed
+      // while the stream was down must not be missed.
+      if (worldLive) await worldView({ remount: false });
     } catch (_) { /* offline; the next attempt will retry */ }
   }
 }

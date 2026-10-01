@@ -21,7 +21,7 @@ use futures_util::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use std::convert::Infallible;
 use std::time::Duration;
-use wse_engine::runtime::{ActivityKind, DiskSummary, SourceControl};
+use wse_engine::runtime::{ActivityKind, DiskSummary, LatencySummary, SourceControl};
 use wse_engine::ControlSnapshot;
 use wse_model::{
     Cadence, EntityId, EventId, Observation, ObservationId, SignalId, SignalType, Source,
@@ -542,6 +542,36 @@ pub struct WorldSummary {
     /// How many sources are connected and how many are currently healthy.
     pub sources_total: usize,
     pub sources_healthy: usize,
+    /// Whether the world is being watched right now. `false` means the page is
+    /// a static snapshot, and the UI must say so rather than imply monitoring.
+    pub monitoring: bool,
+    /// Whether a collection loop exists at all, paused or not.
+    pub collector_active: bool,
+    /// Whether collection is paused by an operator.
+    pub collection_enabled: bool,
+    /// Per-source health, so the World header can show coverage honestly
+    /// without a second request.
+    pub sources: Vec<SourceStatus>,
+    /// When the most recent observation from any source arrived, and how stale
+    /// that is. `None` until the first collection.
+    pub last_collection_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub data_age_seconds: Option<i64>,
+    /// Real latency telemetry, the same figures `/control` reports.
+    pub latency: LatencySummary,
+}
+
+/// A source's health as the World header needs it.
+#[derive(Debug, Serialize)]
+pub struct SourceStatus {
+    pub source_id: String,
+    pub name: String,
+    pub category: String,
+    /// `healthy`, `degraded`, `down`, `rate_limited`, `unknown`.
+    pub status: String,
+    /// Seconds since the last successful collection, when there has been one.
+    pub age_seconds: Option<i64>,
+    /// Whether the source has never produced a successful collection yet.
+    pub never_collected: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -607,30 +637,74 @@ pub async fn world<S: wse_storage::Store>(State(state): State<AppState<S>>) -> R
 
     let sources = store.all_sources().unwrap_or_default();
     let schedules = engine.runtime().schedules();
-    let sources_healthy = sources
+    let now = chrono::Utc::now();
+
+    // Per-source health, rendered from the real health record rather than the
+    // schedule alone: "never collected" and "collected an hour ago" are
+    // different, and neither is the same as "the world is quiet".
+    let source_status: Vec<SourceStatus> = sources
         .iter()
-        .filter(|s| {
-            schedules
-                .get(s.id.as_str())
-                .map(|sch| sch.last_success.is_some() && sch.consecutive_failures == 0)
-                .unwrap_or(false)
+        .map(|source| {
+            let id = source.id.as_str().to_string();
+            let health = store.get_health(&source.id).ok().flatten();
+            let status = health
+                .as_ref()
+                .map(|h| h.status)
+                .unwrap_or(wse_model::HealthStatus::Unknown);
+            let last_success = health.as_ref().and_then(|h| h.last_success);
+            SourceStatus {
+                source_id: id,
+                name: source.name.clone(),
+                category: source.category.clone(),
+                status: status.as_str().to_string(),
+                age_seconds: last_success.map(|at| (now - at).num_seconds()),
+                never_collected: last_success.is_none(),
+            }
         })
+        .collect();
+
+    let sources_healthy = source_status
+        .iter()
+        .filter(|s| s.status == "healthy")
         .count();
 
+    // Data freshness: when did the newest observation actually arrive?
+    let last_collection_at = schedules
+        .values()
+        .filter_map(|s| s.last_success)
+        .max()
+        .or_else(|| {
+            store
+                .query_observations(&ObservationQuery {
+                    limit: Some(1),
+                    ..Default::default()
+                })
+                .ok()
+                .and_then(|page| page.items.into_iter().map(|o| o.received_at).max())
+        });
+    let data_age_seconds = last_collection_at.map(|at| (now - at).num_seconds());
+
     // The store already orders by rank then recency; the strip shows the head.
-    let now: Vec<wse_model::Signal> = active.iter().take(8).cloned().collect();
+    let now_strip: Vec<wse_model::Signal> = active.iter().take(8).cloned().collect();
 
     Json(WorldSummary {
-        generated_at: chrono::Utc::now(),
+        generated_at: now,
         active_signals: active.len(),
         signals_total: all.len(),
         events_total: store.event_count().unwrap_or(0),
         observations_total: store.observation_count().unwrap_or(0),
         by_type,
         by_status,
-        now,
+        now: now_strip,
         sources_total: sources.len(),
         sources_healthy,
+        monitoring: engine.runtime().monitoring(),
+        collector_active: engine.runtime().collector_active(),
+        collection_enabled: engine.runtime().collection_enabled(),
+        sources: source_status,
+        last_collection_at,
+        data_age_seconds,
+        latency: latency_summary(&engine),
     })
     .into_response()
 }
@@ -692,18 +766,84 @@ pub fn control_snapshot<S: wse_storage::Store>(
         },
     };
 
+    let latency = latency_summary(engine);
+
     ControlSnapshot {
         status: "live",
         version,
         started_at: runtime.started_at(),
         uptime_seconds: runtime.uptime_seconds(),
+        collector_active: runtime.collector_active(),
         collection_enabled: runtime.collection_enabled(),
+        monitoring: runtime.monitoring(),
         sources,
         signals_active,
         signals_total,
         observations_total: store.observation_count().unwrap_or(0),
         events_total: store.event_count().unwrap_or(0),
         disk,
+        latency,
+    }
+}
+
+/// Compute the latency telemetry from what is actually stored.
+///
+/// Nothing is estimated. Each figure is derived from timestamps the pipeline
+/// already records, so it can be checked against the raw data.
+fn latency_summary<S: wse_storage::Store>(engine: &wse_engine::Engine<S>) -> LatencySummary {
+    let store = engine.store();
+    let now = chrono::Utc::now();
+
+    // Source-side lag over the most recent observations.
+    let observation_lag_ms = store
+        .query_observations(&ObservationQuery {
+            limit: Some(200),
+            ..Default::default()
+        })
+        .ok()
+        .filter(|page| !page.items.is_empty())
+        .map(|page| {
+            let total: i64 = page.items.iter().map(|o| o.lag_ms()).sum();
+            total / page.items.len() as i64
+        });
+
+    // Detection latency: signal formation versus the evidence's own timestamp.
+    let signals = store
+        .query_signals(&SignalQuery::default())
+        .ok()
+        .map(|page| page.items)
+        .unwrap_or_default();
+
+    let detection_ms = {
+        let mut latencies: Vec<i64> = signals
+            .iter()
+            .filter_map(|s| {
+                s.evidence
+                    .iter()
+                    .map(|e| e.observed_at)
+                    .min()
+                    .map(|earliest| (s.first_seen - earliest).num_milliseconds())
+            })
+            .collect();
+        if latencies.is_empty() {
+            None
+        } else {
+            latencies.sort_unstable();
+            Some(latencies[latencies.len() / 2])
+        }
+    };
+
+    let newest_signal_age_ms = signals
+        .iter()
+        .map(|s| s.first_seen)
+        .max()
+        .map(|newest| (now - newest).num_milliseconds());
+
+    LatencySummary {
+        observation_lag_ms,
+        collector_ms: engine.metrics().collector_latency_ms,
+        detection_ms,
+        newest_signal_age_ms,
     }
 }
 

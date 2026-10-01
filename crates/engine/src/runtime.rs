@@ -121,13 +121,43 @@ pub struct ControlSnapshot {
     pub version: &'static str,
     pub started_at: DateTime<Utc>,
     pub uptime_seconds: u64,
+    /// Whether a collection loop is running at all.
+    pub collector_active: bool,
     pub collection_enabled: bool,
+    /// `collector_active && collection_enabled` — what the "WORLD WATCH" badge
+    /// reads. Never true for a static dashboard.
+    pub monitoring: bool,
     pub sources: Vec<SourceControl>,
     pub signals_active: usize,
     pub signals_total: usize,
     pub observations_total: usize,
     pub events_total: usize,
     pub disk: DiskSummary,
+    pub latency: LatencySummary,
+}
+
+/// Real latency telemetry, so "real-time" can be checked rather than asserted.
+///
+/// Every figure is computed from stored timestamps, never estimated. UI
+/// delivery latency is deliberately absent: only the browser can measure when a
+/// frame actually arrived, so the client computes it from the event's own
+/// timestamp instead of the server guessing.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LatencySummary {
+    /// Source-side lag: `received_at - observed_at`, averaged over recent
+    /// observations. Large for a batch feed (a day's earthquakes arrive at
+    /// once), small for a live one. This is data freshness, not a defect.
+    pub observation_lag_ms: Option<i64>,
+    /// Collector fetch time, from the engine's metrics.
+    pub collector_ms: Option<u64>,
+    /// Detection latency: `signal.first_seen - earliest evidence.observed_at`,
+    /// averaged over recent signals. How long after the data existed the signal
+    /// existed.
+    pub detection_ms: Option<i64>,
+    /// Age of the newest signal: `now - first_seen`. If the stream or the
+    /// pipeline stalled, this grows; a small value means the engine is keeping
+    /// up with the world.
+    pub newest_signal_age_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -154,6 +184,12 @@ struct Inner {
     /// scheduler keeps ticking but skips every source, so the API and UI stay
     /// up — collection is paused, the engine is not.
     collection_enabled: AtomicBool,
+    /// Whether a collection loop was actually started. This is *not* the same
+    /// as `collection_enabled`: a served engine with no loop has collection
+    /// "enabled" and still observes nothing. The UI must be able to tell the
+    /// two apart, or it would show a static dashboard as if it were watching
+    /// the world.
+    collector_active: AtomicBool,
     disabled_sources: Mutex<HashSet<String>>,
     /// Sources an admin asked to run now, awaiting the scheduler's next pass.
     run_now: Mutex<VecDeque<String>>,
@@ -179,6 +215,7 @@ impl RuntimeState {
                 started: Instant::now(),
                 started_at: Utc::now(),
                 collection_enabled: AtomicBool::new(true),
+                collector_active: AtomicBool::new(false),
                 disabled_sources: Mutex::new(HashSet::new()),
                 run_now: Mutex::new(VecDeque::new()),
                 running: Mutex::new(HashSet::new()),
@@ -207,6 +244,27 @@ impl RuntimeState {
 
     pub fn collection_enabled(&self) -> bool {
         self.inner.collection_enabled.load(Ordering::Relaxed)
+    }
+
+    /// Whether a collection loop is actually running.
+    ///
+    /// Set once by the process that starts the loop. A served engine that never
+    /// started one reports `false` here even though `collection_enabled()` is
+    /// true — the distinction the UI needs to avoid showing a static dashboard
+    /// as a live world watch.
+    pub fn collector_active(&self) -> bool {
+        self.inner.collector_active.load(Ordering::Relaxed)
+    }
+
+    pub fn set_collector_active(&self, active: bool) {
+        self.inner.collector_active.store(active, Ordering::Relaxed);
+    }
+
+    /// The one honest answer to "is the world being watched right now?".
+    ///
+    /// Monitoring is active only when a loop is running *and* it is not paused.
+    pub fn monitoring(&self) -> bool {
+        self.collector_active() && self.collection_enabled()
     }
 
     /// Turn continuous collection on or off, recording the change as activity

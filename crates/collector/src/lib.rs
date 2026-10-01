@@ -58,6 +58,11 @@ impl CollectorError {
 }
 
 /// How often a collector should run.
+///
+/// The variant is the source's *semantics*, not just a period. `Daily` is not
+/// `Interval { 86_400 }`: a source that says "06:00Z" must run at 06:00Z, not
+/// 24 hours after whenever the process happened to start. The scheduler honours
+/// the difference; see `ScheduleState::is_due`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Schedule {
@@ -65,16 +70,23 @@ pub enum Schedule {
     Event { poll_seconds: u64 },
     /// Fixed interval.
     Interval { seconds: u64 },
+    /// Once per day at a fixed UTC hour.
+    Daily { hour_utc: u8 },
     /// Only run when explicitly triggered (tests, replay).
     Manual,
 }
 
 impl Schedule {
     /// Default poll interval in seconds, used by the scheduler.
+    ///
+    /// `Daily` reports 24h so a UI that only understands periods still shows a
+    /// truthful cadence; the *alignment* to the UTC hour is handled by
+    /// `ScheduleState::is_due`, which does not use this value.
     pub fn poll_seconds(&self) -> Option<u64> {
         match self {
             Schedule::Event { poll_seconds } => Some(*poll_seconds),
             Schedule::Interval { seconds } => Some(*seconds),
+            Schedule::Daily { .. } => Some(86_400),
             Schedule::Manual => None,
         }
     }

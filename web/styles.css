@@ -425,6 +425,31 @@ a { color: inherit; text-decoration: none; }
 .stat-chip[data-type="IMPACT"] { border-color: var(--impact); }
 .world-health { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 
+/* The monitoring banner: whether the world is being watched, and how fresh the
+ * data is. The dot is decoration; the state word carries the meaning, so a
+ * colour-blind reader loses nothing. "Watching", "paused" and "not watching"
+ * are three different truths and are never shown as one. */
+.world-notice {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--bg-raised); padding: 9px 14px; margin: 0 0 16px;
+  font-size: 12px;
+}
+.world-notice:empty { display: none; }
+.watch-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--idle); flex: none; }
+.watch-dot.live { background: var(--ok); box-shadow: 0 0 8px var(--ok); animation: pulse 2.4s infinite; }
+.watch-dot.paused { background: var(--warn); }
+.watch-dot.off { background: var(--bad); }
+.watch-state { font-weight: 600; color: var(--text); text-transform: lowercase; }
+.watch-hint { color: var(--text-faint); font-family: var(--mono); font-size: 11px; }
+.watch-warn { color: var(--warn); font-family: var(--mono); font-size: 11px; }
+.new-banner {
+  margin-left: auto; border: 1px solid var(--now); border-radius: 999px;
+  background: transparent; color: var(--now); cursor: pointer;
+  font: inherit; font-size: 11px; padding: 3px 12px;
+}
+.new-banner:hover { background: color-mix(in srgb, var(--now) 14%, transparent); }
+
 /* Lifecycle status: a plain word, in the reader's language. Never a bare
  * colour — the word is the carrier, the tint only supports it. */
 .status-pill {

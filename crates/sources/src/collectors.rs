@@ -306,10 +306,10 @@ fn nasa_request() -> Request {
 }
 
 http_collector!(
-    /// NASA near-Earth objects, polled daily.
+    /// NASA near-Earth objects, collected daily at the hour the feed publishes.
     NasaNeoCollector,
     nasa::source,
-    Schedule::Interval { seconds: 86_400 },
+    Schedule::Daily { hour_utc: 6 },
     nasa_request,
     nasa::parse,
     "application/json"

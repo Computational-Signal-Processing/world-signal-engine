@@ -262,6 +262,24 @@ pub enum HealthStatus {
     RateLimited,
 }
 
+impl HealthStatus {
+    /// A stable lower-case name for display and API payloads.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HealthStatus::Unknown => "unknown",
+            HealthStatus::Healthy => "healthy",
+            HealthStatus::Degraded => "degraded",
+            HealthStatus::Down => "down",
+            HealthStatus::RateLimited => "rate_limited",
+        }
+    }
+
+    /// Whether the source is currently usable.
+    pub fn is_healthy(&self) -> bool {
+        matches!(self, HealthStatus::Healthy)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
