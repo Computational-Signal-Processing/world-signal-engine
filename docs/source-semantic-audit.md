@@ -773,8 +773,9 @@ given a coherent series and is now detectable:
 - Every source was read from its collector module and fixture; the id bug was
   confirmed by executing probes, not by inspection alone.
 - The probes are committed as regression specs in
-  `crates/sources/tests/semantic_regression.rs`. The F1 probes (identity) and the
-  F2 probe (fixed universe) are now active and green; each fix turned one green,
-  and each fails again if its contract is reverted.
+  `crates/sources/tests/semantic_regression.rs`. All are active and green —
+  F1 (identity), F2 (fixed universe), F4 (coherent daily count), F5
+  (non-overlapping daily count), F7 (single completed day) and F9
+  (per-repository series) — and each fails again if its contract is reverted.
 - No source was added, no lens was added, no UI was changed, and Phase 13 was
   not started.
