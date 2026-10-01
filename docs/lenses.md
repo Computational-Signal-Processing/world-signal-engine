@@ -34,9 +34,11 @@ weights      relative weights over the quality dimensions, for ranking
 
 ## Matching
 
-`Lens::matches` takes a signal's facets — its categories, entities, text and
-location — and returns whether the lens shows it. Each filter is independently
-optional, and an empty filter imposes no constraint:
+A signal is visible through a lens two ways, and both are needed.
+
+**By filter.** `Lens::matches` takes a signal's facets — its categories,
+entities, text and location — and returns whether the lens shows it. Each filter
+is independently optional, and an empty filter imposes no constraint:
 
 | Filter | Rule |
 | --- | --- |
@@ -44,6 +46,19 @@ optional, and an empty filter imposes no constraint:
 | `entities` | Canonicalized comparison, so `Oil`, `oil` and `crude oil` agree. |
 | `keywords` | Case-insensitive substring match against the title/summary. |
 | `bbox` | Latitude/longitude inside the box. |
+
+**By provenance.** A source in the catalog declares which lenses it feeds
+(`Source::feeds_lenses`). A signal backed by that source reaches those lenses
+regardless of the filters, because a source's declaration is a fact about where
+its data belongs, not a hint. This is what makes `feeds_lenses` load-bearing:
+NASA EONET emits category `earth`, which EARTH does not list, yet EONET declares
+`lens_earth` and its signals appear in EARTH anyway.
+
+The two are unioned, so a signal can be visible through several lenses at once.
+Provenance only ever *adds* visibility; it never replaces a filter match, and a
+declared lens that is not configured is dropped rather than invented. Routing is
+derived from the stored catalog (`Engine::register_source`), so no core code
+names a particular source or category and a new source is routed automatically.
 
 ### Location is a soft constraint
 
@@ -119,14 +134,18 @@ view and must never be able to take down collection or detection:
 
 ## How it is wired
 
-Matching runs once, at signal formation, in `SignalEngine::assign_lenses`. The
-result is recorded on the signal:
+Matching runs once, at signal formation, in `SignalEngine::assign_lens_matches`.
+It unions the lens filters with the source→lens routing derived from the catalog,
+and records the result on the signal:
 
 ```text
+Engine::register_source ──▶ reads Source::feeds_lenses ──▶ SignalEngine::with_source_lenses
+
 SignalEngine::form_signals
         │
-        ├── assign_lenses ──▶ signal.lens_matches = [lens_global, lens_turkey, ...]
-        └── merge_signals ───▶ lens_matches are unioned, never replaced
+        ├── assign_lens_matches ──▶ signal.lens_matches = [lens_earth, lens_global, ...]
+        │        (filters ∪ declared source lenses)
+        └── merge_signals ────────▶ lens_matches are unioned, never replaced
 ```
 
 `Signal::lens_matches` is therefore a *record* of which lenses showed the signal

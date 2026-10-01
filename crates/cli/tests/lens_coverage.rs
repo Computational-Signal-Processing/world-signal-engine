@@ -106,41 +106,93 @@ fn the_core_lenses_are_covered() {
     }
 }
 
-/// F11 — `feeds_lenses` is a declaration the engine does not enforce. A source's
-/// declared lens is matched against the *signal's* category/entity/keyword, not
-/// against `feeds_lenses`, so a source can declare a lens its signals never
-/// reach. `nasa_eonet` is exactly that case: it declares `lens_earth` but emits
-/// category `earth`, while `lens_earth` filters on `[geophysics, environment,
-/// weather]`. This spec asserts the two agree; see docs/source-semantic-audit.md.
+/// Runtime enforcement of `feeds_lenses`: a declared lens is actually reached.
+///
+/// This is the generic runtime proof: for *every* source in the catalog, and
+/// every lens it declares, a signal carrying that source's provenance reaches
+/// the declared lens — even when the lens's category/entity/keyword filters do
+/// not match it. Nothing here names a source or a category; it loops over the
+/// catalog, so a new source is covered automatically.
+///
+/// It is the runtime counterpart to the declaration checks above: those prove
+/// the *declaration* is well-formed, this proves the declaration is *reachable*.
+/// A source listed in `feeds_lenses` but incapable of producing a lens-visible
+/// signal fails here.
 #[test]
-#[ignore = "F11: feeds_lenses is declared but not enforced at runtime; see docs/source-semantic-audit.md"]
-fn a_declared_lens_actually_matches_the_sources_signals() {
+fn a_declared_lens_is_reachable_at_runtime() {
+    use wse_model::{
+        AnomalyCandidate, BaselineSnapshot, CandidateDirection, CandidateKind, EntityId,
+        ObservationId, SourceId,
+    };
+    use wse_signals::event::EventEngine;
+    use wse_signals::{SignalConfig, SignalEngine};
+
     let catalog = wse_config::load_lenses(lenses_dir()).expect("lens config loads");
+    let lenses = catalog.lenses;
+
+    // The source→lens declarations, straight from the catalog.
+    let source_lenses: Vec<(String, String)> = wse_sources::catalog()
+        .into_iter()
+        .flat_map(|s| {
+            let id = s.id.as_str().to_string();
+            s.feeds_lenses.into_iter().map(move |l| (id.clone(), l))
+        })
+        .collect();
+
+    let engine = SignalEngine::new(SignalConfig::default())
+        .with_lenses(lenses.clone())
+        .with_source_lenses(source_lenses);
+
+    let now = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    // A category and entity no lens filters on, so the only thing that can put
+    // the signal into a lens is provenance routing.
+    let category_of = |_: &str| Some("sentinel_category".to_string());
+
     for source in wse_sources::catalog() {
         for lens_id in &source.feeds_lenses {
-            let lens = catalog
-                .lenses
+            let lens = lenses
                 .iter()
                 .find(|l| l.id.as_str() == lens_id)
                 .expect("declared lens exists");
-            // A universal lens (no filters) matches everything.
-            let universal = lens.categories.is_empty()
-                && lens.entities.is_empty()
-                && lens.keywords.is_empty()
-                && lens.bbox.is_none();
-            if universal {
-                continue;
-            }
-            let category_ok = lens.categories.is_empty()
-                || lens
-                    .categories
-                    .iter()
-                    .any(|c| c.eq_ignore_ascii_case(&source.category));
+
+            let mut candidate = AnomalyCandidate::new(
+                format!("{}::sentinel_entity::sentinel_metric::unit", source.id),
+                ObservationId::new(format!("obs_{}_{lens_id}", source.id)),
+                now,
+                BaselineSnapshot {
+                    sample_size: 50,
+                    mean: 0.0,
+                    median: 0.0,
+                    std_dev: 1.0,
+                    mad: 1.0,
+                    p05: 0.0,
+                    p95: 0.0,
+                    ewma: 0.0,
+                    trend_per_second: 0.0,
+                    volatility: 1.0,
+                },
+                4.0,
+            );
+            candidate.source_id = SourceId::new(source.id.as_str());
+            candidate.entity_id = Some(EntityId::new("sentinel_entity"));
+            candidate.kind = CandidateKind::Anomaly;
+            candidate.direction = CandidateDirection::Up;
+            candidate.score = 4.0;
+            candidate.confidence = 0.9;
+
+            let candidates = vec![candidate];
+            let mut events = EventEngine::new(Default::default());
+            let formed = events.ingest(&candidates, &category_of);
+            let signals = engine.form_signals(&formed, &candidates, now);
+
+            let signal = signals
+                .first()
+                .unwrap_or_else(|| panic!("{} must form a signal", source.id));
             assert!(
-                category_ok,
-                "{} declares {lens_id}, but its category {:?} is not among that \
-                 lens's categories {:?}, so its signals never reach the lens",
-                source.id, source.category, lens.categories
+                signal.lens_matches.contains(&lens.id),
+                "{} declares {lens_id} but its signal does not reach it: {:?}",
+                source.id,
+                signal.lens_matches
             );
         }
     }

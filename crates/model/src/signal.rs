@@ -314,10 +314,18 @@ impl Signal {
 
     /// Distinct sources represented in the evidence.
     pub fn distinct_sources(&self) -> usize {
+        self.distinct_source_ids().len()
+    }
+
+    /// The distinct source ids behind the signal, sorted and de-duplicated.
+    ///
+    /// Sorted so a caller that routes by provenance writes lens matches in a
+    /// stable order; a replayed run must produce the same signal bytes.
+    pub fn distinct_source_ids(&self) -> Vec<&str> {
         let mut ids: Vec<&str> = self.evidence.iter().map(|e| e.source_id.as_str()).collect();
         ids.sort_unstable();
         ids.dedup();
-        ids.len()
+        ids
     }
 }
 

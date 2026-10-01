@@ -120,11 +120,28 @@ impl<S: Store> Engine<S> {
     }
 
     fn build(config: EngineConfig, store: S, clock: Arc<dyn Clock>) -> Self {
+        // Read the source→lens declarations from the catalog. The engine is the
+        // only layer that holds both the sources and the signal engine, so this
+        // is where the declaration becomes runtime routing. Nothing here names
+        // a source or a category: the catalog is the source of truth.
+        let source_lenses: Vec<(String, String)> = store
+            .all_sources()
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|source| {
+                source
+                    .feeds_lenses
+                    .into_iter()
+                    .map(move |lens| (source.id.as_str().to_string(), lens))
+            })
+            .collect();
+
         Self {
             event_engine: EventEngine::new(config.event.clone()),
             signal_engine: SignalEngine::new(config.signal.clone())
                 .with_convergence(config.convergence.clone())
-                .with_lenses(config.lenses.clone()),
+                .with_lenses(config.lenses.clone())
+                .with_source_lenses(source_lenses),
             config,
             store,
             trackers: HashMap::new(),
@@ -223,7 +240,30 @@ impl<S: Store> Engine<S> {
     /// Register a source in the catalog.
     pub fn register_source(&mut self, source: Source) -> Result<(), StorageError> {
         self.metrics.sources_registered += 1;
-        self.store.put_source(source)
+        self.store.put_source(source)?;
+        // The source catalog is the source of truth for lens routing, so a
+        // source registered after construction must take effect too: otherwise
+        // a served engine (which registers its catalog after `build`) would
+        // route nothing.
+        self.refresh_source_lenses();
+        Ok(())
+    }
+
+    /// Re-read the source→lens declarations from the stored catalog.
+    fn refresh_source_lenses(&mut self) {
+        let pairs: Vec<(String, String)> = self
+            .store
+            .all_sources()
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|source| {
+                source
+                    .feeds_lenses
+                    .into_iter()
+                    .map(move |lens| (source.id.as_str().to_string(), lens))
+            })
+            .collect();
+        self.signal_engine.set_source_lenses(pairs);
     }
 
     /// Run one collector and push its output through the pipeline.

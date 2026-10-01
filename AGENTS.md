@@ -92,10 +92,17 @@ No network or credentials are needed to run it.
   search result) is stored for evidence but never detected on, because its
   aggregate is membership churn, not a world change. The engine reads this in
   `Engine::ingest_observations`; do not "fix" a churning source by detecting on it.
-- **A source declares `feeds_lenses`.** `crates/cli/tests/lens_coverage.rs`
-  fails if a source feeds a lens that does not exist, or if a lens has no
-  connected source and is not listed in `INTENTIONALLY_UNFED`. Keep that list
-  honest: it is the difference between a deliberate placeholder and a dead lens.
+- **A source declares `feeds_lenses`, and the declaration is enforced.** At
+  runtime the engine reads the declarations from the stored catalog and routes a
+  signal to the lenses its sources feed, by provenance, unioned with the lens
+  filters (`SignalEngine::assign_lens_matches`). So a declared lens is one the
+  source's signals actually reach. `crates/cli/tests/lens_coverage.rs` checks
+  both the declaration (a source may not feed a lens that does not exist) and its
+  reachability (`a_declared_lens_is_reachable_at_runtime`); it fails if a lens
+  has no connected source and is not listed in `INTENTIONALLY_UNFED`. Keep that
+  list honest: it is the difference between a deliberate placeholder and a dead
+  lens. Routing is derived from the catalog in `Engine::register_source`, so do
+  not special-case a source or category in core code.
 - **arXiv rejects `max_results=0`** with HTTP 500 while still reporting the true
   `opensearch:totalResults`; the smallest accepted value is `1`. Fetch one and
   discard it.
@@ -240,9 +247,12 @@ stored. Detection always runs on the full dataset; lenses filter the result.
 - The catalog is sorted by lens id, and `lens_matches` is written in that order.
   This is a determinism requirement, not tidiness: a replayed run has to produce
   the same signal bytes as the original.
-- Matching happens in `SignalEngine::assign_lenses`, once, at signal formation.
-  `Signal::lens_matches` is therefore a *record* of which lenses showed the
-  signal, not something recomputed per query. `?lens=` reads it directly.
+- Matching happens in `SignalEngine::assign_lens_matches`, once, at signal
+  formation. It unions the lens filters with the source→lens routing read from
+  the catalog (see the `feeds_lenses` note above): a signal reaches a lens by
+  filter *or* by the provenance of a source that declares it. `Signal::lens_matches`
+  is therefore a *record* of which lenses showed the signal, not something
+  recomputed per query. `?lens=` reads it directly.
 - `merge_signals` **unions** lens matches rather than replacing them. A signal
   that accumulated categories over its life can only have gained lenses, and
   dropping one would make a `?lens=` query lose a signal it had already returned.

@@ -121,27 +121,37 @@ the existing `identity` mechanism, or hash only the record's own bytes. That is
 a change to the id-derivation contract and must be made deliberately, with a
 regression test per affected source, before any fix is proposed.
 
-## Cross-cutting finding: `feeds_lenses` is declared but not enforced
+## Cross-cutting finding: `feeds_lenses` is now enforced at runtime
 
-`Source::feeds_lenses` is checked by `crates/cli/tests/lens_coverage.rs` for
-*existence* (a source may not name a lens that does not exist), but it is
-**never consulted at runtime**. A signal's lens matches are computed by
-`Lens::matches` from the signal's **category, entities, keywords and location** —
-not from `feeds_lenses`. So a source's declared lens coverage and the lens a
-signal actually lands in can disagree, and the coverage test cannot see it.
+`Source::feeds_lenses` was previously checked by `crates/cli/tests/lens_coverage.rs`
+for *existence* (a source may not name a lens that does not exist) but was
+**never consulted at runtime**: a signal's lens matches were computed by
+`Lens::matches` from the signal's category, entities, keywords and location only.
+So a source's declared lens coverage and the lens a signal actually landed in
+could disagree, and the coverage test could not see it.
 
 Concretely: `nasa_eonet` declares `feeds_lenses: ["lens_earth"]` but its source
 category is `earth`, while `lens_earth` filters on `categories: [geophysics,
-environment, weather]`. EONET's signals therefore **never appear in EARTH**,
-despite the declaration. (NWS declares `lens_earth` with category `weather`,
-which does match — so the network is half-right by accident.)
+environment, weather]`. EONET's signals therefore **never appeared in EARTH**,
+despite the declaration.
 
-This is a semantic bug: the catalog asserts a coverage property the engine does
-not implement, and the test that guards coverage checks the wrong thing. The fix
-is either to make `feeds_lenses` authoritative for matching, or to make the
-coverage test assert category/entity/keyword agreement between each source and
-its declared lenses. A regression spec for the EONET case is committed in
-`crates/cli/tests/lens_coverage.rs`.
+**Fixed.** The engine now reads the source→lens declarations from the catalog and
+routes a signal to the lenses its sources declare, by provenance, in addition to
+the lens's own filters (`SignalEngine::with_source_lenses`,
+`assign_lens_matches`). The union is deliberate: provenance can only *add*
+visibility, never replace a filter match, and a declared-but-unconfigured lens
+is dropped rather than invented. Because the routing is derived from the catalog
+in `Engine::register_source`, nothing in the core names a particular source or
+category, and a new source is routed automatically.
+
+The regression is now enforced two ways:
+
+* `crates/cli/tests/lens_coverage.rs::a_declared_lens_is_reachable_at_runtime`
+  loops over the whole catalog and asserts every declared lens is reachable.
+* `crates/cli/tests/lens_routing.rs` drives the real EONET and AFAD fixtures
+  through the real engine with the shipped lens set, and checks the signal is
+  reachable through its declared lens *and* that provenance is preserved
+  (`SIGNAL → EVENT → OBSERVATION → SOURCE`, value and raw reference intact).
 
 ## 1. usgs_earthquakes — USGS Earthquake Feed
 
@@ -675,9 +685,10 @@ an `O` against almost every event source by nature — it reports *on* them.
    fire on cold start, not on world change.
 10. **NWS/EONET national counts are batch-driven.** One weather system or one
     EONET ingestion can move a national count without the world changing.
-11. **`feeds_lenses` is declared but never enforced.** Lens matching uses the
-    signal's category/entity/keyword, so EONET declares EARTH yet its signals
-    never reach it. The coverage test checks existence, not reachability.
+11. ~~**`feeds_lenses` is declared but never enforced.**~~ **Fixed.** Lens
+    matching used the signal's category/entity/keyword only, so EONET declared
+    EARTH yet its signals never reached it. The engine now routes a signal to the
+    lenses its sources declare, by provenance, alongside the filters.
 
 # 5. REQUIRED FIXES
 
@@ -696,7 +707,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F8 | Handle business-day gaps for ECB (absence ≠ zero) | `crates/sources/src/ecb.rs` / baseline | gap-aware baseline test |
 | F9 | Cold-start guard: no level deviation before a per-repo baseline exists | `crates/detection/src/anomaly.rs` or GitHub config | first-point no-signal test |
 | F10 | Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view | `config/lenses/*` | lens-coverage test update |
-| F11 | Make `feeds_lenses` enforced (or make the coverage test assert category/entity agreement), so a declared lens is one the source's signals actually reach | `crates/cli/tests/lens_coverage.rs` and/or `crates/signals` | the EONET spec in `lens_coverage.rs` |
+| F11 | ~~Make `feeds_lenses` enforced~~ **DONE** — the engine routes a signal to the lenses its sources declare, by provenance, alongside the lens filters; a declared lens is now one the source's signals actually reach | `crates/signals`, `crates/engine` | `a_declared_lens_is_reachable_at_runtime` in `lens_coverage.rs`, plus `lens_routing.rs` |
 
 F1 is the only fix that touches the shared id contract; it should land first and
 alone, because every other source's regression suite depends on stable ids.

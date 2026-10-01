@@ -17,12 +17,14 @@
 
 pub mod event;
 
+use std::collections::BTreeMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use wse_correlation::{ConvergenceConfig, ConvergenceGroup};
 use wse_model::lens::Lens;
 use wse_model::{
-    CandidateDirection, CandidateKind, DataOrigin, Event, Evidence, Signal, SignalQuality,
+    CandidateDirection, CandidateKind, DataOrigin, Event, Evidence, LensId, Signal, SignalQuality,
     SignalType,
 };
 
@@ -63,6 +65,13 @@ pub struct SignalEngine {
     /// The lenses signals are matched against. Empty by default: a lens is a
     /// view, so with none configured every signal simply has no lens matches.
     lenses: Vec<Lens>,
+    /// Which lenses each source *declares* it feeds, from the source catalog
+    /// (`Source::feeds_lenses`). This is what makes `feeds_lenses` a runtime
+    /// property rather than a comment: a signal routed by its source reaches
+    /// the declared lens even when the lens's category filter does not name the
+    /// source's category. Empty means "no declarations"; then routing falls
+    /// back to the lens filters alone.
+    source_lenses: BTreeMap<String, Vec<LensId>>,
 }
 
 impl SignalEngine {
@@ -71,6 +80,7 @@ impl SignalEngine {
             config,
             convergence: ConvergenceConfig::default(),
             lenses: Vec::new(),
+            source_lenses: BTreeMap::new(),
         }
     }
 
@@ -83,6 +93,36 @@ impl SignalEngine {
     pub fn with_lenses(mut self, lenses: Vec<Lens>) -> Self {
         self.lenses = lenses;
         self
+    }
+
+    /// Declare which lenses each source feeds.
+    ///
+    /// The pairs are `(source_id, lens_id)`. They come from the source catalog,
+    /// so the catalog stays the single source of truth and nothing here names a
+    /// particular source or category. A lens that is not configured is kept in
+    /// the map but can never match (there is no lens to render), which surfaces
+    /// the inconsistency instead of inventing a lens.
+    pub fn with_source_lenses(mut self, pairs: impl IntoIterator<Item = (String, String)>) -> Self {
+        self.set_source_lenses(pairs);
+        self
+    }
+
+    /// Replace the source→lens declarations in place.
+    ///
+    /// Used when the catalog is (re)registered after the engine is built, so
+    /// routing always reflects the sources actually stored.
+    pub fn set_source_lenses(&mut self, pairs: impl IntoIterator<Item = (String, String)>) {
+        self.source_lenses.clear();
+        for (source, lens) in pairs {
+            self.source_lenses
+                .entry(source)
+                .or_default()
+                .push(LensId::new(lens));
+        }
+        for lenses in self.source_lenses.values_mut() {
+            lenses.sort();
+            lenses.dedup();
+        }
     }
 
     pub fn lenses(&self) -> &[Lens] {
@@ -201,6 +241,24 @@ impl SignalEngine {
 
     /// Record which lenses currently show this signal.
     ///
+    /// Two things decide visibility, and both are needed:
+    ///
+    /// * **Declared routing.** A source in the catalog says which lenses it
+    ///   feeds (`Source::feeds_lenses`). A signal backed by that source reaches
+    ///   those lenses by *provenance*, so the declaration is honoured even when
+    ///   the lens's category filter does not name the source's category. This is
+    ///   what makes the catalog declaration true rather than aspirational.
+    /// * **Lens filters.** A lens's own category/entity/keyword/bbox filter,
+    ///   matched against the signal's facets. This is what lets a lens show
+    ///   signals from sources that did not declare it, and what makes
+    ///   geography lenses (TURKEY) work.
+    ///
+    /// The union is the point: a signal can be visible through several lenses at
+    /// once, and provenance is only *added to*, never replaced. A declared lens
+    /// that is not configured contributes nothing (there is no lens to render),
+    /// so the mismatch is visible to validation rather than hidden by a
+    /// silently invented lens.
+    ///
     /// This is what makes `GET /signals?lens=` able to return anything: the
     /// filter reads `lens_matches`, so leaving it empty would make every lens
     /// query return nothing. It is deliberately *not* part of the signal's
@@ -216,12 +274,33 @@ impl SignalEngine {
             .iter()
             .map(|e| e.as_str().to_string())
             .collect();
-        signal.lens_matches = self
+
+        // Only configured lenses can be shown; a declared-but-missing lens is
+        // dropped here, not invented.
+        let configured: std::collections::HashSet<&str> =
+            self.lenses.iter().map(|l| l.id.as_str()).collect();
+
+        let mut matched: Vec<LensId> = self
             .lenses
             .iter()
             .filter(|lens| lens.matches(&signal.categories, &entities, &text, location))
             .map(|lens| lens.id.clone())
             .collect();
+
+        for source in signal.distinct_source_ids() {
+            if let Some(lenses) = self.source_lenses.get(source) {
+                matched.extend(
+                    lenses
+                        .iter()
+                        .filter(|lens| configured.contains(lens.as_str()))
+                        .cloned(),
+                );
+            }
+        }
+
+        matched.sort();
+        matched.dedup();
+        signal.lens_matches = matched;
     }
 
     fn has_impact(&self, signal: &Signal) -> bool {
@@ -803,5 +882,123 @@ mod tests {
         )];
         let signals = process_batch(&mut events, &engine(), &candidates, &no_category, at(30));
         assert!(signals[0].lens_matches.is_empty());
+    }
+
+    /// A source's declared lens is honoured even when the lens's category filter
+    /// does not name the source's category. This is what makes `feeds_lenses`
+    /// load-bearing rather than a comment.
+    #[test]
+    fn a_declared_source_lens_is_reached_without_a_filter_match() {
+        let mut events = EventEngine::new(Default::default());
+        let candidates = vec![candidate(
+            "nasa_eonet",
+            "nasa_eonet::natural_wildfires::open_natural_events::events",
+            Some("natural_wildfires"),
+            CandidateKind::Anomaly,
+            CandidateDirection::Up,
+            4.0,
+            0.9,
+            0,
+        )];
+
+        // The lens filters on a category the signal does not have.
+        let mut earth = Lens::new(LensId::new("lens_earth"), "EARTH");
+        earth.categories.push("geophysics".into());
+
+        let engine = SignalEngine::new(SignalConfig::default())
+            .with_lenses(vec![earth])
+            .with_source_lenses(vec![("nasa_eonet".to_string(), "lens_earth".to_string())]);
+
+        let category_of = |_: &str| Some("earth".to_string());
+        let signals = process_batch(&mut events, &engine, &candidates, &category_of, at(30));
+
+        assert_eq!(
+            signals[0].lens_matches,
+            vec![LensId::new("lens_earth")],
+            "a declared source lens must be reached even when the filter does not match"
+        );
+        // Provenance is preserved: routing adds visibility, it does not replace
+        // the signal's own record.
+        assert_eq!(signals[0].categories, vec!["earth"]);
+        assert_eq!(
+            signals[0].entities,
+            vec![EntityId::new("natural_wildfires")]
+        );
+        assert_eq!(signals[0].evidence[0].source_id.as_str(), "nasa_eonet");
+    }
+
+    /// A signal can be visible through several lenses at once: one by declared
+    /// routing, one by geography, one because it imposes no filter.
+    #[test]
+    fn a_signal_can_reach_several_lenses_at_once() {
+        let mut events = EventEngine::new(Default::default());
+        let mut c = candidate(
+            "afad_earthquakes",
+            "afad_earthquakes::province_x::earthquake_count::events",
+            Some("province_x"),
+            CandidateKind::Anomaly,
+            CandidateDirection::Up,
+            4.0,
+            0.9,
+            0,
+        );
+        c.latitude = Some(39.0);
+        c.longitude = Some(35.0);
+        let candidates = vec![c];
+
+        let mut earth = Lens::new(LensId::new("lens_earth"), "EARTH");
+        earth.categories.push("geophysics".into());
+        let mut turkey = Lens::new(LensId::new("lens_turkey"), "TURKEY");
+        turkey.bbox = Some((35.8, 25.6, 42.1, 44.8));
+        let global = Lens::new(LensId::new("lens_global"), "WORLD");
+
+        let engine = SignalEngine::new(SignalConfig::default())
+            .with_lenses(vec![earth, turkey, global])
+            .with_source_lenses(vec![
+                ("afad_earthquakes".to_string(), "lens_earth".to_string()),
+                ("afad_earthquakes".to_string(), "lens_turkey".to_string()),
+            ]);
+
+        let category_of = |_: &str| Some("geophysics".to_string());
+        let signals = process_batch(&mut events, &engine, &candidates, &category_of, at(30));
+
+        assert_eq!(
+            signals[0].lens_matches,
+            vec![
+                LensId::new("lens_earth"),
+                LensId::new("lens_global"),
+                LensId::new("lens_turkey"),
+            ],
+            "one signal may be visible through several lenses"
+        );
+    }
+
+    /// A declared lens that is not configured is not invented: the mismatch is
+    /// left visible rather than papered over with a phantom lens.
+    #[test]
+    fn a_declared_but_unconfigured_lens_is_not_invented() {
+        let mut events = EventEngine::new(Default::default());
+        let candidates = vec![candidate(
+            "src_a",
+            "a::oil::price::usd",
+            None,
+            CandidateKind::Anomaly,
+            CandidateDirection::Up,
+            4.0,
+            0.9,
+            0,
+        )];
+
+        let engine = SignalEngine::new(SignalConfig::default())
+            .with_lenses(vec![Lens::new(LensId::new("lens_global"), "WORLD")])
+            .with_source_lenses(vec![("src_a".to_string(), "lens_ghost".to_string())]);
+
+        let signals = process_batch(&mut events, &engine, &candidates, &no_category, at(30));
+        // The universal lens still matches by filter; the phantom one does not.
+        assert_eq!(
+            signals[0].lens_matches,
+            vec![LensId::new("lens_global")],
+            "an unconfigured declared lens must not appear"
+        );
     }
 }

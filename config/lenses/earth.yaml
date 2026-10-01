@@ -1,9 +1,19 @@
 # Earth and geophysical signals.
 #
-# `geophysics` is the category the USGS collector emits.
+# Categories are the ones matched *by filter*:
+#   geophysics  USGS and AFAD earthquakes
+#   weather     NWS active weather alerts
+#   environment (reserved)
+#
+# NASA EONET emits category `earth`, which is deliberately not listed here.
+# EONET reaches EARTH through the source catalog instead: it declares
+# `feeds_lenses: [lens_earth]`, and the engine routes a signal to the lenses its
+# source declares. That is what makes the declaration a runtime property rather
+# than a comment — the source's provenance, not a category string, is what puts
+# its signals in the lens.
 id: lens_earth
 name: EARTH
-description: "The solid Earth: earthquakes and other geophysical movement, as reported by USGS."
+description: "The solid Earth and its surface: earthquakes and weather alerts from USGS, AFAD and NWS, and natural events from NASA EONET."
 categories:
   - geophysics
   - environment
