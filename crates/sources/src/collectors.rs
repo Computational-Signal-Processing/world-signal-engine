@@ -1002,8 +1002,9 @@ mod tests {
     async fn nasa_collector_normalizes_its_fixture() {
         let collector = NasaNeoCollector::with_context(context());
         let result = collector.collect().await.unwrap();
-        assert_eq!(result.observations.len(), 3);
-        assert_eq!(result.observations[0].metric, "neo_miss_distance");
+        // The fixture spans two UTC days.
+        assert_eq!(result.observations.len(), 2);
+        assert_eq!(result.observations[0].metric, "neo_close_approaches");
     }
 
     #[tokio::test]

@@ -121,6 +121,14 @@ No network or credentials are needed to run it.
 - **A "spike" can be entirely artificial if the population churns.** Before
   adding a source, ask whether the same query would return a different member
   set next poll; if so, it is `unstable_population`.
+- **Do not pool unrelated records into one series.** A series must be a
+  measurement of *one* thing over time. NASA NEO originally emitted one point
+  per close approach on a single entity, so the series interleaved unrelated
+  rocks and a symmetric detector flagged a *far* pass as anomalous. The coherent
+  series was the per-day **count** (a rate), with the closest object kept as
+  drill-down attributes. When a feed lists many objects, ask what the one
+  comparable quantity is — usually a count per period, not a per-object value.
+  See `docs/decisions/0017-neo-daily-approach-count.md`.
 
 ## Gotchas
 

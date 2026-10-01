@@ -225,34 +225,36 @@ de-duplication, and event-update semantics.
 ## 3. nasa_neo — NASA Near-Earth Object Feed
 
 **Collector:** `crates/sources/src/nasa.rs`, daily feed (DEMO_KEY or `NASA_API_KEY`).
-**Observation:** one close approach. Entity is **`neo_class_all`** (the class,
-not the object); `metric=neo_miss_distance`, `unit=km`.
+**Observation:** one UTC day's count of close approaches. Entity is
+**`neo_class_all`** (the population, the right subject for a rate);
+`metric=neo_close_approaches`, `unit=approaches`.
 
-1. **What one observation represents:** a single asteroid's close approach, as a
-   miss distance in km.
-2. **Type:** physical measurement of an event.
-3. **Population stable?** Yes.
-4. **Aggregate usable?** Weakly. The entity collapses *all* objects into one
-   series, so the series interleaves miss distances of unrelated rocks.
-5. **What an increase means:** nothing physically coherent — a larger value
-   means an object that happened to pass farther away.
-6. **False increases:** (a) an object that passed far away today; (b) the feed's
-   date window; (c) near-zero distances are the *interesting* values, but the
-   detector's default direction is symmetric, so it would flag a *far* pass as
-   anomalous.
-7. **Appropriate baseline:** none for raw distance. The meaningful series is
-   *count of approaches below a distance threshold per day*, or per-object
-   distance (object ids are stable but never recur).
-8. **Temporal resolution:** per-approach epoch.
+1. **What one observation represents:** the number of close approaches the feed
+   records on one UTC day.
+2. **Type:** physical measurement of activity (a rate).
+3. **Population stable?** Yes — the entity is the whole near-Earth-object
+   population, and the day is the record key, so a day retained across polls
+   keeps its identity.
+4. **Aggregate usable?** Yes. The series is a per-day count, so day-to-day
+   comparison is meaningful. (The old per-object miss-distance series was not —
+   it interleaved unrelated rocks.)
+5. **What an increase means:** more objects passed close by that day than usual.
+6. **False increases:** the feed's seven-day window and the day's partial count
+   (approaches can still arrive later today); both are low-end noise the
+   baseline absorbs.
+7. **Appropriate baseline:** the day's count over time; a positive deviation is
+   the interesting direction, which is now the one the detector measures.
+8. **Temporal resolution:** per-day, `observed_at` = the day's UTC midnight.
 9. **Independent?** Yes.
 10. **Same event as another source?** No.
 11. **Lenses:** SPACE.
-12. **Never infer:** that a rising `neo_miss_distance` is a threat; that "closer"
-    equals "more dangerous" without size; anything about a single object from the
-    pooled class series.
+12. **Never infer:** that a rising count is a threat; anything about a single
+    object from the population series (the closest object is a drill-down
+    attribute, not the series).
 
-**Eligibility: EVIDENCE_ONLY** — the value is a real approach and is worth
-storing, but the pooled `neo_class_all` series is not a coherent anomaly target.
+**Eligibility: DETECTABLE (CAP-2D)** — the daily approach count is a coherent
+series. The day's closest object is preserved as attributes for drill-down. See
+`docs/decisions/0017-neo-daily-approach-count.md`.
 
 ## 4. nws_alerts — NWS Active Weather Alerts
 
@@ -617,7 +619,7 @@ bounded-scale-aware baselining.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | usgs_earthquakes | one quake's magnitude | event (physical) | yes | after dedup | quake time | 60s / 1h feed | **yes** |
 | afad_earthquakes | one AFAD event | event (physical) | yes | after dedup | local−3h | window poll | **yes** |
-| nasa_neo | one close approach (km) | physical event | yes | weakly | approach epoch | daily | yes |
+| nasa_neo | one day's close approaches | physical activity | yes | yes | day (UTC) | daily | yes |
 | nws_alerts | active alerts per severity | gauge/snapshot | yes | yes | collection time | 600s | no |
 | nasa_eonet | open events per category | gauge/snapshot | yes | yes | collection time | 1800s | no |
 | gdelt_news_volume | news share per bucket | news activity | corpus churns | yes (attention) | bucket time | 900s / 1d | **yes** |
@@ -643,8 +645,8 @@ bounded-scale-aware baselining.
 | cisa_kev | DETECTABLE_WITH_CONSTRAINTS | weekly baseline for `kev_added`; `kev_catalog_total` differenced (done, CAP-2B) |
 | crossref_works | DETECTABLE_WITH_CONSTRAINTS | window-overlap baseline; latest point partial |
 | github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
-| nasa_neo | EVIDENCE_ONLY | pooled class series not coherent |
-| arxiv_submissions | EVIDENCE_ONLY | monotonic level; needs differencing |
+| nasa_neo | **DETECTABLE** | daily approach count is coherent (CAP-2D) |
+| arxiv_submissions | **DETECTABLE** | detection runs on the derived `preprint_new`; raw level evidence-only (CAP-2A) |
 | hackernews_frontpage | **DETECTABLE** | fixed universe committed and reused (CAP-2C) |
 
 # 3. CROSS-SOURCE INDEPENDENCE MATRIX
@@ -684,8 +686,9 @@ an `O` against almost every event source by nature — it reports *on* them.
 3. **arXiv stores a cumulative level where the doc claims a velocity.** A
    monotonic total is not an anomaly target; the intended series is never
    computed.
-4. **NASA NEO pools all objects into `neo_class_all`.** The series interleaves
-   unrelated rocks' miss distances; a *far* pass can be flagged as an anomaly.
+4. ~~**NASA NEO pools all objects into `neo_class_all`.**~~ **RESOLVED (CAP-2D).**
+   The series is now the UTC day's count of close approaches; the day's closest
+   object is kept as drill-down attributes.
 5. **CISA `kev_added` is a trailing 7-day sum sampled daily.** Consecutive points
    overlap by 6 days; a daily z-score is structurally misleading.
 6. **AFAD `isEventUpdate` rows are appended as new events.** A magnitude
@@ -713,8 +716,8 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | --- | --- | --- | --- |
 | F1 | ~~Derive observation ids from the **record key**, not the payload hash~~ **DONE** — ids are now `series_key \| observed_at \| record_key`; the five sources pass `event_id`/`period`/`time_tag`/`series\|date` | `crates/model/src/ids.rs`, `observation.rs`, + per-source `parse` | five probes promoted to active tests in `crates/sources/tests/semantic_regression.rs` |
 | F2 | ~~Make Hacker News honour `fixed_universe`: persist and reuse the universe via `next_universe`, or declare `unstable_population`~~ **DONE (CAP-2C)** — the collector commits the universe on first resolution, keeps a story that leaves the front page, and refills a slot only on a genuine 404 | `crates/sources/src/collectors.rs`, `crates/sources/src/hackernews.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/collectors.rs` tests |
-| F3 | Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total | `crates/sources/src/arxiv.rs` | two polls → delta metric |
-| F4 | Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance | `crates/sources/src/nasa.rs` | distance-threshold count |
+| F3 | ~~Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total~~ **DONE (CAP-2A)** — the catalog declares `preprint_new = Delta(preprint_total)`; the raw total is evidence-only | `crates/sources/src/arxiv.rs` | `crates/engine/tests/derived_metrics.rs` |
+| F4 | ~~Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance~~ **DONE (CAP-2D)** — one observation is one UTC day's count of close approaches; the day's closest object is a drill-down attribute | `crates/sources/src/nasa.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/nasa.rs` tests |
 | F5 | Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline | detector config or source cadence | overlapping-window baseline test |
 | F5a | ~~Difference `kev_catalog_total` instead of detecting the level~~ **DONE (CAP-2B)** — the catalogue declares `kev_catalog_growth = Delta(kev_catalog_total)`; the raw total is evidence-only | `crates/sources/src/cisa_kev.rs` | `crates/cli/tests/cisa_derived_metric.rs` |
 | F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
@@ -742,13 +745,18 @@ Meaningful after the named constraint is met (all hinge on F1 first):
 
 # 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
 
+None, as of CAP-2D. Every source that was originally in this category has been
+given a coherent series and is now detectable:
+
 - **hackernews_frontpage** — no longer in this category (CAP-2C): the fixed
   universe is committed and reused, so each tracked story is a real, detectable
   series. The summed score is still not meaningful — use the per-story series.
-- **arxiv_submissions** — a monotonic level is not an anomaly target; evidence
-  for SCIENCE/AI and for convergence with Crossref until F3.
-- **nasa_neo** — the pooled class series is not coherent; evidence for SPACE and
-  for drill-down until F4.
+- **arxiv_submissions** — no longer evidence-only (CAP-2A): detection runs on
+  the derived `preprint_new` series; the raw cumulative level is stored for
+  evidence only.
+- **nasa_neo** — no longer evidence-only (CAP-2D): the series is the UTC day's
+  count of close approaches, a coherent rate. The day's closest object stays as
+  a drill-down attribute.
 
 ---
 

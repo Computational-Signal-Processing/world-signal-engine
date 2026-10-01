@@ -117,9 +117,15 @@ is the fix: pin the members, then the count means something.
 - **Provider:** NASA / JPL
 - **Endpoint:** Near-Earth Object feed
 - **License:** public domain (NASA)
-- **Entities:** `near_earth_object`
+- **Entities:** `neo_class_all`
 - **Notes:** daily cadence. Requires an API key, but works with the `DEMO_KEY`
-  default so the engine is runnable out of the box.
+  default so the engine is runnable out of the box. `measurement: stable_series`:
+  one observation is one UTC day's **count** of close approaches
+  (`neo_close_approaches`), a coherent per-day quantity — not a single object's
+  miss distance, which would interleave unrelated rocks and let a symmetric
+  detector flag a *far* pass as anomalous. The day's closest object is kept as
+  attributes for drill-down. See
+  [docs/decisions/0017-neo-daily-approach-count.md](docs/decisions/0017-neo-daily-approach-count.md).
 
 ### nws_alerts
 

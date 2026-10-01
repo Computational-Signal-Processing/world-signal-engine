@@ -47,11 +47,11 @@ pub fn metric_vocab(metric: &str) -> Option<MetricVocab> {
             unit_name: "magnitude",
             movement_meaning: "a higher magnitude than the recent norm for this region",
         },
-        "neo_miss_distance" => MetricVocab {
-            subject: "closest approach distance of tracked near-Earth objects",
-            short: "near-Earth object activity",
-            unit_name: "km",
-            movement_meaning: "a closer approach than the recent norm",
+        "neo_close_approaches" => MetricVocab {
+            subject: "close approaches of tracked near-Earth objects",
+            short: "near-Earth object traffic",
+            unit_name: "approaches",
+            movement_meaning: "more near-Earth objects passing close by than usual",
         },
         "news_volume" => MetricVocab {
             subject: "share of global news coverage",
@@ -234,7 +234,7 @@ mod tests {
         // vocabulary must follow.
         for metric in [
             "earthquake_magnitude",
-            "neo_miss_distance",
+            "neo_close_approaches",
             "news_volume",
             "story_score",
             "repo_stars",

@@ -1,8 +1,8 @@
 //! Regression specs for the semantic bugs found in `docs/source-semantic-audit.md`.
 //!
 //! All specs are active: they pass under the fixed contracts (per-record
-//! observation identity for F1, a committed universe for F2) and fail without
-//! them.
+//! observation identity for F1, a committed universe for F2, a coherent daily
+//! count for F4) and fail without them.
 
 use chrono::{DateTime, Utc};
 
@@ -289,4 +289,39 @@ async fn hackernews_re_measures_a_stable_universe_across_polls() {
         first_ids, second_ids,
         "a fixed universe must re-measure the same story ids every poll"
     );
+}
+
+/// F4 — NASA NEO must not pool every object into one distance series. The feed
+/// interleaves unrelated rocks, so a distance series is incoherent, and a
+/// symmetric detector would flag a *far* pass as anomalous. The coherent series
+/// is the daily count of close approaches; the day's closest object stays as
+/// drill-down attributes.
+#[test]
+fn nasa_neo_counts_approaches_per_day_rather_than_pooling_distances() {
+    let body = include_bytes!("../../../tests/fixtures/nasa_neo_feed.json").to_vec();
+    let observations = wse_sources::nasa::parse(&body, received()).unwrap();
+
+    // One point per UTC day, each the day's approach count — not one point per
+    // object carrying a raw miss distance.
+    assert_eq!(observations.len(), 2);
+    assert!(
+        observations
+            .iter()
+            .all(|o| o.metric == "neo_close_approaches"),
+        "the series must be a count, not a pooled distance"
+    );
+    assert_eq!(observations[0].value, 2.0);
+    assert_eq!(observations[1].value, 1.0);
+
+    // All points share one series, so the count is comparable day to day.
+    let keys: Vec<String> = observations.iter().map(|o| o.series_key()).collect();
+    assert!(
+        keys.iter().all(|k| k == &keys[0]),
+        "one coherent series: {keys:?}"
+    );
+
+    // The day's closest object is preserved for drill-down.
+    assert!(observations[0]
+        .attributes
+        .contains_key("closest_object_name"));
 }
