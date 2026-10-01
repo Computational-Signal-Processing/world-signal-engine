@@ -1,131 +1,118 @@
-# Gözlemevi v2 — hedef tasarıma yaklaştırma planı
+# Gözlemevi v2 — "canlı yayın" düzeni
 
 Durum: öneri (onay bekliyor)
 Tarih: 2026-10-01
 İlgili: `docs/decisions/0026-observatory-ui.md`
 
-## 1. Ne istendi
+## 1. Referanslar
 
-Kullanıcı iki görsel gönderdi:
+Kullanıcı üç görsel/referans verdi:
 
-- **Görsel A — hedef ("KOZMİK SİNYAL MERKEZİ / GLOBAL EVENT MONITOR")**: lacivert-siyan
-  zemin, üstte logo + yatay menü, altında **tam genişlikte bir sinyal şeridi**
-  (her kategori bir kart: `EARTHQUAKES / ANOMALY / 79 / +53% / TOP PRIORITY · HIGH`),
-  gövdede **üç sütun** (küre grafiği · "ACİL DURUM" flash kartı · "CANLI YAYIN
-  MODU" olay listesi), altta **BREAKING ticker**.
-- **Görsel B — bizim şu anki hâlimiz**: aynı bilgi mimarisi, ama şerit küçük
-  kartlar hâlinde tek satır, orta sütunlar sığmıyor, tipografi seyrek.
-
-İstek: *"tamamiyle buna benzetemez miyiz, bu ayarda bizimkisi çok garip olmuş."*
-
-## 2. Önce bir uyarı: hedef görselin içeriği uydurma
-
-OCR ile çıkardığım hedef metinlerde şunlar var:
+- **Görsel A** — "KOZMİK SİNYAL MERKEZİ / GLOBAL EVENT MONITOR" (ekran görüntüsü).
+- **Görsel B** — bizim şu anki gözlemevi.
+- **`gemini-code-1790858891725.html`** ve **`gemini-code-1790859484787.html`** —
+  Gemini'nin aynı düzeni kodladığı iki HTML. İkisi de aynı yapı:
 
 ```
-EARTHQUAKES 79 +53%    SPACEWEATHER 110 -12%   GEOMAGNETIC 420 -11%
-CYBER 420 -12%         GLOBALNEWS 560 -52%     SEVİYE: YÜKSEK (MEDIUM-HIGH)
-SAPMA: +98%   SÜRE: 3s 15d   GÜVEN: %85        30 EVENTS
-California, USA +72% above baseline             CVE ACTIVITY INCREASED CRITICAL
-DDoS Attack Pattern — South America             Aftershock Cluster — California
+header   logo + rozet | nav sekmeleri | ● CANLI YAYIN + UTC saat
+────────────────────────────────────────────────────────────────
+şerit    5 kategori kartı: başlık + rozet(ANOMALİ/UYARI/NORMAL)
+         + büyük sayı + "▲ +53% baseline sapması"
+────────────────────────────────────────────────────────────────
+sol      Küresel Aktivite Yoğunluğu (grafik) + Sinyal Metrikleri
+orta     Küresel Sinyal Haritası (küre) + ACİL DURUM flash kartı
+sağ      GÜNCEL SİNYAL AKIŞI (seviye rozetli satırlar)
+────────────────────────────────────────────────────────────────
+alt      SON DAKİKA + kayan şerit
 ```
 
-Bu sayıların hiçbiri bir kaynaktan gelmiyor. `+53%`, `+98%`, `%85 güven`,
-`3s 15d`, `30 EVENTS` — hepsi tasarım mockup'ı için uydurulmuş. Bizim
-`docs/philosophy.md` ve `AGENTS.md`'de yazılı kural bu:
+Palet: zemin `#050811`–`#06090e`, panel `#0f172a`/`rgba(13,22,40,.65)`,
+siyan vurgu `#38bdf8`, kritik `#ef4444`, uyarı `#f59e0b`, normal `#10b981`.
+
+İstenen: *"mevcut UI'mizi tam sağlam güncelleyelim, gerçek zamanlı bir TV gibi."*
+
+## 2. Kritik ayrım: düzeni al, uydurma veriyi alma
+
+Gemini çıktılarındaki **her sayı uydurma**:
+
+```
+79 +53%   110   420 -11%   612   560   +2.8σ   %85 güven
+12 Aktif   3s 15d   +98% above baseline   4 Bağımsız İstasyon
+Norveç / NOAA · 10sn önce   SOHO / NASA   Global CISA
+```
+
+Bunların hiçbiri bir kaynaktan gelmiyor; mockup için yazılmış. Ayrıca
+Gemini `setInterval` ile **sahte feed satırı üretiyor** ve her 8 sn'de ekrana
+sahte "KRİTİK" kart ekliyor. Projenin kuralı (`docs/philosophy.md`,
+`AGENTS.md`) bunu yasaklıyor:
 
 > Her sayı gerçek bir ölçüm olmalı. Uydurma "risk skoru" / "endeks" eklenmez.
-> "Veri yok" ile "sıfır" ayrı şeylerdir ve ayrı gösterilir.
+> "Veri yok" ile "sıfır" ayrıdır ve ayrı gösterilir.
 
-Hedef görseli **birebir** kopyalarsak, sistemin en gürültülü yüzeyinde
-uydurma sayılar gösteririz. Bu, projenin varlık sebebine aykırı.
+**Plan: düzeni ve görsel dili birebir hedefliyoruz; sayıların tamamı gerçek
+`/observatory` verisinden geliyor.** Hedefteki `+53%` bizde gerçek
+`change_pct`; yoksa `—` / "veri yok" yazar. Sahte satır üretilmez.
 
-Bu yüzden plan iki parçalı: **görsel dili al, uydurma veriyi alma.**
+## 3. Bugünkü hâlimiz ile hedef arasındaki fark
 
-## 3. Hedefin gerçekten alınacak yönleri (veri uydurmadan)
+| Hedefte | Bizde | Yapılacak |
+|---|---|---|
+| Şerit = **kategori kartları** (büyük sayı + rozet + delta) | Ayrı bir metrik şeridi **ve** ayrı kategori kartları var | İki şerit birleşir: tek şerit, kart = kategori. Sayı = son değer, alt satır = `change_pct` + `deviation_sigma` |
+| Rozet: `ANOMALİ / UYARI / NORMAL` | `LOW/MEDIUM/CRITICAL` metni | Rozet görselleşir; **metin kalır** (renk tek taşıyıcı değil) |
+| Sol: grafik + "Sinyal Metrikleri" | Aktivite grafiği + kategori listesi | Sol = aktivite grafiği + seçili sinyalin metrikleri |
+| Orta: küre + **satır içi** flash kartı | Küre + ayrı modal | Flash kartı kürenin altına **satır içi** gelir; modal yalnız FLAŞ için |
+| Sağ: seviye rozetli feed | Var, rozet zayıf | Sol kenar renk şeridi + rozet + göreli zaman |
+| Nabız atan `● CANLI YAYIN` | Sade | Nabız rozeti; `prefers-reduced-motion` saygılı |
+| Lacivert-siyan + grid dokusu | Nötr gri | `--obs-*` palet katmanı, ince grid, hafif glow |
 
-| # | Hedefte olan | Bizde eksik olan | Nasıl yapılır (gerçek veriyle) |
-|---|---|---|---|
-| 1 | Sinyal şeridi tam genişlikte, büyük sayı + büyük yüzde | Kartlar küçük, şerit sıkışık | Şerit yeniden: kart başına büyük sayı, büyük `change_pct`, üstte kategori adı + tip rozeti, altta tek satır gerekçe. Zaten var olan `/observatory` kart alanları yeterli |
-| 2 | Gövde üç sütun, küre solda büyük | Orta sütunlar sığmıyor, küre küçük | `obs-body` grid'i `minmax(0,1.6fr) minmax(0,1fr) minmax(0,1.2fr)` yap; küre viewBox'ını büyüt |
-| 3 | Orta sütunda "flash" kartı (sarımsı, çerçeveli) | Bizde sinyal detayı yok | **`FeedItem`'ın tamamı zaten var.** Şeritten seçili sinyal orta sütunda: başlık, `deviation_sigma`, `duration`, `confidence`, kanıt sayısı, sparkline, "TAM RAPOR" düğmesi |
-| 4 | Sağ sütun "CANLI YAYIN MODU" olay listesi, önem rozetli satırlar | Bizde liste var ama rozet zayıf | `obs-feed-row`'a seviye rozeti (`data-sev`) büyütülür, `+%` sapma satır içinde gösterilir |
-| 5 | Lacivert-siyan palet, glow, tarama çizgileri | Paletimiz nötr gri | Yeni bir `--obs-*` palet katmanı: zemin `#0b1220`, kart `#111a2e`, çizgi `#1e2a44`, vurgu siyan `#38bdf8`, uyarı amber `#f0b429`, kritik `#ef4444` |
-| 6 | Üstte logo + menü, sağda CANLI + saat | Var ama sade | Rozet + nabız animasyonu; `prefers-reduced-motion` saygılı |
-| 7 | Altta BREAKING ticker | Var | Tip rozetleri + önem rengi, aynı kural: renk tek taşıyıcı değil |
+Alınmayacak: `AY ÜSSÜ / MARS` gibi karşılığı olmayan sekmeler (bizim gerçek
+rotalarımız kalır), uydurma yüzdeler, sahte feed üretimi.
 
-Alınmayacak: `SEVİYE: YÜKSEK (MEDIUM-HIGH)` gibi bizde karşılığı olmayan
-kategoriler, `30 EVENTS` gibi sabit sayaçlar, "güven %85" gibi türetilmemiş
-yüzdeler.
+## 4. Uygulama adımları
 
-## 4. Karar noktası (önce bunu netleştirelim)
+Her adım ayrı commit; her adımda tarayıcı doğrulaması + `cargo test`.
 
-Hedef görselin "uydurma sayı" kısmı için iki yol var:
+### Adım 1 — Palet ve tipografi (yalnız CSS)
+`--obs-*` değişkenleri, `body.obs-active` zemin + grid dokusu, tabular mono
+sayılar, büyük ölçek. Kontrast AA; renk körü kontrolü.
 
-**Yol 1 — Sadık ama dürüst (önerilen).** Yerleşim ve görsel dil birebir
-hedeflenir; her sayı gerçek ölçümden gelir. Hedefte `+53%` yazan yerde biz
-`+53%` yazarız — **ama gerçekten %53 ise**. Değilse gerçek değer yazar.
-Boş kategori "veri yok" der. Sonuç hedefe çok benzer, ama savunulabilir.
+### Adım 2 — Şerit: kategori kartları
+`obsCategories()` yeniden: kategori adı + tip rozeti / büyük değer + birim /
+büyük `change_pct` + `±σ` / sparkline. Boş kategori gerekçesini yazar.
+Ayrı metrik şeridi kaldırılır (verisi şeride taşınır).
 
-**Yol 2 — Birebir kopya.** Mockup'taki gibi sabit/örnek sayılar ve
-"MEDIUM-HIGH" gibi türetilmemiş etiketler eklenir. Görsel olarak en yakın
-sonuç, ama `philosophy.md` ihlali olur ve ADR gerekir.
+### Adım 3 — Gövde: üç sütun
+- Sol: aktivite grafiği (mevcut) + `obsSignalMetrics()` (seçili sinyalin
+  `deviation_sigma`, `duration`, `confidence`, kanıt/kaynak sayısı).
+- Orta: küre (büyütülür) + `obsFlashPanel()` — seçili sinyalin satır içi
+  künyesi + sparkline + "TAM RAPOR" → `#/signal/:id`.
+- Sağ: feed (rozet + kenar şeridi güçlendirilir).
 
-Plan Yol 1'e göre yazıldı. Yol 2 isteniyorsa söyleyin, ADR'yi ona göre yazarım.
+### Adım 4 — Header ve ticker görsel dili
+Nabız atan CANLI rozeti, UTC saat, marka rozeti; ticker'a tip rozeti.
+Klavye erişilebilirliği ve `aria-label` tamamlanır.
 
-## 5. Uygulama adımları
+### Adım 5 — Doğrulama
+`cargo test --workspace`, `clippy`, `fmt`; 1920×1080 ve 1366×768'de tek
+ekran, kaydırma yok; TR + EN; `?broadcast=1` filigranı korunur.
+ADR 0026 güncellenir.
 
-Her adım ayrı commit; her adımda tarayıcıda doğrulama + `cargo test`.
-
-### Adım 1 — Palet ve tipografi katmanı (yalnız CSS)
-- `web/styles.css`: `--obs-*` değişkenleri, `body.obs-active` altında zemin.
-- Tipografi: sayılar için tabular mono, büyük ölçek (`--obs-num: 34px`).
-- Kabul: kontrast AA; renk körü testi (renk tek başına anlam taşımıyor).
-
-### Adım 2 — Sinyal şeridi (tam genişlik, büyük sayılar)
-- `obsCategories()` yeniden yazılır: kart = kategori adı + tip rozeti /
-  büyük değer + birim / büyük `change_pct` / tek satır gerekçe / sparkline.
-- Şerit tek satır yerine hedefteki gibi kart dizisi; yatay taşma yerine
-  grid + `minmax`.
-- Kabul: 13 kategori tek ekranda, kaydırma yok; boş kart gerekçesini yazar.
-
-### Adım 3 — Üç sütunlu gövde + orta "flash" kartı
-- `obsBody()`: sol küre (büyütülür), orta `obsSelectedPanel(data)`, sağ feed.
-- Yeni `obsSelectedPanel`: seçili sinyalin (varsayılan: en yüksek seviyeli)
-  tam künyesi + sparkline + "TAM RAPOR" → `#/signal/:id`.
-- Şeritten karta tıklama bu paneli besler (rota değişmez).
-- Kabul: sinyal yoksa panel "aktif sinyal yok" der; uydurma alan yok.
-
-### Adım 4 — Feed ve ticker görsel dili
-- `obsFeedRow`: seviye rozeti + sapma; `obsTickerBar`: tip rozeti + önem.
-- Kabul: klavye ile gezilebilir; `aria-label`'lar tam.
-
-### Adım 5 — Hareket ve durum
-- Canlı rozeti nabız, veri tazeliği uyarısı, `prefers-reduced-motion`.
-- Kabul: `?broadcast=1` filigranı ve tazelik hâlâ görünür.
-
-### Adım 6 — Doğrulama
-- `cargo test --workspace`, `cargo clippy`, `fmt`.
-- Tarayıcı: 1920×1080 ve 1366×768'de tek ekran, kaydırma yok.
-- Türkçe ve İngilizce.
-- ADR 0026 güncellenir (yerleşim + palet kararı).
-
-## 6. Değişecek dosyalar
+## 5. Değişecek dosyalar
 
 ```
-web/styles.css     palet, yerleşim, kart, feed, ticker
-web/app.js         obsCategories, obsBody, obsSelectedPanel (yeni),
-                   obsFeedRow, obsTickerBar, obsGlobe (ölçek)
+web/styles.css     palet, grid dokusu, şerit, sütunlar, feed, ticker
+web/app.js         obsCategories, obsBody, obsSignalMetrics (yeni),
+                   obsFlashPanel (yeni), obsFeedRow, obsTickerBar, obsGlobe
 docs/decisions/0026-observatory-ui.md   güncelleme
 ```
 
-Backend'de değişiklik **gerekmiyor**: şerit, küre, feed ve seçili sinyal
-künyesi mevcut `/observatory` alanlarından besleniyor.
+Backend değişikliği **gerekmiyor**: şerit, küre, feed, seçili sinyal künyesi
+mevcut `/observatory` alanlarından besleniyor.
 
-## 7. Açık sorular
+## 6. Onay bekleyen sorular
 
-1. Yol 1 (dürüst) mi, Yol 2 (birebir kopya) mı?
-2. Üst menüdeki "AY ÜSSÜ / MARS / KAYNAKLAR / SİSTEM" gibi hedef-özel
-   sekmeler bizde yok; bizim gerçek rotalarımız kalsın mı? (Öneri: kalsın.)
-3. Palet: mevcut nötr griden lacivert-siyana geçiş tüm siteyi mi kapsasın,
-   yalnız gözlemevi mi? (Öneri: önce yalnız gözlemevi.)
+1. **Düzen:** yukarıdaki "canlı yayın" düzeni onaylanıyor mu?
+2. **Sayılar:** dürüst yol (her sayı gerçek) — onay? Aksi istenirse mockup
+   sayıları kullanılır ama felsefe ihlali olur ve ADR gerekir.
+3. **Palet kapsamı:** lacivert-siyan yalnız gözlemevi mi, tüm site mi?
+   (Öneri: önce yalnız gözlemevi.)

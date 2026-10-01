@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>World Signal Engine - Kozmik Sinyal Merkezi</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+        body { background-color: #06090e; color: #e2e8f0; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+        
+        /* Top Navigation Bar */
+        .header { background: #0b0f19; border-bottom: 1px solid #1e293b; padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; height: 50px; }
+        .logo { font-size: 15px; font-weight: 800; letter-spacing: 1.5px; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
+        .logo-badge { background: #0284c7; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 4px; font-weight: 600; }
+        .nav-links { display: flex; gap: 15px; }
+        .nav-btn { background: #1e293b; color: #94a3b8; border: none; padding: 5px 12px; border-radius: 4px; font-size: 12px; cursor: pointer; transition: all 0.2s; }
+        .nav-btn.active { background: #0284c7; color: #fff; font-weight: bold; box-shadow: 0 0 10px rgba(2, 132, 199, 0.5); }
+        .live-status { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: bold; }
+        .live-tag { background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px; animation: pulse 1.5s infinite; }
+        
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.4; } 100% { opacity: 1; } }
+
+        /* Main Dashboard Grid */
+        .dashboard { display: grid; grid-template-columns: 280px 1fr 320px; grid-template-rows: auto 1fr; gap: 12px; padding: 12px; flex: 1; overflow: hidden; }
+
+        /* Metrics Bar (Top) */
+        .metrics-bar { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+        .metric-card { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; display: flex; flex-direction: column; justify-content: space-between; position: relative; overflow: hidden; }
+        .metric-card.anomaly { border-color: #ef4444; background: linear-gradient(180deg, #1f1215 0%, #0f172a 100%); }
+        .metric-card.warning { border-color: #f59e0b; }
+        .metric-title { font-size: 11px; color: #94a3b8; text-transform: uppercase; font-weight: 700; display: flex; justify-content: space-between; }
+        .metric-value { font-size: 26px; font-weight: 800; margin: 4px 0; color: #f8fafc; }
+        .metric-badge { font-size: 9px; padding: 2px 6px; border-radius: 3px; text-transform: uppercase; font-weight: bold; }
+        .badge-normal { background: #065f46; color: #34d399; }
+        .badge-anomaly { background: #991b1b; color: #fca5a5; animation: pulse 1s infinite; }
+        .badge-warning { background: #92400e; color: #fcd34d; }
+
+        /* Left Panel - Activity & Sources */
+        .left-panel { display: flex; flex-direction: column; gap: 12px; }
+        .panel-box { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; flex: 1; display: flex; flex-direction: column; }
+        .panel-header { font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+
+        /* Center Panel - Globe & Flash Alert */
+        .center-panel { background: #0a0f1d; border: 1px solid #1e293b; border-radius: 8px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        .globe-placeholder { width: 300px; height: 300px; border-radius: 50%; background: radial-gradient(circle at 30% 30%, #1d4ed8, #0284c7 40%, #030712 80%); box-shadow: 0 0 50px rgba(56, 189, 248, 0.3); position: relative; display: flex; justify-content: center; align-items: center; }
+        .globe-point { position: absolute; width: 8px; height: 8px; background: #ef4444; border-radius: 50%; box-shadow: 0 0 10px #ef4444; animation: pulse 1s infinite; }
+        
+        /* Breaking Alert Modal (Overlay) */
+        .flash-alert { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(15, 23, 42, 0.95); border: 2px solid #ef4444; box-shadow: 0 0 20px rgba(239, 68, 68, 0.4); border-radius: 8px; padding: 15px; width: 85%; max-width: 450px; z-index: 10; }
+        .flash-header { color: #ef4444; font-size: 11px; font-weight: 900; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+        .flash-title { font-size: 16px; font-weight: 800; color: #fff; }
+        .flash-stats { display: flex; justify-content: space-between; margin-top: 10px; background: #070a12; padding: 8px; border-radius: 4px; font-size: 11px; }
+        .flash-stat-item span { color: #94a3b8; display: block; }
+        .flash-stat-item strong { color: #f8fafc; font-size: 13px; }
+
+        /* Right Panel - Live Event Stream */
+        .right-panel { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; padding: 12px; display: flex; flex-direction: column; }
+        .signal-list { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; flex: 1; }
+        .signal-item { background: #1e293b; border-left: 4px solid #38bdf8; padding: 8px 10px; border-radius: 4px; font-size: 11px; }
+        .signal-item.critical { border-left-color: #ef4444; background: #1c131d; }
+        .signal-item.medium { border-left-color: #f59e0b; background: #1a1715; }
+        .signal-top { display: flex; justify-content: space-between; margin-bottom: 4px; font-weight: bold; }
+        .signal-desc { color: #cbd5e1; font-size: 11px; }
+        .signal-meta { color: #64748b; font-size: 10px; margin-top: 4px; display: flex; justify-content: space-between; }
+
+        /* Bottom Ticker Bar */
+        .ticker-bar { background: #090d16; border-top: 1px solid #1e293b; height: 35px; display: flex; align-items: center; overflow: hidden; font-size: 12px; }
+        .ticker-label { background: #ef4444; color: white; padding: 0 15px; height: 100%; display: flex; align-items: center; font-weight: 900; letter-spacing: 1px; white-space: nowrap; }
+        .ticker-content { display: flex; gap: 30px; white-space: nowrap; animation: ticker 25s linear infinite; color: #e2e8f0; }
+        
+        @keyframes ticker { 0% { transform: translateX(100%); } 100% { transform: translateX(-100%); } }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="logo">
+            <span>WORLD SIGNAL ENGINE</span>
+            <span class="logo-badge">KOZMİK GÖZLEM ÜSSÜ</span>
+        </div>
+        <div class="nav-links">
+            <button class="nav-btn active">DÜNYA</button>
+            <button class="nav-btn">AY ÜSSÜ</button>
+            <button class="nav-btn">MARS</button>
+            <button class="nav-btn">KAYNAKLAR</button>
+            <button class="nav-btn">SİSTEM</button>
+        </div>
+        <div class="live-status">
+            <span class="live-tag">● CANLI YAYIN</span>
+            <span style="color: #38bdf8;" id="clock">12:02:48 UTC</span>
+        </div>
+    </header>
+
+    <!-- Main Dashboard Structure -->
+    <div class="dashboard">
+        
+        <!-- Metrics Bar -->
+        <div class="metrics-bar">
+            <div class="metric-card anomaly">
+                <div class="metric-title">Earthquakes <span class="metric-badge badge-anomaly">ANOMALİ</span></div>
+                <div class="metric-value">79</div>
+                <span style="color: #ef4444; font-size: 10px; font-weight: bold;">▲ +53% baseline sapması</span>
+            </div>
+            <div class="metric-card warning">
+                <div class="metric-title">Space Weather <span class="metric-badge badge-warning">UYARI</span></div>
+                <div class="metric-value">110</div>
+                <span style="color: #f59e0b; font-size: 10px; font-weight: bold;">▲ Solar flare yükselişte</span>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Geomagnetic <span class="metric-badge badge-normal">NORMAL</span></div>
+                <div class="metric-value">420</div>
+                <span style="color: #34d399; font-size: 10px;">▼ -11% durgun</span>
+            </div>
+            <div class="metric-card anomaly">
+                <div class="metric-title">Cyber Threats <span class="metric-badge badge-anomaly">ANOMALİ</span></div>
+                <div class="metric-value">420</div>
+                <span style="color: #ef4444; font-size: 10px; font-weight: bold;">▲ DDoS Saldırı Trafiği</span>
+            </div>
+            <div class="metric-card">
+                <div class="metric-title">Global News <span class="metric-badge badge-normal">NORMAL</span></div>
+                <div class="metric-value">560</div>
+                <span style="color: #34d399; font-size: 10px;">▼ Akış olağan</span>
+            </div>
+        </div>
+
+        <!-- Left Panel -->
+        <div class="left-panel">
+            <div class="panel-box">
+                <div class="panel-header">Küresel Aktivite Yoğunluğu</div>
+                <div style="font-size: 11px; color: #94a3b8; margin-bottom: 10px;">24 Saatlik Baseline ve Sapmalar</div>
+                <div style="flex:1; background: #070a12; border-radius: 4px; display: flex; justify-content: center; align-items: center; color: #38bdf8; font-size: 11px; border: 1px dashed #1e293b;">
+                    [ CANLI GRAFİK ÇİZGİSİ (RECHARTS) ]
+                </div>
+            </div>
+            <div class="panel-box" style="flex: 0.7;">
+                <div class="panel-header">Sinyal Metrikleri</div>
+                <div style="font-size: 11px; display: flex; flex-direction: column; gap: 6px; color: #cbd5e1;">
+                    <div style="display: flex; justify-content: space-between;"><span>Sapma Oranı:</span><strong style="color: #ef4444;">+2.8σ</strong></div>
+                    <div style="display: flex; justify-content: space-between;"><span>Güvenilirlik Skoru:</span><strong style="color: #34d399;">%85 (Yüksek)</strong></div>
+                    <div style="display: flex; justify-content: space-between;"><span>Doğrulayan Kaynak:</span><strong>4 Bağımsız İstasyondan</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Center Panel (Globe & Alert) -->
+        <div class="center-panel">
+            <div style="position: absolute; top: 12px; left: 12px; font-size: 11px; font-weight: bold; color: #64748b; letter-spacing: 1px;">KÜRESEL SİNYAL HARİTASI (LIVE MAP)</div>
+            
+            <div class="globe-placeholder">
+                <div class="globe-point" style="top: 30%; left: 40%;"></div>
+                <div class="globe-point" style="top: 55%; left: 70%; background: #f59e0b; box-shadow: 0 0 10px #f59e0b;"></div>
+                <div class="globe-point" style="top: 65%; left: 35%;"></div>
+            </div>
+
+            <!-- Flash Alert Box -->
+            <div class="flash-alert">
+                <div class="flash-header">🚨 ACİL DURUM ALARMI / FLAŞ GELİŞME</div>
+                <div class="flash-title">Kritik Solar Aktivite Saptanması</div>
+                <div class="flash-stats">
+                    <div class="flash-stat-item"><span>SEVİYE:</span><strong style="color: #ef4444;">YÜKSEK</strong></div>
+                    <div class="flash-stat-item"><span>SAPMA:</span><strong>+98%</strong></div>
+                    <div class="flash-stat-item"><span>GÜVEN:</span><strong>%85</strong></div>
+                    <div class="flash-stat-item"><span>SÜRE:</span><strong>3s 15d</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="right-panel">
+            <div class="panel-header">GÜNCEL SİNYAL AKIŞI <span style="font-size: 10px; color: #34d399;">● 12 Aktif</span></div>
+            <div class="signal-list">
+                <div class="signal-item critical">
+                    <div class="signal-top">
+                        <span style="color: #fca5a5;">GEOMAGNETIC STORM</span>
+                        <span class="metric-badge badge-anomaly">KRİTİK</span>
+                    </div>
+                    <div class="signal-desc">Kutup bölgelerinde radyo frekansı bozulması.</div>
+                    <div class="signal-meta"><span>Norveç / NOAA</span><span>10sn önce</span></div>
+                </div>
+
+                <div class="signal-item medium">
+                    <div class="signal-top">
+                        <span style="color: #fcd34d;">SOLAR FLARE - SOHO</span>
+                        <span class="metric-badge badge-warning">ORTA</span>
+                    </div>
+                    <div class="signal-desc">M-Sınıfı güneş patlaması kaydedildi.</div>
+                    <div class="signal-meta"><span>SOHO / NASA</span><span>2dk önce</span></div>
+                </div>
+
+                <div class="signal-item critical">
+                    <div class="signal-top">
+                        <span style="color: #fca5a5;">SİBER ANOMALİ (DDoS)</span>
+                        <span class="metric-badge badge-anomaly">KRİTİK</span>
+                    </div>
+                    <div class="signal-desc">Finans ağlarında anormal veri trafiği.</div>
+                    <div class="signal-meta"><span>Global CISA</span><span>4dk önce</span></div>
+                </div>
+
+                <div class="signal-item">
+                    <div class="signal-top">
+                        <span>EARTHQUAKE ANOMALY</span>
+                        <span class="metric-badge badge-normal">DÜŞÜK</span>
+                    </div>
+                    <div class="signal-desc">M 4.8 Deprem kümelenmesi.</div>
+                    <div class="signal-meta"><span>Yeni Zelanda / USGS</span><span>6dk önce</span></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Bottom Ticker -->
+    <div class="ticker-bar">
+        <div class="ticker-label">SON DAKİKA</div>
+        <div class="ticker-content">
+            <span>⚡ [FLAŞ] Solar activity is rising sharply (+98% sapma) — USGS/NASA doğruladı.</span>
+            <span>🚨 [SİBER] Güney Amerika ağlarında yüksek hacimli DDoS anomalisi tespit edildi.</span>
+            <span>🌍 [DEPREM] Pasifik levhasında 24 saatlik sismik hareketlilik artışı.</span>
+        </div>
+    </div>
+
+    <script>
+        // Basit Saat Güncelleyici
+        setInterval(() => {
+            const now = new Date();
+            document.getElementById('clock').innerText = now.toUTCString().split(' ')[4] + ' UTC';
+        }, 1000);
+    </script>
+</body>
+</html>
