@@ -131,6 +131,19 @@ function fmtBytes(n) {
   return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
+/**
+ * Render a measured value so it does not lie. A solar X-ray flux of 2.5e-7
+ * shown as `0.00` reads as "zero", which is a false statement about the world;
+ * small and very large magnitudes keep significant digits.
+ */
+function fmtValue(v) {
+  if (v === null || v === undefined) return "—";
+  const a = Math.abs(v);
+  if (a === 0) return "0";
+  if (a < 0.01 || a >= 10_000) return v.toExponential(3).replace("e+", "e");
+  return String(Number(v.toFixed(2)));
+}
+
 /** Turn a series key like `src_usgs::-::magnitude::richter` into a label. */
 function seriesLabel(key) {
   if (!key) return "—";
@@ -826,7 +839,7 @@ async function signalView(id) {
       ? (signal.evidence || []).map((item) =>
           el("div", { class: "ev" }, [
             el("div", { class: "ev-top" }, [
-              el("span", { class: "ev-metric", text: `${item.metric} = ${item.value} ${item.unit}` }),
+              el("span", { class: "ev-metric", text: `${item.metric} = ${fmtValue(item.value)} ${item.unit}` }),
               item.deviation_sigma !== null && item.deviation_sigma !== undefined
                 ? el("span", { class: "ev-sigma", text: `${item.deviation_sigma >= 0 ? "+" : ""}${item.deviation_sigma.toFixed(2)}σ` })
                 : null,
@@ -968,7 +981,7 @@ async function observationView(id) {
       el("h2", { class: "panel-title", text: "Measurement" }),
       el("dl", { class: "kv" }, [
         el("dt", { text: "metric" }), el("dd", { text: observation.metric }),
-        el("dt", { text: "value" }), el("dd", { text: `${observation.value} ${observation.unit}` }),
+        el("dt", { text: "value" }), el("dd", { text: `${fmtValue(observation.value)} ${observation.unit}` }),
         el("dt", { text: "observed at" }), el("dd", { text: fmtTime(observation.observed_at) }),
         el("dt", { text: "received at" }), el("dd", { text: fmtTime(observation.received_at) }),
         el("dt", { text: "lag" }), el("dd", { text: fmtLag(observation.lag_ms) }),
@@ -1161,10 +1174,10 @@ async function timelineView(seriesKey) {
       data.baseline
         ? el("dl", { class: "kv", style: "margin-top:14px" }, [
             el("dt", { text: "baseline n" }), el("dd", { text: String(data.baseline.sample_size) }),
-            el("dt", { text: "mean" }), el("dd", { text: data.baseline.mean.toFixed(3) }),
-            el("dt", { text: "median" }), el("dd", { text: data.baseline.median.toFixed(3) }),
-            el("dt", { text: "mad" }), el("dd", { text: data.baseline.mad.toFixed(3) }),
-            el("dt", { text: "p05 / p95" }), el("dd", { text: `${data.baseline.p05.toFixed(2)} / ${data.baseline.p95.toFixed(2)}` }),
+            el("dt", { text: "mean" }), el("dd", { text: fmtValue(data.baseline.mean) }),
+            el("dt", { text: "median" }), el("dd", { text: fmtValue(data.baseline.median) }),
+            el("dt", { text: "mad" }), el("dd", { text: fmtValue(data.baseline.mad) }),
+            el("dt", { text: "p05 / p95" }), el("dd", { text: `${fmtValue(data.baseline.p05)} / ${fmtValue(data.baseline.p95)}` }),
           ])
         : el("p", { class: "page-sub", text: "No baseline yet — the series has not accumulated enough history." }),
     ]),

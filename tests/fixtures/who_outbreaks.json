@@ -1,0 +1,85 @@
+{
+ "@odata.context": "http://www.who.int/api/news/$metadata#diseaseoutbreaknews(Id,LastModified,PublicationDate,DateCreated,IncludeInSitemap,SystemSourceKey,UrlName,ItemDefaultUrl,Response,FurtherInformation,Summary,PublicationDateAndTime,TitleSuffix,UseOverrideTitle,Title,Epidemiology,OverrideTitle,Advice,Assessment,Overview,DonId,Provider)",
+ "value": [
+  {
+   "Id": "5df1872c-3aab-4e1b-9d78-475f6ead4040",
+   "PublicationDate": "2026-09-25T15:30:18Z",
+   "Title": "Ebola disease caused by Bundibugyo virus - Democratic Republic of the Congo",
+   "UrlName": "2026-DON618",
+   "DonId": "2026-DON618",
+   "Summary": "Since the last Disease Outbreak News was published on 11 September 2026, the Bundibugyo virus outbreak in the Democratic"
+  },
+  {
+   "Id": "0381aabe-6109-425c-a3f9-2b33cb482486",
+   "PublicationDate": "2026-09-10T08:52:02Z",
+   "Title": "Ebola disease caused by Bundibugyo virus - Democratic Republic of the Congo",
+   "UrlName": "2026-DON617",
+   "DonId": "2026-DON617",
+   "Summary": "Since the last Disease Outbreak News was published on 28 August 2026, the Bundibugyo virus outbreak in the Democratic Re"
+  },
+  {
+   "Id": "c835cb1d-25ad-4dd9-b065-ee09c054fe81",
+   "PublicationDate": "2026-08-28T15:31:07Z",
+   "Title": "Ebola disease caused by Bundibugyo virus - Democratic Republic of the Congo",
+   "UrlName": "2026-DON616",
+   "DonId": "2026-DON616",
+   "Summary": "Since the last Disease Outbreak News was published on 14 August 2026, the outbreak has spread from 54 to 60 health zones"
+  },
+  {
+   "Id": "3a950a6c-8e9a-4d58-b8db-6840bd02db92",
+   "PublicationDate": "2026-08-14T15:54:20Z",
+   "Title": "Ebola disease caused by Bundibugyo virus - Democratic Republic of the Congo",
+   "UrlName": "2026-DON615",
+   "DonId": "2026-DON615",
+   "Summary": "The Bundibugyo virus disease (BVD) outbreak in the Democratic Republic of the Congo is in a phase of intense transmissio"
+  },
+  {
+   "Id": "19668b4d-5e4f-45bf-94d5-4e2ebcb5a67d",
+   "PublicationDate": "2026-08-01T10:46:53Z",
+   "Title": "Ebola disease caused by Bundibugyo virus - Democratic Republic of the Congo",
+   "UrlName": "2026-DON614",
+   "DonId": "2026-DON614",
+   "Summary": "The Bundibugyo virus disease (BVD) outbreak in the Democratic Republic of the Congo is intensifying, with sustained tran"
+  },
+  {
+   "Id": "a06665c4-2ff2-411b-8767-25e299dac63f",
+   "PublicationDate": "2026-07-17T16:51:09Z",
+   "Title": "Ebola disease caused by Bundibugyo virus, Democratic Republic of the Congo & Uganda",
+   "UrlName": "2026-DON613",
+   "DonId": "2026-DON613",
+   "Summary": "The Bundibugyo virus disease (BVD) outbreak in the Democratic Republic of the Congo remains active, with sustained trans"
+  },
+  {
+   "Id": "608d728d-b078-4614-9ccf-682229ebfee8",
+   "PublicationDate": "2026-07-03T15:31:57Z",
+   "Title": "Ebola disease caused by Bundibugyo virus, Democratic Republic of the Congo & Uganda",
+   "UrlName": "2026-DON612",
+   "DonId": "2026-DON612",
+   "Summary": "The Bundibugyo virus disease (BVD) outbreak in the Democratic Republic of the Congo continues to evolve rapidly, with su"
+  },
+  {
+   "Id": "b4022b8d-0ad5-4022-b1ac-1d6661578e74",
+   "PublicationDate": "2026-07-02T18:27:48Z",
+   "Title": "Hantavirus outbreak linked to cruise ship travel, Multi-locations",
+   "UrlName": "2026-DON611",
+   "DonId": "2026-DON611",
+   "Summary": "This is the fifth Disease Outbreak News posting on the Andes hantavirus (ANDV) outbreak linked to the cruise ship M/V Ho"
+  },
+  {
+   "Id": "ff0edd89-ede9-4566-8196-6fd2e302637c",
+   "PublicationDate": "2026-06-25T15:43:28Z",
+   "Title": "Nipah virus disease - India",
+   "UrlName": "2026-DON609",
+   "DonId": "2026-DON609",
+   "Summary": "On 11 June 2026, the Kerala State Health Department confirmed one laboratory confirmed case of Nipah virus (NiV) infecti"
+  },
+  {
+   "Id": "10a3727f-44e6-48dd-9655-1ecd02e8e6fd",
+   "PublicationDate": "2026-06-24T15:23:22Z",
+   "Title": "Yellow fever - Global",
+   "UrlName": "2026-DON610",
+   "DonId": "2026-DON610",
+   "Summary": "Yellow fever is a viral disease found in areas of Africa and the Americas, spread by infected mosquitoes. Following an i"
+  }
+ ]
+}

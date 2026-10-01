@@ -15,7 +15,7 @@ use std::path::PathBuf;
 /// the source is the remaining work and the lens is the placeholder for it.
 /// Removing a name here means the lens must be fed; adding one means accepting
 /// that it shows nothing today.
-const INTENTIONALLY_UNFED: &[&str] = &["lens_agriculture", "lens_energy"];
+const INTENTIONALLY_UNFED: &[&str] = &["lens_energy"];
 
 /// Universal lenses. They impose no filter, so they match every signal and are
 /// not "fed" by any particular source.
@@ -101,6 +101,8 @@ fn the_core_lenses_are_covered() {
         "lens_software",
         "lens_global_events",
         "lens_turkey",
+        "lens_health",
+        "lens_humanitarian",
     ] {
         assert!(fed.contains(id), "{id} must be fed by at least one source");
     }

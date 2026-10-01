@@ -37,7 +37,7 @@ use crate::{Engine, EngineConfig};
 /// Identity is `(source_id, metric)`: the series the change occurred in. That
 /// is the coarsest identity that is still meaningful — an anomaly in
 /// `usgs_earthquakes / magnitude` must not be credited for a signal about
-/// `github_rust_activity / commits`.
+/// `github_repo_universe / commits`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LabeledEvent {
     pub source_id: String,

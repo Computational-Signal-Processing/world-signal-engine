@@ -19,8 +19,10 @@ Read [docs/philosophy.md](docs/philosophy.md) before making design decisions.
 ```text
 crates/model        vocabulary only; no I/O, no detection
 crates/collector    Collector contract + synthetic world
-crates/sources      real collectors (usgs, afad, nasa, eonet, noaa_kp, nws,
-                    gdelt, cisa_kev, ecb, crossref, arxiv, hackernews, github)
+crates/sources      real collectors (usgs, afad, nasa, eonet, noaa_kp,
+                    noaa_goes, nws, open_meteo, gdacs, gdelt, cisa_kev,
+                    who_outbreaks, coingecko, ecb, crossref, arxiv,
+                    hackernews, github, npm, pypi)
 crates/normalize    payload → observation
 crates/storage      store traits + in-memory and SQLite impls (incl. RawStore)
 crates/baseline     rolling/robust statistics
@@ -40,7 +42,7 @@ docs/decisions/     architecture decision records
 ## Commands
 
 ```bash
-cargo test --workspace                                   # 495 tests, offline
+cargo test --workspace                                   # 538 tests, offline
 cargo fmt --all && cargo clippy --workspace --all-targets
 cargo run -p wse-cli -- demo                             # synthetic acceptance world
 cargo run -p wse-cli -- sources                          # print the catalog

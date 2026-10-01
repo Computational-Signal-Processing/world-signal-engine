@@ -38,8 +38,8 @@ web UI. Current state:
 
 | Stage | State |
 | --- | --- |
-| Source catalog | 13 sources across 9 categories, each with a provenance tier and measurement semantics |
-| Collectors | USGS, AFAD, NASA NEO, NASA EONET, NOAA Kp, NWS alerts, GDELT, CISA KEV, ECB rates, Crossref, arXiv, Hacker News, GitHub |
+| Source catalog | 21 sources across 14 categories, each with a provenance tier and measurement semantics. Domains and coverage are defined in [docs/source-taxonomy.md](docs/source-taxonomy.md) |
+| Collectors | USGS, AFAD, NASA NEO, NASA EONET, NOAA Kp, NOAA GOES X-ray, NWS alerts, Open-Meteo weather & air quality, GDACS, GDELT, CISA KEV, WHO outbreaks, CoinGecko, ECB rates, Crossref, arXiv, Hacker News, GitHub, npm, PyPI |
 | Normalization | Observation model with dimensions and attributes |
 | Storage | In-memory or SQLite `Observation`/`Event`/`Signal`/`Source`/`Baseline`/`Raw` stores |
 | Baseline | Rolling and robust statistics |
@@ -50,7 +50,7 @@ web UI. Current state:
 | Operations | `/control`, pause/resume, per-source enable/run, live activity over SSE |
 | Web UI | World, signal, event, observation, source, lenses, timeline, map, system |
 
-491 tests pass across the workspace.
+538 tests pass across the workspace.
 
 ## Quick start
 

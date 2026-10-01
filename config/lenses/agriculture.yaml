@@ -1,10 +1,15 @@
 # Agriculture: yield, drought, harvest, food prices.
 #
-# No connected source emits these categories yet; see energy.yaml for why it is
-# shipped anyway.
+# Fed by the physical weather and air-quality measurements (Open-Meteo): a
+# sustained anomaly in temperature, rainfall or particulates over an
+# agricultural region is a growing-conditions signal. It is not a crop-yield
+# sensor — no lawful, keyless yield feed exists — and it does not pretend to be:
+# the categories it matches are weather and environment, and the lens reads
+# those as *conditions*, not as harvest. A real yield source, when one is
+# connected, adds the `agriculture` category and widens this lens.
 id: lens_agriculture
 name: AGRICULTURE
-description: "Food, water and growing conditions: drought, harvest and yield signals. No connected source feeds it yet, so it shows nothing today."
+description: "Growing conditions: temperature, rainfall and air-quality anomalies over agricultural regions."
 categories:
   - agriculture
   - environment

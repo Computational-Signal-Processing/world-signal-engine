@@ -1,6 +1,6 @@
 # Source semantic audit
 
-A per-source audit of the 13 connected sources. It answers, for each source,
+A per-source audit of the 21 connected sources. It answers, for each source,
 what one observation *means* — and, more importantly, what the resulting time
 series does **not** mean even though the pipeline will happily compute on it.
 
@@ -13,8 +13,9 @@ SOURCE -> COLLECTOR -> NORMALIZATION -> OBSERVATION -> STORAGE -> BASELINE -> DE
 ```
 
 Audit run: 2026-09-30, `main` @ `399c880`, Rust 1.88.0.
-Last reconciled: 2026-09-30 — every enumerated fix (F1–F11) is **DONE**, so all
-13 sources are now DETECTABLE.
+Last reconciled: 2026-10-01 — every enumerated fix (F1–F11) is **DONE**, and the
+eight sources added in the network-widening pass (14–21) are audited below, so
+all 21 sources are now DETECTABLE.
 
 Legend for detection eligibility:
 
@@ -625,6 +626,228 @@ blocker.
 
 ---
 
+## 14. open_meteo_weather — Open-Meteo Weather
+
+**Collector:** `crates/sources/src/open_meteo.rs`, `current` block for a fixed
+city set, every 1800s.
+**Observation:** one city's `temperature_2m` (and `precipitation`); entity
+`weather`, dimension `city`, `observed_at` = the product's `current.time`.
+
+1. **What one observation represents:** the model's current surface temperature
+   (or precipitation) at one named city.
+2. **Type:** physical measurement (model analysis/nowcast).
+3. **Population stable?** Yes — the city set is fixed in code.
+4. **Aggregate usable?** Yes, after de-duplication: each city is its own series
+   (`city` dimension), so a city is compared against its own history, never a
+   pool of unrelated climates.
+5. **What an increase means:** a city warmer (or wetter) than its own recent
+   norm.
+6. **False increases:** (a) `current` is a model field, so a model upgrade can
+   shift the level of every city at once — a step, not weather; (b) a synoptic
+   system legitimately moves many cities at once, which is convergence, not a
+   bug.
+7. **Appropriate baseline:** rolling statistics per city. Temperature is
+   seasonal, so a long window will eventually need a seasonal adjustment; the
+   MVP window is short enough that this is a caveat, not a blocker.
+8. **Temporal resolution:** the product's current timestep (~15 min), polled
+   30-minutely.
+9. **Independent?** Yes — independent of the NWS bulletin feed (this is a
+   physical measurement, that is an official warning).
+10. **Same event as another source?** Shares a *cause* with NWS alerts (weather),
+    but is not the same observation.
+11. **Lenses:** EARTH, AGRICULTURE, TURKEY (by bbox).
+12. **Never infer:** that a temperature anomaly is a forecast, or that a city
+    anomaly is a regional one.
+
+**Eligibility: DETECTABLE** — per-city series, fixed universe, real record key.
+
+## 15. open_meteo_air_quality — Open-Meteo Air Quality
+
+**Collector:** `crates/sources/src/open_meteo.rs`, `current` block (CAMS) for the
+same city set, every 3600s.
+**Observation:** one city's `pm2_5` (and `pm10`); entity `air_quality`,
+dimension `city`.
+
+1. **What one observation represents:** current fine/coarse particulate
+   concentration at one city.
+2. **Type:** physical measurement (CAMS reanalysis/forecast field).
+3. **Population stable?** Yes.
+4. **Aggregate usable?** Yes, per city.
+5. **What an increase means:** worse air quality than that city's recent norm
+   (dust, wildfire smoke, stagnation).
+6. **False increases:** CAMS is a model, so a model revision moves levels;
+   particulates are strongly diurnal and weather-driven.
+7. **Appropriate baseline:** rolling statistics per city; the same seasonal
+   caveat as temperature.
+8. **Temporal resolution:** hourly, polled hourly.
+9. **Independent?** Yes — a physical environment measurement.
+10. **Same event as another source?** A wildfire can move PM2.5 *and* appear in
+    EONET; that is convergence across an observation and an event list.
+11. **Lenses:** EARTH, AGRICULTURE.
+12. **Never infer:** that a PM2.5 rise has one cause.
+
+**Eligibility: DETECTABLE** — per-city series, fixed universe.
+
+## 16. noaa_goes_xray — NOAA GOES X-ray Flux
+
+**Collector:** `crates/sources/src/noaa_goes.rs`, GOES primary 1-minute X-ray
+flux, every 900s.
+**Observation:** one 1-minute `xray_flux` (0.1–0.8 nm); entity `space_weather`,
+`observed_at` = the point's `time_tag`.
+
+1. **What one observation represents:** the solar X-ray flux in one minute.
+2. **Type:** physical measurement (instrument count).
+3. **Population stable?** Yes.
+4. **Aggregate usable?** Yes, after de-duplication by `time_tag` — the product
+   is a rolling 1-day window, so the record key is essential.
+5. **What an increase means:** a solar flare.
+6. **False increases:** the flux spans ~7 orders of magnitude and the quiet
+   baseline is ~1e-7, so a plain z-score is dominated by the flare tail; the
+   value is also stored at full precision (the reason text no longer prints it
+   as `0.00`).
+7. **Appropriate baseline:** robust statistics (MAD) on the log-ish flux; a
+   flare is a *level* change of orders of magnitude, not a small σ move.
+8. **Temporal resolution:** 1 minute, polled 15-minutely.
+9. **Independent?** Yes, and independent of `noaa_kp_index`: Kp measures
+   disturbance at Earth, X-ray measures the solar driver.
+10. **Same event as another source?** A flare (X-ray) often *precedes* a storm
+    (Kp) — a genuine cross-source convergence with a lead time.
+11. **Lenses:** SPACE.
+12. **Never infer:** that a flare magnitude is a Kp magnitude, or that every
+    flare reaches Earth.
+
+**Eligibility: DETECTABLE** — 1-minute record key; bounded-scale baseline
+caveat, as with Kp.
+
+## 17. gdacs_disasters — GDACS Disaster Alerts
+
+**Collector:** `crates/sources/src/gdacs.rs`, multi-hazard event list over a
+rolling 30-day window, every 1800s.
+**Observation:** active alerts per hazard × alert level; entity `disasters`,
+dimension `hazard`/`level`, `observed_at` = the collection time.
+
+1. **What one observation represents:** how many alerts of a given hazard at a
+   given alert level are currently open.
+2. **Type:** official impact assessment (a judgement, not a raw measurement).
+3. **Population stable?** Yes — the hazard × level grid is fixed.
+4. **Aggregate usable?** Yes, as a gauge; the count falls as well as rises as
+   events close.
+5. **What an increase means:** more/severer official alerts open than usual.
+6. **False increases:** a batch ingestion can move a count; GDACS itself is an
+   assessment layer, so a level change can be a re-assessment, not a new event.
+7. **Appropriate baseline:** rolling statistics on the gauge; the fixed grid
+   avoids pooling across hazards with different base rates.
+8. **Temporal resolution:** event-driven, polled 30-minutely.
+9. **Independent?** Yes, and independent of EONET/USGS: EONET observes events,
+   GDACS *assesses impact*.
+10. **Same event as another source?** Frequently — a quake is in USGS, EONET and
+    GDACS. That is the designed convergence case, never a merge.
+11. **Lenses:** EARTH, HUMANITARIAN.
+12. **Never infer:** that an alert count is a casualty count.
+
+**Eligibility: DETECTABLE** — fixed hazard × level grid, collection-time gauge.
+
+## 18. who_outbreaks — WHO Disease Outbreak News
+
+**Collector:** `crates/sources/src/who_outbreaks.rs`, newest-first feed, every
+86400s.
+**Observation:** the count of outbreak announcements published in the last 24h;
+entity `health`, `observed_at` = the collection day.
+
+1. **What one observation represents:** how many outbreak announcements WHO
+   published in the last 24 hours.
+2. **Type:** institutional publication activity.
+3. **Population stable?** Yes.
+4. **Aggregate usable?** Yes — a non-overlapping daily count.
+5. **What an increase means:** more outbreak announcements than usual.
+6. **False increases:** an announcement is not an outbreak *starting* — it is
+   WHO *saying* so, and the publication process can batch.
+7. **Appropriate baseline:** a daily count series; most days zero, so the
+   distribution is sparse and a robust baseline matters.
+8. **Temporal resolution:** daily, polled daily.
+9. **Independent?** Yes — a new domain.
+10. **Same event as another source?** Rarely; the health domain is otherwise
+    empty.
+11. **Lenses:** HEALTH.
+12. **Never infer:** that zero announcements mean zero outbreaks.
+
+**Eligibility: DETECTABLE** — non-overlapping daily count (same discipline as
+`kev_added`).
+
+## 19. coingecko_market — CoinGecko Crypto Prices
+
+**Collector:** `crates/sources/src/coingecko.rs`, simple-price for a fixed coin
+set, every 900s.
+**Observation:** one coin's spot price; entity `crypto`, dimension `coin`.
+
+1. **What one observation represents:** a coin's spot price in USD.
+2. **Type:** market price.
+3. **Population stable?** Yes — the coin set is fixed in code.
+4. **Aggregate usable?** Yes, per coin; never pool coins of different price
+   levels.
+5. **What an increase means:** the price moved more than the coin's recent norm.
+6. **False increases:** markets are volatile by nature, so a σ threshold must
+   be tuned; the price is a level, so a *relative* move matters more than an
+   absolute one.
+7. **Appropriate baseline:** rolling statistics per coin; consider log returns
+   for a future detector.
+8. **Temporal resolution:** spot, polled 15-minutely.
+9. **Independent?** Yes, and independent of the ECB reference rate (different
+   market, different mechanism).
+10. **Same event as another source?** A macro shock can move crypto and FX
+    together — convergence.
+11. **Lenses:** FINANCE, MARKETS.
+12. **Never infer:** that a price move has a single cause, or that it is
+    permanent.
+
+**Eligibility: DETECTABLE** — per-coin series, fixed universe.
+
+## 20. npm_downloads — npm Package Downloads
+
+**Collector:** `crates/sources/src/npm.rs`, registry download point per package,
+every 86400s.
+**Observation:** one package's weekly downloads; entity `software`, dimension
+`package`.
+
+1. **What one observation represents:** a package's downloads over the last
+   week.
+2. **Type:** platform usage measurement.
+3. **Population stable?** Yes — the package set is fixed in code.
+4. **Aggregate usable?** Yes, per package; never pool.
+5. **What an increase means:** a package being adopted faster than its own norm.
+6. **False increases:** a CI/release can spike downloads mechanically; the
+   weekly total is a trailing window, so consecutive polls overlap.
+7. **Appropriate baseline:** per-package rolling statistics; the overlapping
+   weekly window is a caveat — the *change* between polls is meaningful, the
+   level is a smoothed trailing figure.
+8. **Temporal resolution:** daily, polled daily.
+9. **Independent?** Yes, and independent of GitHub stars (attention) and HN
+   (discussion) — this is *usage*.
+10. **Same event as another source?** A release can move downloads *and* stars
+    *and* HN discussion — a three-way convergence.
+11. **Lenses:** SOFTWARE.
+12. **Never infer:** that downloads are users.
+
+
+**Eligibility: DETECTABLE** — per-package series, fixed universe; trailing-window
+caveat noted.
+
+## 21. pypi_downloads — PyPI Package Downloads
+
+**Collector:** `crates/sources/src/pypi.rs`, pypistats recent downloads per
+package, every 86400s.
+**Observation:** one package's `last_week` downloads; entity `software`,
+dimension `package`; `last_day` is a drill-down attribute.
+
+Same semantics and caveats as `npm_downloads` (20), for the Python ecosystem.
+Independent of npm: a different community and package set, so a rise in both is
+convergence, not one sensor counted twice.
+
+
+**Eligibility: DETECTABLE** — per-package series, fixed universe.
+
+---
+
 # 1. SOURCE SEMANTIC MATRIX
 
 | Source | One observation is… | Type | Population stable | Aggregatable | `observed_at` | Cadence | Identity bug |
@@ -642,6 +865,14 @@ blocker.
 | crossref_works | works registered in 2d | registry activity | yes | yes | collection time | 86400s | no |
 | arxiv_submissions | cumulative category total | registry activity | yes | **not as level** | collection time | 86400s | no |
 | noaa_kp_index | one 3-hourly Kp value | physical measure | yes | after dedup | point time | 3600s / 3h | **yes** |
+| open_meteo_weather | one city's temperature/rain | physical measure | yes (fixed cities) | per city | product time | 1800s | no |
+| open_meteo_air_quality | one city's PM2.5/PM10 | physical measure | yes (fixed cities) | per city | product time | 3600s | no |
+| noaa_goes_xray | one minute's X-ray flux | physical measure | yes | after dedup | point time | 900s / 1m | **yes** |
+| gdacs_disasters | open alerts per hazard×level | impact assessment | yes | yes | collection time | 1800s | no |
+| who_outbreaks | announcements in last 24h | publication activity | yes | yes | collection day | 86400s | no |
+| coingecko_market | one coin's spot price | market price | yes (fixed coins) | per coin | collection time | 900s | no |
+| npm_downloads | one package's weekly downloads | usage | yes (fixed set) | per package | collection time | 86400s | no |
+| pypi_downloads | one package's weekly downloads | usage | yes (fixed set) | per package | collection time | 86400s | no |
 
 # 2. DETECTION ELIGIBILITY MATRIX
 
@@ -660,6 +891,14 @@ blocker.
 | nasa_neo | **DETECTABLE** | daily approach count is coherent (CAP-2D) |
 | arxiv_submissions | **DETECTABLE** | detection runs on the derived `preprint_new`; raw level evidence-only (CAP-2A) |
 | hackernews_frontpage | **DETECTABLE** | fixed universe committed and reused (CAP-2C) |
+| open_meteo_weather | **DETECTABLE** | fixed city set; per-city series; model-revision caveat |
+| open_meteo_air_quality | **DETECTABLE** | fixed city set; per-city series |
+| noaa_goes_xray | **DETECTABLE** | 1-minute record key; bounded-scale baseline caveat |
+| gdacs_disasters | **DETECTABLE** | fixed hazard×level grid; impact-assessment caveat |
+| who_outbreaks | **DETECTABLE** | non-overlapping daily count |
+| coingecko_market | **DETECTABLE** | fixed coin set; per-coin series |
+| npm_downloads | **DETECTABLE** | fixed package set; trailing-window caveat |
+| pypi_downloads | **DETECTABLE** | fixed package set; trailing-window caveat |
 
 # 3. CROSS-SOURCE INDEPENDENCE MATRIX
 

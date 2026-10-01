@@ -71,6 +71,15 @@ repositories matching a search") cannot be baselined: a rise may just be more
 members. The engine refuses to form signals from such a series. `fixed_universe`
 is the fix: pin the members, then the count means something.
 
+## Coverage by domain
+
+The domains the sensor network is meant to cover — and how well each is
+covered — are defined in [docs/source-taxonomy.md](docs/source-taxonomy.md).
+That document is the plan; this one is the current state. In short: space
+weather, software, disasters and the earth sciences have two or more
+independent sensors; energy, agriculture and transport are named as uncovered
+rather than faked.
+
 ## Current sources
 
 | id | tier | measurement | category | protocol | format | cadence | auth | cost | geo | priority |
@@ -79,15 +88,23 @@ is the fix: pin the members, then the count means something.
 | `afad_earthquakes` | 1 | stable_series | geophysics | https | json | 3600s | none | free | yes | 15 |
 | `nasa_neo` | 1 | stable_series | space | https | json | daily 06:00Z | api key | free w/ registration | no | 20 |
 | `nws_alerts` | 1 | stable_series | weather | https | geojson | 600s | none | free | yes | 20 |
+| `open_meteo_weather` | 2 | stable_series | weather | https | json | 1800s | none | free | yes | 22 |
 | `nasa_eonet` | 1 | stable_series | earth | https | json | 1800s | none | free | yes | 25 |
 | `noaa_kp_index` | 1 | stable_series | space | https | json | 3600s | none | free | no | 25 |
+| `open_meteo_air_quality` | 2 | stable_series | environment | https | json | 3600s | none | free | yes | 26 |
+| `noaa_goes_xray` | 1 | stable_series | space | https | json | 900s | none | free | no | 27 |
+| `gdacs_disasters` | 1 | stable_series | disasters | https | geojson | 1800s | none | free | yes | 28 |
 | `gdelt_news_volume` | 2 | stable_series | global_events | https | json | 900s | none | free | no | 30 |
 | `cisa_kev` | 1 | stable_series | cyber | https | json | daily | none | free | no | 35 |
 | `hackernews_frontpage` | 3 | fixed_universe | technology | https | json | 600s | none | free | no | 40 |
+| `who_outbreaks` | 1 | stable_series | health | https | json | daily | none | free | no | 42 |
+| `coingecko_market` | 2 | stable_series | markets | https | json | 900s | none | free | no | 43 |
 | `ecb_exchange_rates` | 1 | stable_series | finance | https | json | daily | none | free | no | 44 |
 | `crossref_works` | 2 | stable_series | science | https | json | daily | none | free | no | 45 |
 | `arxiv_submissions` | 2 | stable_series | science | https | atom | daily | none | free | no | 46 |
-| `github_rust_activity` | 3 | fixed_universe | technology | https | json | 3600s | token | free w/ registration | no | 50 |
+| `npm_downloads` | 2 | fixed_universe | technology | https | json | daily | none | free | no | 47 |
+| `pypi_downloads` | 2 | fixed_universe | technology | https | json | daily | none | free | no | 48 |
+| `github_repo_universe` | 3 | fixed_universe | technology | https | json | 3600s | token | free w/ registration | no | 50 |
 
 ### usgs_earthquakes
 
@@ -239,20 +256,115 @@ is the fix: pin the members, then the count means something.
   evidence-only, and detection runs on the derived per-interval velocity.
   Feeds the SCIENCE and AI lenses.
 
-### github_rust_activity
+### github_repo_universe
 
 - **Provider:** GitHub
 - **Endpoint:** GitHub repository API (one request per repository)
 - **License:** public API; GitHub Acceptable Use terms apply
-- **Entities:** `ecosystem_rust`
+- **Entities:** `ecosystem_open_source`
 - **Notes:** `measurement: fixed_universe`. The collector walks a fixed list of
-  well-known Rust repositories and measures stars for each. Each repository is
-  its own series (the `repo` dimension), so a repository's baseline is its own
-  history rather than a pool of unrelated projects' star counts — the cold-start
-  guard. Token authentication is optional and only raises the rate limit. If
-  every request fails the collection is a source failure, never "zero activity".
-  See
+  24 well-known open-source repositories — spanning the major language
+  ecosystems (Rust, Go, Python, Node, Deno, Vue, Next, React), foundational
+  infrastructure (Kubernetes, Docker, Terraform, Redis, Postgres, Kafka,
+  Grafana, Prometheus), AI/ML (PyTorch, Transformers, LangChain, Ollama) and
+  developer tooling (VS Code, Neovim, Ruff, DuckDB) — and measures stars for
+  each. A single-language universe would be a sensor of one corner of software
+  rather than of the ecosystem, and blind to attention moving between
+  ecosystems; see
+  [docs/decisions/0024-github-universe-spans-ecosystems.md](docs/decisions/0024-github-universe-spans-ecosystems.md).
+  Each repository is its own series (the `repo` dimension), so a repository's
+  baseline is its own history rather than a pool of unrelated projects' star
+  counts — the cold-start guard. Token authentication is optional and only
+  raises the rate limit. If every request fails the collection is a source
+  failure, never "zero activity". See
   [docs/decisions/0020-github-per-repo-series.md](docs/decisions/0020-github-per-repo-series.md).
+
+### open_meteo_weather
+
+- **Provider:** Open-Meteo
+- **Endpoint:** Open-Meteo forecast API, `current` block, for a fixed city set
+- **License:** CC-BY 4.0
+- **Entities:** `weather`
+- **Geospatial:** yes
+- **Notes:** surface temperature and precipitation for 15 cities spanning the
+  continents. Each city is its own series (dimension `city`), so a city is
+  compared against its own history. The measured `current` value is used, not
+  the forecast — the engine measures the world, it does not predict it.
+
+### open_meteo_air_quality
+
+- **Provider:** Open-Meteo / Copernicus CAMS
+- **Endpoint:** Open-Meteo air-quality API, `current` block, for a fixed city set
+- **License:** CC-BY 4.0
+- **Entities:** `air_quality`
+- **Geospatial:** yes
+- **Notes:** PM2.5 and PM10 for the same fixed city set. Independent of the
+  official alert feeds: a rise in particulates is a physical measurement.
+
+### noaa_goes_xray
+
+- **Provider:** NOAA Space Weather Prediction Center
+- **Endpoint:** GOES primary X-ray flux, 1-minute points
+- **License:** public domain
+- **Entities:** `space_weather`
+- **Geospatial:** no
+- **Notes:** the 0.1–0.8 nm solar X-ray flux. The second independent space-
+  weather sensor alongside `noaa_kp_index`: Kp measures disturbance at Earth,
+  the X-ray flux measures the solar driver, so a solar flare and a geomagnetic
+  storm are different facts that can converge.
+
+### gdacs_disasters
+
+- **Provider:** GDACS (UN OCHA / European Commission JRC)
+- **Endpoint:** GDACS multi-hazard event list, rolling 30-day window
+- **License:** GDACS data, free with attribution
+- **Entities:** `disasters`
+- **Geospatial:** yes
+- **Notes:** official alerts per hazard type and alert level (Green/Orange/Red).
+  Independent of NASA EONET and USGS: EONET observes events, GDACS *assesses
+  impact*, so a Red cyclone alert is a different fact from a storm appearing.
+
+### who_outbreaks
+
+- **Provider:** World Health Organization
+- **Endpoint:** WHO Disease Outbreak News, newest first
+- **License:** WHO content terms, free with attribution
+- **Entities:** `health`
+- **Geospatial:** no
+- **Notes:** the count of outbreak announcements published in the last 24 hours,
+  a genuine non-overlapping daily count. Most days zero; a day with one or more
+  is a real announcement.
+
+### coingecko_market
+
+- **Provider:** CoinGecko
+- **Endpoint:** CoinGecko simple price, for a fixed coin set
+- **License:** CoinGecko data, free with attribution
+- **Entities:** `crypto`
+- **Geospatial:** no
+- **Notes:** spot price per coin (dimension `coin`). The one 24/7, globally
+  priced market with a free keyless API; independent of the ECB reference rate.
+
+### npm_downloads
+
+- **Provider:** npm, Inc.
+- **Endpoint:** npm registry weekly download point, per package
+- **License:** npm download counts, free to use
+- **Entities:** `software`
+- **Geospatial:** no
+- **Notes:** weekly downloads for a fixed set of 12 major JavaScript packages.
+  Download volume is a direct measurement of software *usage*, independent of
+  GitHub stars (attention) and Hacker News (discussion).
+
+### pypi_downloads
+
+- **Provider:** Python Package Index
+- **Endpoint:** pypistats recent downloads, per package
+- **License:** PyPI statistics, free to use
+- **Entities:** `software`
+- **Geospatial:** no
+- **Notes:** the Python counterpart to `npm_downloads`. The `last_week` total is
+  the detection series; `last_day` is a drill-down attribute.
 
 ## Source health
 

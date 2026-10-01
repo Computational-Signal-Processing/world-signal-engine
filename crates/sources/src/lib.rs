@@ -18,24 +18,33 @@
 pub mod afad;
 pub mod arxiv;
 pub mod cisa_kev;
+pub mod coingecko;
 pub mod collectors;
 pub mod crossref;
 pub mod ecb;
 pub mod eonet;
+pub mod gdacs;
 pub mod gdelt;
 pub mod github;
 pub mod hackernews;
 pub mod nasa;
+pub mod noaa_goes;
 pub mod noaa_kp;
+pub mod npm;
 pub mod nws;
+pub mod open_meteo;
+pub mod pypi;
 pub mod usgs;
+pub mod who_outbreaks;
 pub mod xml;
 
 pub use collectors::{
-    live_collectors, AfadCollector, ArxivCollector, CisaKevCollector, CollectorContext,
-    CrossrefCollector, EcbRatesCollector, EonetCollector, GdeltCollector, GitHubCollector,
-    HackerNewsCollector, LiveTransport, NasaNeoCollector, NoaaKpCollector, NwsAlertsCollector,
-    Request, Transport, TransportError, UsgsCollector,
+    live_collectors, AfadCollector, ArxivCollector, CisaKevCollector, CoingeckoCollector,
+    CollectorContext, CrossrefCollector, EcbRatesCollector, EonetCollector, GdacsCollector,
+    GdeltCollector, GitHubCollector, HackerNewsCollector, LiveTransport, NasaNeoCollector,
+    NoaaGoesXrayCollector, NoaaKpCollector, NpmCollector, NwsAlertsCollector,
+    OpenMeteoAirCollector, OpenMeteoWeatherCollector, PypiCollector, Request, Transport,
+    TransportError, UsgsCollector, WhoOutbreaksCollector,
 };
 
 use wse_model::Source;
@@ -56,11 +65,19 @@ pub fn catalog() -> Vec<Source> {
         nws::source(),
         eonet::source(),
         noaa_kp::source(),
+        noaa_goes::source(),
         cisa_kev::source(),
         ecb::source(),
         crossref::source(),
         arxiv::source(),
         afad::source(),
+        open_meteo::weather_source(),
+        open_meteo::air_quality_source(),
+        gdacs::source(),
+        who_outbreaks::source(),
+        coingecko::source(),
+        npm::source(),
+        pypi::source(),
     ];
     entries.sort_by_key(|s| (s.priority, s.id.as_str().to_string()));
     entries

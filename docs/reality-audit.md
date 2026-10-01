@@ -125,7 +125,7 @@ closed against the real USGS catalog (see *Follow-up status*, below).
 | 4 | Monitoring requires `--collect` | FIXED | Same as finding 2. |
 | 5 | No latency telemetry | FIXED | System screen shows source lag, collector fetch, detection, and newest-signal age, each measured from stored timestamps. |
 | 6 | Cold-start degenerate baseline | FIXED (CAP-2D) | GitHub's pooled baseline is gone: each repository is its own series (`repo` dimension), so a first appearance is judged against that repository's own history. See `docs/decisions/0020-github-per-repo-series.md`. |
-| 7 | Coverage is 4 narrow domains | IMPROVED | 13 sources across 9 categories: geophysics ×2, space ×2, weather, earth, global events, cyber, finance, science ×2, technology ×2. See *Source network* below. |
+| 7 | Coverage is 4 narrow domains | FIXED | 21 sources across 14 categories. The domains that matter now have two or more *independent* sensors: space weather ×2 (Kp, GOES X-ray), software ×4 (HN, GitHub, npm, PyPI), disasters ×3 (USGS, EONET, GDACS), earth ×4. Energy, agriculture and transport are named as uncovered rather than faked. See *Source network* below and `docs/source-taxonomy.md`. |
 | 8 | No acceptance test for the live SSE → world path | FIXED | `a_live_signal_frame_triggers_a_world_refresh` drives the real path over a socket: a world one run away from a signal, a live SSE reader attached, then a `signal` frame must arrive and the re-fetch it triggers must report the new signal (`active_signals` 3 → 4). The wire-contract test pins the frame shape; this proves a real signal produces a real refresh. |
 | 9 | `IMPACT` has no producer | FIXED | The shipped `config/impact/systemic.yaml` declares a scope (`finance`, `cyber`, entity `Hormuz`); the CLI loads it into `SignalConfig` for both `demo` and `serve`. `impact_scope.rs` proves a finance spike produces an `IMPACT` signal whose reason names the term, an in-scope entity is IMPACT without a listed category, and an out-of-scope `earth` spike is not. |
 | 10 | No labelled ground truth | FIXED | The checked-in real USGS catalog (`tests/fixtures/usgs_9mo_2026.geojson`, the actual feed over 2026-01-01..2026-09-30, M5+) is labelled with its ten M7.0+ quakes, read from the catalog before the detector ran. `crates/engine/tests/real_backtest.rs` scores the production detector against it: recall 0.50, precision 0.20 — measured, deterministic, and unflattering, which is the point. See `docs/decisions/0023-*`. |
@@ -193,3 +193,45 @@ Two fields were added to the catalog and are now load-bearing:
 
 `AGRICULTURE` and `ENERGY` remain intentionally unfed and are declared as such
 in the coverage test; they are placeholders, not accidents.
+
+## J. Sensor network widened across domains (2026-10-01)
+
+A second pass widened the network from 13 to 21 sources, chosen by *domain
+coverage* and *independence* rather than count. The plan the network is measured
+against is `docs/source-taxonomy.md`; the decision is ADR 0025.
+
+| Source | Domain | Tier | Measurement | Why it is independent |
+| --- | --- | --- | --- | --- |
+| `open_meteo_weather` | weather | 2 | stable series, fixed city set | physical measurement, independent of the NWS bulletin feed |
+| `open_meteo_air_quality` | environment | 2 | stable series, fixed city set | first real environment sensor (PM2.5/PM10) |
+| `noaa_goes_xray` | space | 1 | stable series | the solar *driver*; Kp measures disturbance at Earth |
+| `gdacs_disasters` | disasters | 1 | stable series, fixed hazard×level grid | official impact assessment; EONET only observes events |
+| `who_outbreaks` | health | 1 | non-overlapping daily count | authoritative outbreak feed; a new domain |
+| `coingecko_market` | markets | 2 | stable series, fixed coin set | 24/7 priced market, independent of the ECB rate |
+| `npm_downloads` | technology | 2 | fixed universe, per package | usage, independent of stars (attention) and HN (discussion) |
+| `pypi_downloads` | technology | 2 | fixed universe, per package | the Python counterpart to npm |
+
+`github_repo_universe` was also generalized from a Rust-only universe to one
+spanning language ecosystems, infrastructure, AI/ML and tooling (ADR 0024), so it
+measures *the open-source ecosystem* rather than one community.
+
+### Lens coverage after this pass
+
+| Lens | Backed by |
+| --- | --- |
+| EARTH | USGS, AFAD, NWS, Open-Meteo weather & air quality, EONET, GDACS |
+| SPACE | NASA NEO, NOAA Kp, NOAA GOES X-ray |
+| GLOBAL EVENTS | GDELT |
+| CYBER | CISA KEV |
+| FINANCE | ECB, CoinGecko |
+| MARKETS | CoinGecko |
+| SCIENCE | Crossref, arXiv |
+| AI | Crossref, arXiv |
+| SOFTWARE | Hacker News, GitHub, npm, PyPI |
+| HEALTH | WHO outbreaks |
+| HUMANITARIAN | GDACS |
+| AGRICULTURE | Open-Meteo weather & air quality |
+| TURKEY | USGS, AFAD, Open-Meteo (geographic) |
+
+Only `ENERGY` remains intentionally unfed, and it is declared as such in the
+coverage test — a placeholder, not an accident.

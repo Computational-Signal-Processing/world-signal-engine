@@ -428,7 +428,7 @@ fn crossref_measures_one_completed_day_never_today() {
 }
 
 /// F9 — GitHub repositories must not share one baseline. All repositories use
-/// entity `ecosystem_rust` / metric `repo_stars` / unit `stars`; without a
+/// entity `ecosystem_open_source` / metric `repo_stars` / unit `stars`; without a
 /// discriminator they pool into one series, so a repository's first appearance
 /// is scored against the others' star counts and fires a meaningless cold-start
 /// deviation (~1527σ, `docs/reality-audit.md` finding 6). The `repo` dimension

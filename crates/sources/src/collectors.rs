@@ -20,8 +20,8 @@ use wse_model::SourceId;
 use wse_scheduler::{Clock, LiveClock};
 
 use crate::{
-    afad, arxiv, cisa_kev, crossref, ecb, eonet, gdelt, github, hackernews, nasa, noaa_kp, nws,
-    usgs,
+    afad, arxiv, cisa_kev, coingecko, crossref, ecb, eonet, gdacs, gdelt, github, hackernews, nasa,
+    noaa_goes, noaa_kp, npm, nws, open_meteo, pypi, usgs, who_outbreaks,
 };
 
 /// A single HTTP GET, plus the headers the source needs.
@@ -851,6 +851,288 @@ impl Collector for AfadCollector {
     }
 }
 
+fn open_meteo_weather_request() -> Request {
+    Request::get(open_meteo::weather_url()).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// Open-Meteo surface weather for the fixed city set, every 30 minutes.
+    OpenMeteoWeatherCollector,
+    open_meteo::weather_source,
+    Schedule::Interval { seconds: 1800 },
+    open_meteo_weather_request,
+    open_meteo::parse_weather,
+    "application/json"
+);
+
+fn open_meteo_air_request() -> Request {
+    Request::get(open_meteo::air_quality_url()).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// Open-Meteo air quality for the fixed city set, hourly.
+    OpenMeteoAirCollector,
+    open_meteo::air_quality_source,
+    Schedule::Interval { seconds: 3600 },
+    open_meteo_air_request,
+    open_meteo::parse_air_quality,
+    "application/json"
+);
+
+fn noaa_goes_request() -> Request {
+    Request::get(noaa_goes::API_ENDPOINT).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// NOAA GOES X-ray flux, polled every 15 minutes.
+    NoaaGoesXrayCollector,
+    noaa_goes::source,
+    Schedule::Interval { seconds: 900 },
+    noaa_goes_request,
+    noaa_goes::parse,
+    "application/json"
+);
+
+/// GDACS is collected over a rolling window computed at collection time.
+#[derive(Clone)]
+pub struct GdacsCollector {
+    context: CollectorContext,
+}
+
+impl GdacsCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn window_request(&self, now: DateTime<Utc>) -> Request {
+        Request::get(gdacs::window_url(now, 30)).with_header("Accept", "application/json")
+    }
+}
+
+#[async_trait]
+impl Collector for GdacsCollector {
+    fn source_id(&self) -> SourceId {
+        gdacs::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 1800 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let request = self.window_request(started_at);
+        let body = self
+            .context
+            .transport
+            .fetch(&request)
+            .map_err(|e| CollectorError::Transport(e.message))?;
+        let observations = gdacs::parse(&body, started_at)?;
+        Ok(build_result(
+            gdacs::source().id,
+            &request,
+            &body,
+            observations,
+            "application/geo+json",
+            started_at,
+        ))
+    }
+}
+
+fn who_outbreaks_request() -> Request {
+    Request::get(who_outbreaks::API_ENDPOINT).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// WHO Disease Outbreak News, collected daily.
+    WhoOutbreaksCollector,
+    who_outbreaks::source,
+    Schedule::Interval { seconds: 86_400 },
+    who_outbreaks_request,
+    who_outbreaks::parse,
+    "application/json"
+);
+
+fn coingecko_request() -> Request {
+    Request::get(coingecko::price_url()).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// CoinGecko crypto spot prices, polled every 15 minutes.
+    CoingeckoCollector,
+    coingecko::source,
+    Schedule::Interval { seconds: 900 },
+    coingecko_request,
+    coingecko::parse,
+    "application/json"
+);
+
+/// npm and PyPI are collected per package, one request each, merged.
+#[derive(Clone)]
+pub struct NpmCollector {
+    context: CollectorContext,
+}
+
+impl NpmCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn package_request(&self, package: &str) -> Request {
+        Request::get(npm::API_ENDPOINT.replace("{package}", package))
+            .with_header("Accept", "application/json")
+    }
+}
+
+#[async_trait]
+impl Collector for NpmCollector {
+    fn source_id(&self) -> SourceId {
+        npm::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 86_400 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let mut result = CollectionResult::new(self.source_id());
+        let mut errors = 0usize;
+
+        for package in npm::PACKAGES {
+            let request = self.package_request(package);
+            match self.context.transport.fetch(&request) {
+                Ok(body) => {
+                    result.records_received += 1;
+                    match npm::parse(&body, package, started_at)? {
+                        Some(observation) => {
+                            result.records_changed += 1;
+                            result.observations.push(observation);
+                        }
+                        None => result.records_duplicate += 1,
+                    }
+                    result.raw_payloads.push(RawPayload::new(
+                        request.url.clone(),
+                        body,
+                        "application/json",
+                    ));
+                }
+                Err(err) => {
+                    errors += 1;
+                    result.errors.push(format!("{package}: {}", err.message));
+                }
+            }
+        }
+
+        if errors > 0 && result.observations.is_empty() {
+            return Err(CollectorError::Transport(format!(
+                "all {} npm package requests failed: {}",
+                npm::PACKAGES.len(),
+                result.errors.first().cloned().unwrap_or_default()
+            )));
+        }
+
+        result.started_at = Some(started_at);
+        result.finished_at = Some(Utc::now());
+        Ok(result)
+    }
+}
+
+/// PyPI is collected per package, one request each, merged.
+#[derive(Clone)]
+pub struct PypiCollector {
+    context: CollectorContext,
+}
+
+impl PypiCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn package_request(&self, package: &str) -> Request {
+        Request::get(pypi::API_ENDPOINT.replace("{package}", package))
+            .with_header("Accept", "application/json")
+    }
+}
+
+#[async_trait]
+impl Collector for PypiCollector {
+    fn source_id(&self) -> SourceId {
+        pypi::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 86_400 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let mut result = CollectionResult::new(self.source_id());
+        let mut errors = 0usize;
+
+        for package in pypi::PACKAGES {
+            let request = self.package_request(package);
+            match self.context.transport.fetch(&request) {
+                Ok(body) => {
+                    result.records_received += 1;
+                    match pypi::parse(&body, package, started_at)? {
+                        Some(observation) => {
+                            result.records_changed += 1;
+                            result.observations.push(observation);
+                        }
+                        None => result.records_duplicate += 1,
+                    }
+                    result.raw_payloads.push(RawPayload::new(
+                        request.url.clone(),
+                        body,
+                        "application/json",
+                    ));
+                }
+                Err(err) => {
+                    errors += 1;
+                    result.errors.push(format!("{package}: {}", err.message));
+                }
+            }
+        }
+
+        if errors > 0 && result.observations.is_empty() {
+            return Err(CollectorError::Transport(format!(
+                "all {} pypi package requests failed: {}",
+                pypi::PACKAGES.len(),
+                result.errors.first().cloned().unwrap_or_default()
+            )));
+        }
+
+        result.started_at = Some(started_at);
+        result.finished_at = Some(Utc::now());
+        Ok(result)
+    }
+}
+
 /// Build one live collector per catalog entry.
 ///
 /// This is the bridge from the catalog to the pipeline: adding a source means
@@ -870,6 +1152,14 @@ pub fn live_collectors() -> Vec<Box<dyn Collector>> {
         Box::new(CrossrefCollector::live()),
         Box::new(ArxivCollector::live()),
         Box::new(AfadCollector::live()),
+        Box::new(OpenMeteoWeatherCollector::live()),
+        Box::new(OpenMeteoAirCollector::live()),
+        Box::new(NoaaGoesXrayCollector::live()),
+        Box::new(GdacsCollector::live()),
+        Box::new(WhoOutbreaksCollector::live()),
+        Box::new(CoingeckoCollector::live()),
+        Box::new(NpmCollector::live()),
+        Box::new(PypiCollector::live()),
     ]
 }
 

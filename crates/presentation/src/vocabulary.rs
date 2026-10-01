@@ -107,6 +107,60 @@ pub fn metric_vocab(metric: &str) -> Option<MetricVocab> {
             unit_name: "preprints",
             movement_meaning: "preprint output in this category moving faster than the recent norm",
         },
+        "temperature_2m" => MetricVocab {
+            subject: "surface air temperature",
+            short: "temperature",
+            unit_name: "°C",
+            movement_meaning: "a temperature away from the recent norm for this city",
+        },
+        "precipitation" => MetricVocab {
+            subject: "precipitation",
+            short: "rainfall",
+            unit_name: "mm",
+            movement_meaning: "more or less rain than the recent norm for this city",
+        },
+        "pm2_5" => MetricVocab {
+            subject: "fine particulate air pollution (PM2.5)",
+            short: "air pollution",
+            unit_name: "µg/m³",
+            movement_meaning: "air pollution away from the recent norm for this city",
+        },
+        "pm10" => MetricVocab {
+            subject: "coarse particulate air pollution (PM10)",
+            short: "air pollution",
+            unit_name: "µg/m³",
+            movement_meaning: "particulate pollution away from the recent norm for this city",
+        },
+        "xray_flux" => MetricVocab {
+            subject: "solar X-ray flux",
+            short: "solar activity",
+            unit_name: "W/m²",
+            movement_meaning: "a solar flare stronger than the recent background",
+        },
+        "active_alerts" => MetricVocab {
+            subject: "official disaster alerts",
+            short: "disaster alerts",
+            unit_name: "alerts",
+            movement_meaning: "more official disaster alerts than the recent norm",
+        },
+        "outbreak_news" => MetricVocab {
+            subject: "disease outbreak announcements",
+            short: "outbreak announcements",
+            unit_name: "items",
+            movement_meaning: "more outbreak announcements than the recent norm",
+        },
+        "spot_price" => MetricVocab {
+            subject: "the spot price of a cryptocurrency",
+            short: "crypto price",
+            unit_name: "usd",
+            movement_meaning: "a price move larger than the recent norm",
+        },
+        "weekly_downloads" => MetricVocab {
+            subject: "weekly package downloads",
+            short: "package usage",
+            unit_name: "downloads",
+            movement_meaning: "software adoption moving faster than the recent norm",
+        },
         _ => return None,
     };
     Some(entry)
@@ -115,10 +169,56 @@ pub fn metric_vocab(metric: &str) -> Option<MetricVocab> {
 /// The entity vocabulary for the entity ids the connected sources emit.
 ///
 /// Matching is deliberately structural: entities are slugs
-/// (`region_hormuz`, `topic_oil_supply`, `ecosystem_rust`), so the prefix
+/// (`region_hormuz`, `topic_oil_supply`, `ecosystem_open_source`), so the prefix
 /// selects the family and the remainder is turned back into words.
 pub fn entity_vocab(entity: &EntityId) -> Option<EntityVocab> {
     let id = entity.as_str();
+    // Some entities are whole words with no `family_` prefix.
+    match id {
+        "health" => {
+            return Some(EntityVocab {
+                subject: "global health",
+                short: "health".to_string(),
+                place: None,
+            })
+        }
+        "disasters" => {
+            return Some(EntityVocab {
+                subject: "official disaster alerts",
+                short: "disasters".to_string(),
+                place: None,
+            })
+        }
+        "crypto" => {
+            return Some(EntityVocab {
+                subject: "a cryptocurrency",
+                short: "crypto".to_string(),
+                place: None,
+            })
+        }
+        "software" => {
+            return Some(EntityVocab {
+                subject: "the software ecosystem",
+                short: "software".to_string(),
+                place: None,
+            })
+        }
+        "air_quality" => {
+            return Some(EntityVocab {
+                subject: "air quality in a city",
+                short: "air quality".to_string(),
+                place: None,
+            })
+        }
+        "weather" => {
+            return Some(EntityVocab {
+                subject: "weather",
+                short: "weather".to_string(),
+                place: None,
+            })
+        }
+        _ => {}
+    }
     let (prefix, rest) = id.split_once('_')?;
     match prefix {
         "region" => Some(EntityVocab {
@@ -197,6 +297,10 @@ pub fn category_label(category: &str) -> Option<&'static str> {
         "transport" => "Transport",
         "cyber" => "Cyber",
         "research" => "Research",
+        "earth" => "Earth",
+        "disasters" => "Disasters",
+        "health" => "Health",
+        "humanitarian" => "Humanitarian",
         _ => return None,
     };
     Some(label)
@@ -213,11 +317,19 @@ pub fn source_label(source_id: &str) -> Option<&'static str> {
         "nws_alerts" => "NWS weather alerts",
         "gdelt_news_volume" => "GDELT news volume",
         "hackernews_frontpage" => "Hacker News",
-        "github_rust_activity" => "GitHub activity",
+        "github_repo_universe" => "GitHub activity",
         "cisa_kev" => "CISA exploited vulnerabilities",
         "ecb_exchange_rates" => "ECB reference rates",
         "crossref_works" => "Crossref scholarly works",
         "arxiv_submissions" => "arXiv preprints",
+        "open_meteo_weather" => "Open-Meteo weather",
+        "open_meteo_air_quality" => "Open-Meteo air quality",
+        "noaa_goes_xray" => "NOAA solar X-ray flux",
+        "gdacs_disasters" => "GDACS disaster alerts",
+        "who_outbreaks" => "WHO disease outbreaks",
+        "coingecko_market" => "CoinGecko crypto prices",
+        "npm_downloads" => "npm downloads",
+        "pypi_downloads" => "PyPI downloads",
         _ => return None,
     };
     Some(label)
@@ -244,6 +356,15 @@ mod tests {
             "exchange_rate",
             "works_registered",
             "preprint_total",
+            "temperature_2m",
+            "precipitation",
+            "pm2_5",
+            "pm10",
+            "xray_flux",
+            "active_alerts",
+            "outbreak_news",
+            "spot_price",
+            "weekly_downloads",
         ] {
             assert!(metric_vocab(metric).is_some(), "no vocab for {metric}");
         }
@@ -257,8 +378,8 @@ mod tests {
         let topic = entity_vocab(&EntityId::new("topic_oil_supply")).unwrap();
         assert!(topic.short.contains("oil supply"));
 
-        let eco = entity_vocab(&EntityId::new("ecosystem_rust")).unwrap();
-        assert!(eco.short.contains("rust"));
+        let eco = entity_vocab(&EntityId::new("ecosystem_open_source")).unwrap();
+        assert!(eco.short.contains("open source"));
     }
 
     #[test]

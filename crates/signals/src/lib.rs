@@ -434,8 +434,8 @@ fn statement_for(c: &wse_model::AnomalyCandidate) -> String {
     };
     match c.kind {
         CandidateKind::Anomaly => format!(
-            "{metric} {value:.2}{unit} ({sigma:+.1}σ vs baseline, {method:?})",
-            value = c.current,
+            "{metric} {value}{unit} ({sigma:+.1}σ vs baseline, {method:?})",
+            value = value(c.current),
             sigma = c.score,
             method = c.method
         ),
@@ -502,6 +502,22 @@ pub fn summarize(signal: &Signal) -> String {
     )
 }
 
+/// Render a baseline quantity at a precision that does not lie.
+///
+/// A fixed `{:.2}` shows a solar X-ray flux of 2.5e-7 as `0.00`, which reads as
+/// "the baseline is zero" when it is only small. Small magnitudes keep
+/// significant digits; ordinary ones stay readable.
+fn value(x: f64) -> String {
+    let a = x.abs();
+    if a == 0.0 {
+        "0".to_string()
+    } else if !(0.01..10_000.0).contains(&a) {
+        format!("{x:.3e}")
+    } else {
+        format!("{x:.2}")
+    }
+}
+
 /// Explicit, machine-checkable reasons the signal exists.
 fn reasons_for(
     signal: &Signal,
@@ -516,10 +532,10 @@ fn reasons_for(
             .max_by(|a, b| a.score.abs().partial_cmp(&b.score.abs()).unwrap());
         if let Some(best) = best {
             reasons.push(format!(
-                "deviation {sigma:+.1}σ from baseline (median {median:.2}, MAD {mad:.2}) via {method:?}",
+                "deviation {sigma:+.1}σ from baseline (median {}, MAD {}) via {method:?}",
+                value(best.baseline.median),
+                value(best.baseline.mad),
                 sigma = best.score,
-                median = best.baseline.median,
-                mad = best.baseline.mad,
                 method = best.method
             ));
         }
@@ -1039,5 +1055,16 @@ mod tests {
             vec![LensId::new("lens_global")],
             "an unconfigured declared lens must not appear"
         );
+    }
+
+    #[test]
+    fn small_baseline_values_keep_significant_digits() {
+        // A solar X-ray baseline is ~1e-7. Rendered as `{:.2}` it reads `0.00`,
+        // which says "the baseline is zero" — a false claim about the world.
+        assert_eq!(value(2.5e-7), "2.500e-7");
+        assert_eq!(value(0.0), "0");
+        assert_eq!(value(100.0), "100.00");
+        assert_eq!(value(-3.5), "-3.50");
+        assert_eq!(value(50_000.0), "5.000e4");
     }
 }

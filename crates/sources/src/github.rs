@@ -1,4 +1,5 @@
-//! GitHub repository activity — a **fixed universe** of Rust repositories.
+//! GitHub repository activity — a **fixed universe** of major open-source
+//! projects.
 //!
 //! ## Why the population is fixed
 //!
@@ -14,59 +15,85 @@
 //! changed. Membership is stable by construction — the list only changes when
 //! someone edits the code.
 //!
+//! ## Why the universe is not one language
+//!
+//! An earlier version tracked only Rust repositories. That is a sensor of one
+//! corner of software, not of "the software world": a shift in developer
+//! attention from one ecosystem to another is exactly the kind of change the
+//! engine exists to surface, and a single-language universe is blind to it. The
+//! universe now spans the major language ecosystems, foundational
+//! infrastructure, and AI/ML, so the aggregate is a measurement of *the open
+//! source ecosystem* rather than of one community. See
+//! `docs/decisions/0024-github-universe-spans-ecosystems.md`.
+//!
 //! The catalog marks this source `measurement: fixed_universe` and tier 3
 //! (community/platform signal), so the engine treats it honestly.
 //!
 //! ## Why each repository is its own series
 //!
-//! All repositories share the entity `ecosystem_rust`, metric `repo_stars` and
-//! unit `stars`. Without more, they would share one `series_key` and therefore
-//! one rolling baseline, pooling unrelated repositories: a repository's first
-//! appearance would be scored against the others' star counts and fire a
-//! meaningless cold-start deviation (~1527σ was recorded this way, see
-//! `docs/reality-audit.md` finding 6). Each observation therefore carries
-//! `dimension: repo = owner/name`, so the baseline is per repository — exactly
-//! the "rolling statistics per repository" the semantic audit asks for. See
-//! `docs/decisions/0020-github-per-repo-series.md`.
+//! All repositories share the entity `ecosystem_open_source`, metric
+//! `repo_stars` and unit `stars`. Without more, they would share one
+//! `series_key` and therefore one rolling baseline, pooling unrelated
+//! repositories: a repository's first appearance would be scored against the
+//! others' star counts and fire a meaningless cold-start deviation (~1527σ was
+//! recorded this way, see `docs/reality-audit.md` finding 6). Each observation
+//! therefore carries `dimension: repo = owner/name`, so the baseline is per
+//! repository — exactly the "rolling statistics per repository" the semantic
+//! audit asks for. See `docs/decisions/0020-github-per-repo-series.md`.
 //!
 //! API docs: <https://docs.github.com/en/rest/repos/repos>
 //!
 //! Authentication: works unauthenticated at 60 requests/hour (the universe is
-//! ~16 repositories, collected hourly, so it fits); a token raises the limit.
+//! ~20 repositories, collected hourly, so it fits); a token raises the limit.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use wse_collector::CollectorError;
 use wse_model::{EntityId, Observation, RawReference, Source, SourceId};
 
-pub const SOURCE_ID: &str = "github_rust_activity";
+pub const SOURCE_ID: &str = "github_repo_universe";
 pub const COLLECTOR_TYPE: &str = "github_repo_universe";
 
 /// Repository detail endpoint; `{repo}` is `owner/name`.
 pub const REPO_ENDPOINT: &str = "https://api.github.com/repos/{repo}";
 
-/// The fixed universe of Rust ecosystem repositories.
+/// The fixed universe of open-source repositories, spanning the major language
+/// ecosystems, foundational infrastructure and AI/ML.
 ///
 /// Membership is deliberately stable: the same set is re-measured every hour so
 /// a change in the aggregate is a change in these projects, never churn in a
-/// search result. Changing this list is a deliberate, reviewable act.
+/// search result. Changing this list is a deliberate, reviewable act. Each entry
+/// must be the canonical `owner/name` (renamed repositories 301-redirect, which
+/// the transport does not follow).
 pub const UNIVERSE: &[&str] = &[
+    // Language ecosystems
     "rust-lang/rust",
-    "rust-lang/cargo",
-    "rust-lang/rustlings",
-    "rust-lang/rustfmt",
-    "rust-lang/book",
-    "rust-analyzer/rust-analyzer",
-    "tokio-rs/tokio",
-    "tokio-rs/axum",
-    "serde-rs/serde",
-    "hyperium/hyper",
-    "actix/actix-web",
-    "clap-rs/clap",
-    "BurntSushi/ripgrep",
-    "tauri-apps/tauri",
-    "gfx-rs/wgpu",
-    "rayon-rs/rayon",
+    "golang/go",
+    "python/cpython",
+    "nodejs/node",
+    "denoland/deno",
+    "vuejs/core",
+    "vercel/next.js",
+    "react/react",
+    // Foundational infrastructure
+    "kubernetes/kubernetes",
+    "moby/moby",
+    "hashicorp/terraform",
+    "redis/redis",
+    "postgres/postgres",
+    "apache/kafka",
+    "grafana/grafana",
+    "prometheus/prometheus",
+    // AI / ML
+    "pytorch/pytorch",
+    "huggingface/transformers",
+    "langchain-ai/langchain",
+    "ollama/ollama",
+    // Developer tooling
+    "microsoft/vscode",
+    "neovim/neovim",
+    "astral-sh/ruff",
+    "duckdb/duckdb",
 ];
 
 /// The catalog entry.
@@ -77,7 +104,7 @@ pub fn source() -> Source {
 
     Source {
         id: SourceId::new(SOURCE_ID),
-        name: "GitHub Rust Repository Universe".to_string(),
+        name: "GitHub Open-Source Repository Universe".to_string(),
         provider: "GitHub".to_string(),
         category: "technology".to_string(),
         subcategory: Some("software_ecosystem".to_string()),
@@ -149,7 +176,7 @@ pub fn parse_repo(
     }
 
     let source_id = SourceId::new(SOURCE_ID);
-    let entity = EntityId::new("ecosystem_rust");
+    let entity = EntityId::new("ecosystem_open_source");
     let hash = wse_model::fnv1a_hex(&String::from_utf8_lossy(body));
     let raw = RawReference {
         locator: if repo.html_url.is_empty() {
@@ -245,7 +272,7 @@ mod tests {
         let a = parse_repo(&fixture(), received()).unwrap().unwrap();
         let b = parse_repo(&fixture(), received()).unwrap().unwrap();
         assert_eq!(a.series_key(), b.series_key());
-        assert!(a.series_key().contains("ecosystem_rust"));
+        assert!(a.series_key().contains("ecosystem_open_source"));
     }
 
     #[test]

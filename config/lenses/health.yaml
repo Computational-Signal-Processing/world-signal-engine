@@ -1,0 +1,15 @@
+# Health: outbreaks and epidemic events.
+#
+# `health` is the category the WHO Disease Outbreak News collector emits:
+# official announcements of outbreaks of international concern. A rise is a real
+# increase in reported outbreaks, not health news chatter.
+id: lens_health
+name: HEALTH
+description: "Outbreaks of international concern, from the WHO Disease Outbreak News feed."
+categories:
+  - health
+keywords:
+  - outbreak
+  - epidemic
+weights:
+  novelty: 1.3

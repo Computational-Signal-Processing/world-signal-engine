@@ -1346,7 +1346,7 @@ mod tests {
         let mut low = Signal::new(EventId::new("evt_1"), at(0));
         low.add_type(SignalType::Now);
         low.categories = vec!["technology".into()];
-        low.entities = vec![wse_model::EntityId::new("ecosystem_rust")];
+        low.entities = vec![wse_model::EntityId::new("ecosystem_open_source")];
         low.lens_matches = vec![wse_model::LensId::new("lens_global")];
         low.quality = SignalQuality::default();
 
@@ -1383,7 +1383,7 @@ mod tests {
 
         let by_entity = store
             .query_signals(&SignalQuery {
-                entity_id: Some("ecosystem_rust".into()),
+                entity_id: Some("ecosystem_open_source".into()),
                 ..Default::default()
             })
             .unwrap();

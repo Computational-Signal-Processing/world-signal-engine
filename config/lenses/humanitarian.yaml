@@ -1,0 +1,18 @@
+# Humanitarian: disasters, displacement and aid.
+#
+# `disasters` is the category the GDACS collector emits: official multi-hazard
+# alerts with severity. A Red cyclone alert is a real escalation in what is
+# happening to people, and it is a different fact from a storm appearing in
+# NASA EONET (which observes events rather than assessing impact).
+id: lens_humanitarian
+name: HUMANITARIAN
+description: "Disasters and their severity, from the GDACS official alert feed."
+categories:
+  - disasters
+  - humanitarian
+keywords:
+  - alert
+  - displacement
+weights:
+  strength: 1.4
+  breadth: 1.2
