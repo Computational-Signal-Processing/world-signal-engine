@@ -4,8 +4,13 @@
 //! vulnerabilities **known to be exploited in the wild**, maintained by the US
 //! Cybersecurity and Infrastructure Security Agency. It is a stable series:
 //!
-//! * `kev_added` — how many vulnerabilities were added in the last seven days.
-//!   A rise is a real increase in newly-exploited vulnerabilities.
+//! * `kev_added` — how many vulnerabilities were added **that UTC day**. The
+//!   catalog is polled once a day and the count is a genuine, non-overlapping
+//!   daily quantity: consecutive points share no members, so a daily z-score is
+//!   meaningful. (An earlier version emitted a trailing 7-day sum sampled
+//!   daily; consecutive points then overlapped by six days, which made the
+//!   series autocorrelated and a daily z-score structurally misleading. See
+//!   `docs/decisions/0018-kev-daily-additions.md`.)
 //! * `kev_catalog_total` — the size of the whole catalog. It only ever grows, so
 //!   a level z-score on it is close to meaningless. The catalog therefore
 //!   declares a `Delta` derivation to `kev_catalog_growth` — how many
@@ -13,13 +18,17 @@
 //!   detection runs on. The raw total is stored and drill-downable but
 //!   **evidence-only**. See `docs/decisions/0014-derived-metrics.md`.
 //!
+//! `kev_added` (from the authoritative `dateAdded`) and `kev_catalog_growth`
+//! (from the total's interval difference) are two independent measurements of
+//! the same daily additions, so they cross-check each other.
+//!
 //! Feed: <https://www.cisa.gov/known-exploited-vulnerabilities-catalog>
 //!
 //! Authentication: none. License: public domain (US Government).
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Duration, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use wse_collector::CollectorError;
 use wse_model::{Derivation, EntityId, Observation, RawReference, Source, SourceId};
@@ -36,14 +45,8 @@ pub const DERIVED_GROWTH_METRIC: &str = "kev_catalog_growth";
 pub const API_ENDPOINT: &str =
     "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 
-/// The trailing window for the "recently added" count.
-pub const RECENT_DAYS: i64 = 7;
-
 /// The catalog entry.
 pub fn source() -> Source {
-    let mut parameters = BTreeMap::new();
-    parameters.insert("recent_days".to_string(), RECENT_DAYS.to_string());
-
     Source {
         id: SourceId::new(SOURCE_ID),
         name: "CISA Known Exploited Vulnerabilities".to_string(),
@@ -65,7 +68,7 @@ pub fn source() -> Source {
         priority: 35,
         enabled: true,
         collector_type: COLLECTOR_TYPE.to_string(),
-        parameters,
+        parameters: BTreeMap::new(),
         tier: wse_model::SourceTier::Tier1,
         measurement: wse_model::MeasurementSemantics::StableSeries,
         feeds_lenses: vec!["lens_cyber".to_string()],
@@ -99,7 +102,7 @@ pub struct Catalog {
 
 /// Parse the catalog into observations.
 ///
-/// Two observations: the trailing-window addition count and the catalog size.
+/// Two observations: the additions dated to that UTC day and the catalog size.
 /// Both share the entity `cyber_kev` and differ by metric, so each is its own
 /// series.
 pub fn parse(body: &[u8], observed_at: DateTime<Utc>) -> Result<Vec<Observation>, CollectorError> {
@@ -109,17 +112,17 @@ pub fn parse(body: &[u8], observed_at: DateTime<Utc>) -> Result<Vec<Observation>
     let source_id = SourceId::new(SOURCE_ID);
     let entity = EntityId::new("cyber_kev");
     let hash = wse_model::fnv1a_hex(&String::from_utf8_lossy(body));
-    let cutoff = (observed_at - Duration::days(RECENT_DAYS)).date_naive();
+    // The additions *of the collection day*. `dateAdded` is the authoritative
+    // day, so the count is non-overlapping across consecutive daily polls.
+    let day = observed_at.date_naive();
 
-    let mut recent = 0u64;
-    let mut recent_cves: Vec<&str> = Vec::new();
+    let mut added_today = 0u64;
+    let mut added_cves: Vec<&str> = Vec::new();
     for v in &catalog.vulnerabilities {
-        if let Ok(date) = NaiveDate::parse_from_str(&v.date_added, "%Y-%m-%d") {
-            if date >= cutoff {
-                recent += 1;
-                if recent_cves.len() < 5 {
-                    recent_cves.push(&v.cve_id);
-                }
+        if NaiveDate::parse_from_str(&v.date_added, "%Y-%m-%d") == Ok(day) {
+            added_today += 1;
+            if added_cves.len() < 5 {
+                added_cves.push(&v.cve_id);
             }
         }
     }
@@ -143,15 +146,17 @@ pub fn parse(body: &[u8], observed_at: DateTime<Utc>) -> Result<Vec<Observation>
         source_id.clone(),
         Some(entity.clone()),
         "kev_added",
-        recent as f64,
+        added_today as f64,
         "vulnerabilities",
         observed_at,
-        raw(format!("{API_ENDPOINT}#recent-{RECENT_DAYS}d")),
+        raw(format!("{API_ENDPOINT}#added-{day}")),
     )
     .with_received_at(observed_at)
-    .with_attribute("window_days", RECENT_DAYS.to_string())
+    // The day is the record, so a re-poll of the same day keeps one identity.
+    .with_record_key(day.format("%Y-%m-%d").to_string())
+    .with_attribute("day", day.format("%Y-%m-%d").to_string())
     .with_attribute("catalog_version", catalog.catalog_version.clone())
-    .with_attribute("recent_cves", recent_cves.join(","));
+    .with_attribute("added_cves", added_cves.join(","));
 
     let size = Observation::new(
         source_id,
@@ -173,7 +178,7 @@ mod tests {
     use super::*;
 
     fn received() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+        DateTime::parse_from_rfc3339("2026-09-30T00:00:00Z")
             .unwrap()
             .with_timezone(&Utc)
     }
@@ -195,8 +200,12 @@ mod tests {
             .find(|o| o.metric == "kev_catalog_total")
             .unwrap();
         assert_eq!(total.value, 4.0, "catalog count from the header");
-        assert_eq!(added.value, 2.0, "two entries within the last 7 days");
+        assert_eq!(added.value, 1.0, "one entry dated the collection day");
         assert_eq!(added.unit, "vulnerabilities");
+        assert_eq!(
+            added.attributes.get("day").map(String::as_str),
+            Some("2026-09-30")
+        );
     }
 
     #[test]
@@ -209,15 +218,50 @@ mod tests {
     }
 
     #[test]
-    fn the_recent_window_excludes_old_entries() {
-        let body = br#"{"catalogVersion":"2026.01.01","count":1,
-            "vulnerabilities":[{"cveID":"CVE-2020-0001","dateAdded":"2020-01-01"}]}"#;
+    fn only_the_collection_day_counts() {
+        // One old entry and one dated the collection day: only the latter
+        // counts, so consecutive daily polls never share a member.
+        let body = br#"{"catalogVersion":"2026.01.01","count":2,"vulnerabilities":[
+            {"cveID":"CVE-2020-0001","dateAdded":"2020-01-01"},
+            {"cveID":"CVE-2026-1001","dateAdded":"2026-09-30"}]}"#;
+        let observations = parse(body, received()).unwrap();
+        let added = observations
+            .iter()
+            .find(|o| o.metric == "kev_added")
+            .unwrap();
+        assert_eq!(added.value, 1.0);
+    }
+
+    #[test]
+    fn a_day_with_no_additions_is_a_genuine_zero() {
+        // The catalog was polled on a day with nothing added. "Nothing added"
+        // is a real measurement, emitted as 0 — not the same as no data.
+        let body = br#"{"catalogVersion":"2026.01.01","count":1,"vulnerabilities":[
+            {"cveID":"CVE-2020-0001","dateAdded":"2020-01-01"}]}"#;
         let observations = parse(body, received()).unwrap();
         let added = observations
             .iter()
             .find(|o| o.metric == "kev_added")
             .unwrap();
         assert_eq!(added.value, 0.0);
+    }
+
+    #[test]
+    fn the_day_is_the_record_key() {
+        // Re-polling the same day keeps one identity; the next day is a new
+        // record. Without the day key, a day re-polled would be re-minted.
+        let a = parse(&fixture(), received()).unwrap();
+        let b = parse(&fixture(), received()).unwrap();
+        let added_a = a.iter().find(|o| o.metric == "kev_added").unwrap();
+        let added_b = b.iter().find(|o| o.metric == "kev_added").unwrap();
+        assert_eq!(added_a.id, added_b.id);
+
+        let next_day = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let c = parse(&fixture(), next_day).unwrap();
+        let added_c = c.iter().find(|o| o.metric == "kev_added").unwrap();
+        assert_ne!(added_a.id, added_c.id, "a new day is a new record");
     }
 
     #[test]

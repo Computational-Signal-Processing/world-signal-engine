@@ -2,7 +2,7 @@
 //!
 //! All specs are active: they pass under the fixed contracts (per-record
 //! observation identity for F1, a committed universe for F2, a coherent daily
-//! count for F4) and fail without them.
+//! count for F4, a non-overlapping daily count for F5) and fail without them.
 
 use chrono::{DateTime, Utc};
 
@@ -324,4 +324,44 @@ fn nasa_neo_counts_approaches_per_day_rather_than_pooling_distances() {
     assert!(observations[0]
         .attributes
         .contains_key("closest_object_name"));
+}
+
+/// F5 — CISA `kev_added` must be a non-overlapping daily count, not a trailing
+/// 7-day sum sampled daily. The overlapping window made consecutive points share
+/// six of seven days, so a daily z-score was structurally misleading. The count
+/// is now the additions dated to the collection day, so consecutive polls never
+/// share a member and the day is the record key.
+#[test]
+fn cisa_kev_counts_only_the_collection_day() {
+    let body = include_bytes!("../../../tests/fixtures/cisa_kev.json").to_vec();
+    // The fixture's catalogue version is 2026.09.30, with one entry dated that
+    // day; the poll is on that day.
+    let day = DateTime::parse_from_rfc3339("2026-09-30T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let observations = wse_sources::cisa_kev::parse(&body, day).unwrap();
+    let added = observations
+        .iter()
+        .find(|o| o.metric == "kev_added")
+        .unwrap();
+
+    // One entry dated the collection day — not the trailing-window total.
+    assert_eq!(added.value, 1.0);
+    assert_eq!(
+        added.attributes.get("day").map(String::as_str),
+        Some("2026-09-30")
+    );
+
+    // The next day counts its own additions, not a shared window.
+    let next = day + chrono::Duration::days(1);
+    let next_added = wse_sources::cisa_kev::parse(&body, next)
+        .unwrap()
+        .into_iter()
+        .find(|o| o.metric == "kev_added")
+        .unwrap();
+    assert_eq!(next_added.value, 0.0);
+    assert_ne!(
+        added.id, next_added.id,
+        "each day is its own record, never a sliding window"
+    );
 }

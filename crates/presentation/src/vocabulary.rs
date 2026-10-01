@@ -78,10 +78,10 @@ pub fn metric_vocab(metric: &str) -> Option<MetricVocab> {
             movement_meaning: "a geomagnetic storm stronger than the recent norm",
         },
         "kev_added" => MetricVocab {
-            subject: "vulnerabilities added to the known-exploited catalogue",
+            subject: "vulnerabilities added to the known-exploited catalogue that day",
             short: "exploited-vulnerability activity",
             unit_name: "vulnerabilities",
-            movement_meaning: "more newly exploited vulnerabilities than usual",
+            movement_meaning: "more newly exploited vulnerabilities than usual that day",
         },
         "kev_catalog_total" => MetricVocab {
             subject: "the size of the known-exploited vulnerability catalogue",

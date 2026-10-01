@@ -433,43 +433,50 @@ meaningful.
 ## 9. cisa_kev — CISA Known Exploited Vulnerabilities
 
 **Collector:** `crates/sources/src/cisa_kev.rs`, whole catalog, every 86400s.
-**Two observations per poll:** `kev_added` (count added in trailing 7 days) and
-`kev_catalog_total` (catalog size). Entity `cyber_kev`.
+**Two observations per poll:** `kev_added` (count dated to the collection day)
+and `kev_catalog_total` (catalog size). Entity `cyber_kev`.
 
 1. **What one observation represents:** `kev_added` = vulnerabilities added to
-   the catalog in the last 7 days; `kev_catalog_total` = size of the catalog.
+   the catalog **that UTC day**; `kev_catalog_total` = size of the catalog.
 2. **Type:** registry activity (an authoritative institutional list).
 3. **Population stable?** Yes — the catalog is append-only and authoritative.
 4. **Aggregate usable?** Yes for both.
 5. **What an increase means:** `kev_added` rising = more vulnerabilities newly
-   *known to be exploited*; `kev_catalog_total` rising = the catalog grew.
+   *known to be exploited* that day; `kev_catalog_total` rising = the catalog
+   grew.
 6. **False increases:** (a) CISA batch-adds (one big ingestion day looks like a
-   spike); (b) `kev_added` is a **trailing 7-day window sampled daily**, so
-   consecutive values overlap by 6 days — the series is heavily autocorrelated
-   and a daily z-score is misleading; (c) `kev_catalog_total` is monotonic, so a
-   level z-score only ever fires upward.
-7. **Appropriate baseline:** for `kev_added`, a *weekly* baseline (compare week
-   to week, not day to day) because the window overlaps; for
-   `kev_catalog_total`, the *first difference* (additions per day), not the level.
-8. **Temporal resolution:** daily poll; `observed_at` = collection time.
+   spike); (b) ~~`kev_added` is a trailing 7-day window sampled daily, so
+   consecutive values overlap by 6 days~~ **fixed (CAP-2D/0018)**: `kev_added` is
+   now a non-overlapping daily count, so a daily z-score is meaningful; (c)
+   `kev_catalog_total` is monotonic, so a level z-score only ever fires upward.
+7. **Appropriate baseline:** for `kev_added`, the day's count over time (no
+   window overlap to correct for); for `kev_catalog_total`, the *first
+   difference* (additions per day), not the level.
+8. **Temporal resolution:** daily poll; `observed_at` = collection time, the
+   counted day is the `day` attribute and the record key.
 9. **Independent?** Yes.
 10. **Same event as another source?** No.
 11. **Lenses:** CYBER.
-12. **Never infer:** that `kev_added` rising is a same-day surge (it is a 7-day
-    sum); that `kev_catalog_total` ever measuring "activity" — it is a
-    cumulative level; that a quiet catalog means a quiet threat landscape (KEV
+12. **Never infer:** that `kev_added` rising is a same-day surge (it is a
+    single-day count); that `kev_catalog_total` ever measuring "activity" — it is
+    a cumulative level; that a quiet catalog means a quiet threat landscape (KEV
     only lists *confirmed* exploitation).
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: `kev_added` must be
-baselined weekly (window overlap); `kev_catalog_total` only as a differenced
-series.
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: `kev_catalog_total`
+only as a differenced series (done, CAP-2B); `kev_added` is a non-overlapping
+daily count (done, CAP-2D).
 
 **Update (CAP-2B):** `kev_catalog_total` is now differenced, not detected on as
 a level. The catalog declares `kev_catalog_growth = Delta(kev_catalog_total)` and
 the raw total is **evidence-only** (stored, not detected on); detection runs on
 the derived growth series. This is the same declared-derivation mechanism as
-arXiv. The `kev_added` weekly-overlap constraint (F5) is unchanged and still
-open. See `docs/decisions/0015-cisa-derived-growth.md`.
+arXiv. See `docs/decisions/0015-cisa-derived-growth.md`.
+
+**Update (CAP-2D):** `kev_added` is now the count of vulnerabilities dated to
+the collection day, not a trailing 7-day window. Consecutive daily points no
+longer overlap, so a daily z-score is meaningful and F5 is closed. `kev_added`
+and `kev_catalog_growth` are two independent measurements of the same daily
+additions. See `docs/decisions/0018-kev-daily-additions.md`.
 
 ## 10. ecb_exchange_rates — ECB Euro Reference Rates
 
@@ -642,7 +649,7 @@ bounded-scale-aware baselining.
 | gdelt_news_volume | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; treat as attention, not phenomenon |
 | ecb_exchange_rates | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; business-day gaps |
 | noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
-| cisa_kev | DETECTABLE_WITH_CONSTRAINTS | weekly baseline for `kev_added`; `kev_catalog_total` differenced (done, CAP-2B) |
+| cisa_kev | **DETECTABLE** | `kev_added` non-overlapping daily (CAP-2D); `kev_catalog_total` differenced (CAP-2B) |
 | crossref_works | DETECTABLE_WITH_CONSTRAINTS | window-overlap baseline; latest point partial |
 | github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
 | nasa_neo | **DETECTABLE** | daily approach count is coherent (CAP-2D) |
@@ -689,8 +696,8 @@ an `O` against almost every event source by nature — it reports *on* them.
 4. ~~**NASA NEO pools all objects into `neo_class_all`.**~~ **RESOLVED (CAP-2D).**
    The series is now the UTC day's count of close approaches; the day's closest
    object is kept as drill-down attributes.
-5. **CISA `kev_added` is a trailing 7-day sum sampled daily.** Consecutive points
-   overlap by 6 days; a daily z-score is structurally misleading.
+5. ~~**CISA `kev_added` is a trailing 7-day sum sampled daily.**~~ **RESOLVED
+   (CAP-2D).** It is now a non-overlapping daily count.
 6. **AFAD `isEventUpdate` rows are appended as new events.** A magnitude
    correction looks like new seismic activity.
 7. **Crossref latest-day partial deposit.** The newest point is structurally
@@ -718,7 +725,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F2 | ~~Make Hacker News honour `fixed_universe`: persist and reuse the universe via `next_universe`, or declare `unstable_population`~~ **DONE (CAP-2C)** — the collector commits the universe on first resolution, keeps a story that leaves the front page, and refills a slot only on a genuine 404 | `crates/sources/src/collectors.rs`, `crates/sources/src/hackernews.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/collectors.rs` tests |
 | F3 | ~~Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total~~ **DONE (CAP-2A)** — the catalog declares `preprint_new = Delta(preprint_total)`; the raw total is evidence-only | `crates/sources/src/arxiv.rs` | `crates/engine/tests/derived_metrics.rs` |
 | F4 | ~~Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance~~ **DONE (CAP-2D)** — one observation is one UTC day's count of close approaches; the day's closest object is a drill-down attribute | `crates/sources/src/nasa.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/nasa.rs` tests |
-| F5 | Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline | detector config or source cadence | overlapping-window baseline test |
+| F5 | ~~Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline~~ **DONE (CAP-2D)** — `kev_added` is now the count dated to the collection day, a non-overlapping daily series; no `WindowCount` kind was needed | `crates/sources/src/cisa_kev.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/cisa_kev.rs` tests |
 | F5a | ~~Difference `kev_catalog_total` instead of detecting the level~~ **DONE (CAP-2B)** — the catalogue declares `kev_catalog_growth = Delta(kev_catalog_total)`; the raw total is evidence-only | `crates/sources/src/cisa_kev.rs` | `crates/cli/tests/cisa_derived_metric.rs` |
 | F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
 | F7 | Mark the Crossref latest point as partial (quality flag) or shift the window back a day | `crates/sources/src/crossref.rs` | partial-deposit flag |
@@ -741,7 +748,7 @@ Meaningful after the named constraint is met (all hinge on F1 first):
 
 - usgs_earthquakes, afad_earthquakes, ecb_exchange_rates, noaa_kp_index,
   gdelt_news_volume (F1);
-- cisa_kev (F5), crossref_works (F7), github_rust_activity (F9).
+- crossref_works (F7), github_rust_activity (F9).
 
 # 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
 
