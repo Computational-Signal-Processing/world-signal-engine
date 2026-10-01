@@ -259,6 +259,81 @@ async fn the_world_summary_answers_what_is_changing() {
 }
 
 #[tokio::test]
+async fn the_observatory_board_rolls_up_real_series() {
+    let base = serve().await;
+    let (status, board) = get_json(&base, "/observatory").await;
+    assert_eq!(status, 200);
+
+    // The board is a composed read: its totals must agree with the world.
+    let (_, world) = get_json(&base, "/world").await;
+    assert_eq!(
+        board["active_signals"], world["active_signals"],
+        "the board and the feed must not disagree about how much is changing"
+    );
+
+    // The activity chart is a measured arrival rate, not a synthetic index:
+    // it carries buckets, a baseline and the newest count.
+    let activity = &board["activity"];
+    assert_eq!(activity["window"], "24H");
+    assert!(
+        activity["buckets"].as_array().unwrap().len() == 24,
+        "a 24H window must have 24 hourly buckets"
+    );
+    assert!(activity["current"].as_u64().is_some());
+
+    // Every card is either backed by a real series with points, or says why it
+    // is empty. A card that is empty and silent would be the exact confusion
+    // between "no data" and "quiet" the engine exists to prevent.
+    for card in board["categories"].as_array().unwrap() {
+        if card["has_data"] == true {
+            assert!(
+                !card["series_key"].as_str().unwrap().is_empty(),
+                "a card with data must name its series: {card}"
+            );
+            assert!(
+                card["value"].is_number(),
+                "a card with data must carry a value: {card}"
+            );
+        } else {
+            assert!(
+                card["empty_reason"].as_str().is_some_and(|r| !r.is_empty()),
+                "an empty card must say why it is empty: {card}"
+            );
+        }
+        // Severity is always explained, never asserted by colour alone.
+        assert!(
+            card["severity_reason"]
+                .as_str()
+                .is_some_and(|r| !r.is_empty()),
+            "every card must state the reason behind its severity: {card}"
+        );
+    }
+
+    // The feed rows are signals, and each names the sources behind it.
+    let feed = board["feed"].as_array().unwrap();
+    assert!(!feed.is_empty(), "the board should show active signals");
+    for row in feed {
+        assert!(row["signal_id"].as_str().is_some_and(|s| !s.is_empty()));
+        assert!(row["severity_reason"]
+            .as_str()
+            .is_some_and(|r| !r.is_empty()));
+        assert!(!row["sources"].as_array().unwrap().is_empty());
+    }
+
+    // The window parameter widens the chart without changing its shape.
+    let (status, week) = get_json(&base, "/observatory?window=7d").await;
+    assert_eq!(status, 200);
+    assert_eq!(week["activity"]["window"], "7D");
+    assert_eq!(week["activity"]["buckets"].as_array().unwrap().len(), 28);
+
+    // An unknown window is a display parameter, not a fatal error: the board
+    // falls back rather than blanking a screen someone may be watching.
+    let (status, fallback) = get_json(&base, "/observatory?window=banana").await;
+    assert_eq!(status, 200);
+    assert_eq!(fallback["activity"]["window"], "24H");
+}
+
+#[tokio::test]
 async fn drill_down_reaches_raw_data() {
     let base = serve().await;
     let (_, page) = get_json(&base, "/signals?limit=1").await;

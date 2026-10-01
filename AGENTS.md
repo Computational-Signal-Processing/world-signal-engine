@@ -201,6 +201,24 @@ GET /sources/:id
 GET /observations/:id/raw → the actual bytes
 ```
 
+## Web UI
+
+`web/` is served by the API with no build step. An empty hash opens the
+**Observatory** (`#/observatory`), a single-screen board backed by
+`GET /observatory?window=24h|7d`; `?broadcast=1` hides the chrome and shows a
+freshness watermark. The detail pages stay reachable from it.
+
+Rules that hold across the client:
+
+- Everything is inserted as text nodes, never as HTML — a hostile source payload
+  must not be able to inject markup.
+- A signal type and a severity are never carried by colour alone; each has an
+  icon, a label and a shape.
+- "No data" and "zero" are different states and are rendered differently. A
+  category whose sources are failing says so instead of drawing a zero.
+- Every number on the board is a real measurement. Do not add a synthetic
+  "index" or "risk score" to fill a slot.
+
 ## Replay and backtesting (Phase 10)
 
 Two run modes: `LIVE` and `REPLAY`. Replay is how the detector is measured, not

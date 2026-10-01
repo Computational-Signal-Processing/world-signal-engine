@@ -24,6 +24,7 @@
 //! single process is enough to run the whole MVP.
 
 pub mod handlers;
+pub mod observatory;
 pub mod security;
 pub mod state;
 
@@ -77,6 +78,7 @@ pub fn router_with_web_dir<S: wse_storage::Store + 'static>(
         .route("/health", get(handlers::health))
         .route("/metrics", get(handlers::metrics))
         .route("/world", get(handlers::world))
+        .route("/observatory", get(handlers::observatory))
         .route("/control", get(handlers::control))
         .route(
             "/control/collection",

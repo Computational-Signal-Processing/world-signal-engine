@@ -709,6 +709,75 @@ pub async fn world<S: wse_storage::Store>(State(state): State<AppState<S>>) -> R
     .into_response()
 }
 
+/* ------------------------------------------------------- OBSERVATORY -- */
+
+/// The categories the observatory board shows, in priority order.
+///
+/// Ordered by how fast a change in each matters to a human watching the world:
+/// the ground and the sky first, then the systems people depend on. The board
+/// only shows categories that some source actually emits — an entry here with no
+/// source behind it would be a permanently empty card, which is noise, so
+/// [`observatory`] intersects this list with the catalog.
+pub const OBSERVATORY_CATEGORIES: &[&str] = &[
+    "geophysics",
+    "space",
+    "weather",
+    "environment",
+    "disasters",
+    "global_events",
+    "cyber",
+    "technology",
+    "markets",
+    "health",
+    "science",
+];
+
+/// The board's category list: the preferred order, restricted to categories the
+/// catalog actually populates, with any remaining catalog category appended so a
+/// newly added source's category appears on the board without a code change.
+pub fn observatory_categories(sources: &[wse_model::Source]) -> Vec<String> {
+    let present: std::collections::BTreeSet<&str> =
+        sources.iter().map(|s| s.category.as_str()).collect();
+    let mut ordered: Vec<String> = OBSERVATORY_CATEGORIES
+        .iter()
+        .filter(|c| present.contains(**c))
+        .map(|c| c.to_string())
+        .collect();
+    for category in present {
+        if !ordered.iter().any(|c| c == category) {
+            ordered.push(category.to_string());
+        }
+    }
+    ordered
+}
+
+/// `GET /observatory?window=24h|7d`
+///
+/// The single-screen control room's whole board in one response: per-category
+/// rollups with their real series, a severity-ordered feed, the breaking ticker,
+/// and the one alert worth interrupting for.
+///
+/// A composed read over the existing stores, like `/world`; it cannot drift from
+/// the feed because it reads the same signals.
+#[derive(Debug, Deserialize)]
+pub struct ObservatoryParams {
+    /// `24h` (default) or `7d`; the activity chart's window.
+    pub window: Option<String>,
+}
+
+pub async fn observatory<S: wse_storage::Store>(
+    State(state): State<AppState<S>>,
+    Query(params): Query<ObservatoryParams>,
+) -> Response {
+    let engine = state.read().await;
+    let window = crate::observatory::ActivityWindow::parse(params.window.as_deref());
+    let sources = engine.store().all_sources().unwrap_or_default();
+    let categories = observatory_categories(&sources);
+    let order: Vec<&str> = categories.iter().map(String::as_str).collect();
+    let snapshot = crate::observatory::build_snapshot(&engine, &order, &window, chrono::Utc::now());
+    Json(snapshot).into_response()
+}
+
 /* ------------------------------------------------------------- CONTROL -- */
 
 /// Build the Control screen's snapshot from real state: the store's counts and

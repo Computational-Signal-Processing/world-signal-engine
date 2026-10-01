@@ -1848,6 +1848,7 @@ dependencies = [
  "wse-detection",
  "wse-engine",
  "wse-model",
+ "wse-presentation",
  "wse-signals",
  "wse-storage",
 ]

@@ -48,9 +48,9 @@ web UI. Current state:
 | Signals | `NOW`, `ANOMALY`, `EARLY_SIGNAL`, `CONVERGENCE`, `IMPACT` |
 | API | REST, with a raw-data endpoint |
 | Operations | `/control`, pause/resume, per-source enable/run, live activity over SSE |
-| Web UI | World, signal, event, observation, source, lenses, timeline, map, system |
+| Web UI | Observatory (single-screen board), World, signal, event, observation, source, lenses, timeline, map, system |
 
-538 tests pass across the workspace.
+544 tests pass across the workspace.
 
 ## Quick start
 
@@ -105,9 +105,17 @@ GET  /lenses/:id
 GET  /timeline                ?series=
 ```
 
-The UI at `/` is the product: a live World feed of explainable signals, a
-System screen showing what is running and streaming activity live, and a
-drill-down from any signal to `EVENT → OBSERVATION → SOURCE → RAW DATA`.
+The UI at `/` is the product. It opens on the **Observatory**: one screen showing
+the whole world's state at once — active signals, per-category readings against
+their baselines, measured observation activity, the located hotspots, and a
+breaking ticker. `?broadcast=1` strips the chrome and adds a freshness
+watermark, so the board can be left on a wall or captured into a stream without
+being mistaken for a recording of live data.
+
+Behind it, the same client keeps the detail surfaces: a live World feed of
+explainable signals, a System screen showing what is running and streaming
+activity live, and a drill-down from any signal to
+`EVENT → OBSERVATION → SOURCE → RAW DATA`.
 
 ## Documentation
 

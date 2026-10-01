@@ -2,7 +2,8 @@
  *
  * No build step, no framework. The routes mirror the brief's drill-down:
  *
- *   #/world              active signals (the product's front page)
+ *   #/observatory        the control room: the whole world on one screen (default)
+ *   #/world              active signals (the feed)
  *   #/signal/:id         signal detail + why + quality + evidence
  *   #/event/:id          the event's development
  *   #/observation/:id    one observation, its source and its raw data
@@ -12,6 +13,9 @@
  *   #/timeline/:series   NORMAL ──╮ ╰──● NOW
  *   #/map                signal/event level geography only
  *   #/system             live control: collection, sources, activity stream
+ *
+ * Presentation modifiers (not routes): `?broadcast=1` hides the chrome for a
+ * stream; `?window=7d` widens the observatory's activity chart.
  *
  * Everything is inserted as text nodes, never as HTML, so a hostile source
  * payload cannot inject markup. The page runs against the same origin as the
@@ -260,7 +264,7 @@ const TYPE_GLYPH = {
 const I18N = {
   en: {
     lang: "en",
-    nav: { world: "World", sources: "Sources", lenses: "Lenses", map: "Map", system: "System" },
+    nav: { observatory: "Observatory", world: "World", sources: "Sources", lenses: "Lenses", map: "Map", system: "System" },
     field: { lens: "Lens", key: "Key" },
     conn: { connecting: "connecting", live: "live", reconnecting: "reconnecting", error: "auth required", offline: "offline" },
     type: {
@@ -279,7 +283,41 @@ const I18N = {
       STABLE: "stable", FADING: "fading", RESOLVED: "resolved",
     },
     direction: { Up: "rising", Down: "falling", Flat: "sideways", up: "rising", down: "falling", flat: "sideways" },
+    sev: { CRITICAL: "critical", HIGH: "high", MEDIUM: "medium", LOW: "low" },
     origin: { LIVE: "live data", SYNTHETIC: "synthetic data" },
+    obs: {
+      title: "World Signal Observatory",
+      metricSignals: "active signals",
+      metricSignalsHint: (total) => `${total} formed since the engine started`,
+      metricObserved: "observations",
+      metricObservedHint: "measurements stored, all sources",
+      metricSources: "sources healthy",
+      metricSourcesHint: "a failing collector is not a quiet world",
+      metricActivity: (w) => `arrivals · ${w}`,
+      metricActivityHint: (mean) => `latest hour · mean ${mean}`,
+      metricElevated: "elevated hours",
+      metricElevatedHint: "at or above twice the mean",
+      metricFreshness: "data freshness",
+      metricFreshnessHint: "age of the newest observation",
+      noData: "no data",
+      globe: "Global hotspots",
+      globeMeta: (n) => `${n} located`,
+      globeEmpty: "No active signal carries a location. Location appears only when a source reports it — the engine does not invent one.",
+      activity: "Observation activity",
+      activityMeta: (w, mean) => `${w} · mean ${mean.toFixed(1)}/bucket`,
+      activityEmpty: "No observations in this window yet.",
+      feed: "Signal feed",
+      feedMeta: (n) => `${n} active`,
+      catSignals: (n) => `${n} live`,
+      catNoData: "no data yet",
+      tickerTag: "Breaking",
+      tickerIdle: "No active signal. The engine is observing; a departure from normal will appear here.",
+      alertKicker: (sev) => `${sev} · attention required`,
+      alertSources: "independent sources",
+      alertConfidence: "confidence",
+      alertClose: "Dismiss",
+      broadcastHint: "Presentation mode: hide the chrome",
+    },
     world: {
       title: "World",
       subtitle: "Every active signal the engine is currently surfacing. Each one says what changed, how far it departed from normal, and for how long.",
@@ -349,7 +387,7 @@ const I18N = {
   },
   tr: {
     lang: "tr",
-    nav: { world: "Dünya", sources: "Kaynaklar", lenses: "Lensler", map: "Harita", system: "Sistem" },
+    nav: { observatory: "Gözlemevi", world: "Dünya", sources: "Kaynaklar", lenses: "Lensler", map: "Harita", system: "Sistem" },
     field: { lens: "Lens", key: "Anahtar" },
     conn: { connecting: "bağlanıyor", live: "canlı", reconnecting: "yeniden bağlanıyor", error: "anahtar gerekli", offline: "çevrimdışı" },
     type: {
@@ -368,7 +406,41 @@ const I18N = {
       STABLE: "durağan", FADING: "sönümleniyor", RESOLVED: "sona erdi",
     },
     direction: { Up: "yükseliyor", Down: "düşüyor", Flat: "yatay", up: "yükseliyor", down: "düşüyor", flat: "yatay" },
+    sev: { CRITICAL: "kritik", HIGH: "yüksek", MEDIUM: "orta", LOW: "düşük" },
     origin: { LIVE: "canlı veri", SYNTHETIC: "sentetik veri" },
+    obs: {
+      title: "Dünya Sinyal Gözlemevi",
+      metricSignals: "aktif sinyal",
+      metricSignalsHint: (total) => `motor başladığından beri ${total} sinyal oluştu`,
+      metricObserved: "gözlem",
+      metricObservedHint: "saklanan ölçümler, tüm kaynaklar",
+      metricSources: "sağlıklı kaynak",
+      metricSourcesHint: "bozuk bir toplayıcı, sakin bir dünya demek değildir",
+      metricActivity: (w) => `gelen veri · ${w}`,
+      metricActivityHint: (mean) => `son saat · ortalama ${mean}`,
+      metricElevated: "yüksek saat",
+      metricElevatedHint: "ortalamanın en az iki katı",
+      metricFreshness: "veri tazeliği",
+      metricFreshnessHint: "en yeni gözlemin yaşı",
+      noData: "veri yok",
+      globe: "Küresel odaklar",
+      globeMeta: (n) => `${n} konumlu`,
+      globeEmpty: "Konum taşıyan aktif sinyal yok. Konum yalnızca bir kaynak bildirdiğinde görünür — motor konum uydurmaz.",
+      activity: "Gözlem etkinliği",
+      activityMeta: (w, mean) => `${w} · ortalama ${mean.toFixed(1)}/kova`,
+      activityEmpty: "Bu pencerede henüz gözlem yok.",
+      feed: "Sinyal akışı",
+      feedMeta: (n) => `${n} aktif`,
+      catSignals: (n) => `${n} canlı`,
+      catNoData: "henüz veri yok",
+      tickerTag: "Son dakika",
+      tickerIdle: "Aktif sinyal yok. Motor gözlemliyor; normalden bir sapma burada görünecek.",
+      alertKicker: (sev) => `${sev} · dikkat gerekli`,
+      alertSources: "bağımsız kaynak",
+      alertConfidence: "güven",
+      alertClose: "Kapat",
+      broadcastHint: "Sunum modu: arayüzü gizle",
+    },
     world: {
       title: "Dünya",
       subtitle: "Motorun şu anda öne çıkardığı tüm aktif sinyaller. Her biri neyin değiştiğini, normalden ne kadar saptığını ve ne kadar süredir sürdüğünü söyler.",
@@ -582,6 +654,538 @@ function signalFacts(signal) {
   return el("div", { class: "sig-facts" }, facts.map(([k, v]) =>
     el("span", { class: "fact" }, [el("b", { text: k }), el("span", { text: v })])
   ));
+}
+
+/* ---------------------------------------------------------- OBSERVATORY -- */
+
+/* The control room: one screen, the whole world.
+ *
+ * This is a different surface from the feed, not a reskin of it. The feed is
+ * for reading; this is for watching — it must answer "is anything changing
+ * anywhere, right now?" from across a room, and it must survive being captured
+ * into a stream (see `?broadcast=1`).
+ *
+ * It reads one endpoint (`/observatory`) that is itself a composed read over
+ * the same stores as the feed, so the board cannot disagree with the feed. Every
+ * number on it is either measured or explicitly absent; nothing is invented to
+ * fill a slot.
+ */
+
+/** `?broadcast=1` hides chrome. Returns whether it is on. */
+function broadcastMode() {
+  return new URLSearchParams(window.location.search).get("broadcast") === "1";
+}
+
+/** `?window=7d` widens the activity chart. */
+function activityWindow() {
+  return new URLSearchParams(window.location.search).get("window") === "7d" ? "7d" : "24h";
+}
+
+/* The clock and the relative ages must tick without refetching. One interval
+ * re-renders only the text nodes that age, so the board is live even between
+ * server pushes. */
+let obsTicker = null;
+/* The observatory's SSE subscription, so a signal forming on the server redraws
+ * the board without a reload. */
+let obsLive = null;
+
+function stopObservatory() {
+  if (obsTicker) { clearInterval(obsTicker); obsTicker = null; }
+  if (obsLive) {
+    if (obsLive.handler) removeSseHandler(obsLive.handler);
+    if (obsLive.timer) clearTimeout(obsLive.timer);
+    obsLive = null;
+  }
+  closeAlert();
+  document.body.classList.remove("obs-active");
+}
+
+async function observatoryView() {
+  const epoch = viewEpoch;
+  const data = await api(`/observatory?window=${activityWindow()}`);
+  if (epoch !== viewEpoch) return;
+  // A refresh redraws the whole board, so the previous aging interval must go;
+  // otherwise every redraw would leave another timer behind.
+  if (obsTicker) { clearInterval(obsTicker); obsTicker = null; }
+
+  const root = el("div", { class: "obs" });
+  root.append(
+    obsHeader(data),
+    obsMetrics(data),
+    obsBody(data),
+    obsCategories(data),
+    obsTickerBar(data),
+    obsWatermark(data),
+  );
+  // The observatory owns the whole viewport; the shared chrome is not part of it.
+  view.replaceChildren(root);
+  document.body.classList.add("obs-active");
+
+  paintAlert(data.alert);
+
+  // Age every relative timestamp in place, once a second. A control room whose
+  // "12m" freezes at page load is lying about how old its data is.
+  const startedAt = Date.now();
+  obsTicker = setInterval(() => {
+    root.querySelectorAll("[data-ts]").forEach((node) => {
+      node.textContent = fmtAgo(Math.max(0, (Date.now() - Number(node.dataset.ts)) / 1000));
+    });
+    const clock = root.querySelector("#obs-clock");
+    if (clock) clock.textContent = new Date().toISOString().slice(11, 19);
+    const stamp = root.querySelector("#obs-watermark-time");
+    if (stamp) stamp.textContent = new Date().toISOString().slice(0, 19).replace("T", " ") + "Z";
+    if (Date.now() - startedAt > 30_000) { stopObservatory(); }
+  }, 1000);
+  startObservatoryStream();
+}
+
+/**
+ * Subscribe to the engine's activity stream and redraw the board when the world
+ * changes.
+ *
+ * The stream is the same one the World screen uses; the observatory only cares
+ * about frames that can alter the board (a new signal, a resolved one, a source
+ * failing). Bursts are coalesced into one refetch, so a collector firing ten
+ * observations does not trigger ten redraws.
+ */
+function startObservatoryStream() {
+  if (obsLive) return;
+  startActivityStream();
+  const state = { handler: null, timer: null };
+  obsLive = state;
+  state.handler = (activity) => {
+    if (!["SIGNAL", "ANOMALY", "EVENT", "SOURCE_FAILED", "SOURCE_RECOVERED"].includes(activity.kind)) return;
+    if (state.timer) return;
+    state.timer = setTimeout(async () => {
+      if (!obsLive) return;
+      obsLive.timer = null;
+      await observatoryView();
+    }, 1500);
+  };
+  addSseHandler(state.handler);
+}
+
+function obsHeader(data) {
+  const state = data.monitoring
+    ? (data.collection_enabled ? t().world.watching : t().world.paused)
+    : t().world.notWatching;
+  return el("header", { class: "obs-head" }, [
+    el("div", { class: "obs-brand" }, [
+      el("span", { class: "obs-title", text: t().obs.title }),
+      el("span", { class: "obs-sub", text: state }),
+    ]),
+    el("nav", { class: "obs-nav" }, [
+      el("a", { href: "#/world", text: t().nav.world }),
+      el("a", { href: "#/map", text: t().nav.map }),
+      el("a", { href: "#/sources", text: t().nav.sources }),
+      el("a", { href: "#/system", text: t().nav.system }),
+    ]),
+    el("div", { class: "obs-clock" }, [
+      el("span", { class: "obs-clock-time", id: "obs-clock", text: new Date().toISOString().slice(11, 19) }),
+      el("span", { class: "obs-clock-zone", text: "UTC" }),
+      el("button", {
+        class: "btn", type: "button", id: "obs-broadcast",
+        title: t().obs.broadcastHint, "aria-label": t().obs.broadcastHint,
+        text: "⛶",
+        onclick: toggleBroadcast,
+      }),
+    ]),
+  ]);
+}
+
+/** Toggle presentation mode without a reload: it only hides chrome. */
+function toggleBroadcast() {
+  const on = document.body.classList.toggle("broadcast");
+  const url = new URL(window.location.href);
+  if (on) url.searchParams.set("broadcast", "1");
+  else url.searchParams.delete("broadcast");
+  window.history.replaceState(null, "", url);
+}
+
+/** The top strip: the six numbers that say what the world is doing. */
+function obsMetrics(data) {
+  const age = data.data_age_seconds;
+  const healthy = data.sources_total > 0 && data.sources_healthy === data.sources_total;
+  const activity = data.activity || {};
+  const windowLabel = activity.window || "24H";
+  return el("div", { class: "obs-metrics" }, [
+    obsMetric(t().obs.metricSignals, String(data.active_signals), "bad",
+      t().obs.metricSignalsHint(data.signals_total)),
+    obsMetric(t().obs.metricObserved, String(data.observations_total), null,
+      t().obs.metricObservedHint),
+    obsMetric(t().obs.metricSources, `${data.sources_healthy}/${data.sources_total}`,
+      healthy ? "ok" : "warn", t().obs.metricSourcesHint),
+    obsMetric(t().obs.metricActivity(windowLabel), String(activity.current ?? 0), null,
+      t().obs.metricActivityHint(Math.round(activity.baseline ?? 0))),
+    obsMetric(t().obs.metricElevated, String(activity.elevated_buckets ?? 0),
+      (activity.elevated_buckets ?? 0) > 0 ? "warn" : null, t().obs.metricElevatedHint),
+    obsMetric(t().obs.metricFreshness,
+      age === null || age === undefined ? t().obs.noData : fmtAgo(age),
+      age === null || age === undefined ? "muted" : null, t().obs.metricFreshnessHint),
+  ]);
+}
+
+function obsMetric(label, value, tone, hint) {
+  return el("div", { class: "obs-metric" }, [
+    el("span", { class: "obs-metric-label", text: label }),
+    el("span", { class: "obs-metric-value", "data-tone": tone || "", text: value }),
+    el("span", { class: "obs-metric-hint", text: hint }),
+  ]);
+}
+
+function obsBody(data) {
+  const body = el("div", { class: "obs-body" });
+  body.append(obsGlobe(data), obsActivityPanel(data), obsFeedPanel(data));
+  return body;
+}
+
+/* --- globe ------------------------------------------------------------- */
+
+/**
+ * An orthographic view of the Earth with the located signals on it.
+ *
+ * Only signals and events are plotted; raw observations are never piled onto a
+ * map (the brief is explicit about this). When nothing carries a location, the
+ * panel says so rather than showing an empty sphere that implies coverage.
+ *
+ * The projection is orthographic because that is what reads as a planet from a
+ * distance; it is cheap to compute and needs no tiles or network.
+ */
+function obsGlobe(data) {
+  const width = 520, height = 380, radius = 150;
+  const cx = width / 2, cy = height / 2;
+  const located = (data.feed || []).filter((s) => s.location);
+  const body = el("div", { class: "obs-panel-body" });
+
+  if (located.length === 0) {
+    body.append(el("div", { class: "obs-empty", text: t().obs.globeEmpty }));
+    return obsPanel(t().obs.globe, t().obs.globeMeta(0), body);
+  }
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "obs-globe", preserveAspectRatio: "xMidYMid meet" });
+  svg.append(svgEl("circle", { cx, cy, r: radius, class: "limb" }));
+  // Graticule at 30° steps. Longitude lines collapse toward the limb, which is
+  // the visual cue that this is a sphere and not a flat map.
+  for (let lat = -60; lat <= 60; lat += 30) {
+    const y = cy - (lat / 90) * radius;
+    const half = Math.sqrt(Math.max(0, radius * radius - (y - cy) * (y - cy)));
+    svg.append(svgEl("line", { x1: cx - half, x2: cx + half, y1: y, y2: y, class: "grid" }));
+  }
+  for (let lon = -180; lon < 180; lon += 30) {
+    const points = [];
+    for (let lat = -90; lat <= 90; lat += 5) {
+      const [px, py] = ortho(lat, lon, cx, cy, radius);
+      if (px !== null) points.push(`${px},${py}`);
+    }
+    if (points.length > 1) svg.append(svgEl("polyline", { points: points.join(" "), class: "grid" }));
+  }
+
+  const color = {
+    CRITICAL: "var(--bad)", HIGH: "var(--anomaly)", MEDIUM: "var(--warn)", LOW: "var(--now)",
+  };
+  for (const signal of located) {
+    const [px, py] = ortho(signal.location.latitude, signal.location.longitude, cx, cy, radius);
+    if (px === null) continue; // on the far side of the globe
+    const tint = color[signal.severity] || "var(--now)";
+    const marker = svgEl("circle", { cx: px, cy: py, r: 5, class: "dot", fill: tint });
+    const title = svgEl("title");
+    title.textContent = `${signal.title} — ${signal.severity_reason}`;
+    marker.append(title);
+    marker.addEventListener("click", () => { window.location.hash = `#/signal/${signal.signal_id}`; });
+    svg.append(marker);
+    // A ring marks the highest severities so the shape, not only the colour,
+    // says "this one is worse".
+    if (signal.severity === "CRITICAL" || signal.severity === "HIGH") {
+      svg.append(svgEl("circle", { cx: px, cy: py, r: 11, class: "ring", stroke: tint }));
+    }
+  }
+
+  body.append(svg);
+  return obsPanel(t().obs.globe, t().obs.globeMeta(located.length), body);
+}
+
+/** Orthographic projection; `null` when the point faces away from the viewer. */
+function ortho(lat, lon, cx, cy, radius) {
+  const phi = (lat * Math.PI) / 180;
+  const lambda = (lon * Math.PI) / 180;
+  // Centred on 0°E, 0°N so the default view is the whole world at once.
+  const cosC = Math.cos(phi) * Math.cos(lambda);
+  if (cosC < 0) return [null, null];
+  return [cx + radius * Math.cos(phi) * Math.sin(lambda), cy - radius * Math.sin(phi)];
+}
+
+/* --- activity chart ---------------------------------------------------- */
+
+/**
+ * Observations arriving per bucket over the window, with the mean drawn as a
+ * dashed rule.
+ *
+ * The point of the chart is the comparison, not the curve: a spike means
+ * nothing until it is read against the world's own recent norm. The dashed line
+ * is that norm, computed from the same buckets.
+ */
+function obsActivityPanel(data) {
+  const activity = data.activity || {};
+  const buckets = activity.buckets || [];
+  const width = 520, height = 190, pad = 22;
+  const body = el("div", { class: "obs-panel-body" });
+
+  if (buckets.length < 2) {
+    body.append(el("div", { class: "obs-empty", text: t().obs.activityEmpty }));
+    return obsPanel(t().obs.activity, activity.window || "24H", body);
+  }
+
+  const counts = buckets.map((b) => b.count);
+  const max = Math.max(1, ...counts, Math.ceil(activity.baseline || 0));
+  const x = (i) => pad + (i / (buckets.length - 1)) * (width - pad * 2);
+  const y = (v) => height - pad - (v / max) * (height - pad * 2);
+
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "obs-chart", preserveAspectRatio: "none" });
+  // Elevated buckets (>= 2x the mean) are drawn as bars under the curve, so a
+  // burst is visible as a shape even before the numbers are read.
+  const threshold = 2 * (activity.baseline || 0);
+  if (threshold > 0) {
+    counts.forEach((count, i) => {
+      if (count < threshold) return;
+      const barWidth = (width - pad * 2) / buckets.length;
+      svg.append(svgEl("rect", {
+        x: x(i) - barWidth / 2, y: y(count), width: Math.max(1, barWidth * 0.8),
+        height: height - pad - y(count), class: "bar",
+      }));
+    });
+  }
+  const points = buckets.map((b, i) => `${x(i)},${y(b.count)}`).join(" ");
+  svg.append(svgEl("polygon", {
+    class: "area",
+    points: `${x(0)},${height - pad} ${points} ${x(buckets.length - 1)},${height - pad}`,
+  }));
+  svg.append(svgEl("polyline", { class: "line", points }));
+  if (activity.baseline > 0) {
+    svg.append(svgEl("line", { x1: pad, x2: width - pad, y1: y(activity.baseline), y2: y(activity.baseline), class: "mean" }));
+    const label = svgEl("text", { x: pad + 2, y: y(activity.baseline) - 3, class: "mean-label" });
+    label.textContent = `mean ${activity.baseline.toFixed(1)}`;
+    svg.append(label);
+  }
+
+  body.append(svg);
+  return obsPanel(t().obs.activity, t().obs.activityMeta(activity.window || "24H", activity.baseline || 0), body);
+}
+
+/* --- feed -------------------------------------------------------------- */
+
+function obsFeedPanel(data) {
+  const rows = (data.feed || []).map(obsFeedRow);
+  const body = el("div", { class: "obs-panel-body" });
+  body.append(rows.length
+    ? el("ul", { class: "obs-feed-list" }, rows)
+    : el("div", { class: "obs-empty", text: t().world.empty }));
+  return obsPanel(t().obs.feed, t().obs.feedMeta(rows.length), body);
+}
+
+function obsFeedRow(item) {
+  const glyph = TYPE_GLYPH[primaryType(item.types)] || "•";
+  const ts = new Date(item.last_updated).getTime();
+  return el("li", { class: "obs-feed-row", onclick: () => openAlert(item) }, [
+    el("span", { class: "obs-feed-glyph", "aria-hidden": "true", text: glyph }),
+    el("span", { class: "obs-feed-main" }, [
+      el("span", { class: "obs-feed-title", text: item.title }),
+      el("span", { class: "obs-feed-sub", text: item.severity_reason }),
+    ]),
+    el("span", { class: "obs-feed-right" }, [
+      el("span", { class: "obs-feed-age", "data-ts": String(ts), text: fmtAgo(item.age_seconds) }),
+      el("span", { class: "obs-feed-sev", "data-sev": item.severity, text: t().sev[item.severity] || item.severity }),
+    ]),
+  ]);
+}
+
+/* --- categories -------------------------------------------------------- */
+
+function obsCategories(data) {
+  const cards = (data.categories || []).map((card) => {
+    const dir = (card.change_pct ?? 0) >= 0 ? "up" : "down";
+    const children = [
+      el("div", { class: "obs-cat-top" }, [
+        el("span", { class: "obs-cat-name", text: card.label }),
+        card.active_signals > 0
+          ? el("span", { class: "obs-cat-badge", text: t().obs.catSignals(card.active_signals) })
+          : null,
+      ]),
+    ];
+
+    if (card.has_data) {
+      children.push(el("div", { class: "obs-cat-value" }, [
+        fmtValue(card.value),
+        card.unit ? el("span", { class: "obs-cat-unit", text: card.unit }) : null,
+      ]));
+      children.push(el("div", { class: "obs-cat-delta", "data-dir": dir }, [
+        card.change_pct !== null && card.change_pct !== undefined
+          ? `${card.change_pct >= 0 ? "+" : ""}${card.change_pct.toFixed(1)}%`
+          : "—",
+        card.deviation_sigma !== null && card.deviation_sigma !== undefined
+          ? ` · ${card.deviation_sigma >= 0 ? "+" : ""}${card.deviation_sigma.toFixed(1)}σ`
+          : "",
+      ]));
+      const spark = catSparkline(card.sparkline, card.baseline);
+      if (spark) children.push(spark);
+    } else {
+      children.push(el("div", { class: "obs-cat-value", "data-empty": "true", text: t().obs.catNoData }));
+      children.push(el("div", { class: "obs-cat-reason", text: card.empty_reason || "" }));
+    }
+    children.push(el("div", { class: "obs-cat-reason", text: card.severity_reason }));
+
+    // A card with a series opens that series' timeline — the actual evidence
+    // for the number. An empty card has nothing to show, so it goes to the
+    // sources list instead of pretending there is a chart behind it.
+    const target = card.has_data && card.series_key
+      ? `#/timeline/${encodeURIComponent(card.series_key)}`
+      : "#/sources";
+    return el("article", {
+      class: "obs-cat",
+      "data-sev": card.severity,
+      "data-empty": String(!card.has_data),
+      title: card.severity_reason,
+      onclick: () => { window.location.hash = withLens(target); },
+    }, children);
+  });
+  return el("div", { class: "obs-cats" }, cards);
+}
+
+/** A category's recent points against its baseline, small enough to fit a card. */
+function catSparkline(points, baseline) {
+  if (!points || points.length < 2) return null;
+  const width = 188, height = 26, pad = 2;
+  const values = points.map((p) => p.value);
+  const bounds = values.slice();
+  if (baseline) bounds.push(baseline.p05, baseline.p95);
+  let min = Math.min(...bounds), max = Math.max(...bounds);
+  if (min === max) { min -= 1; max += 1; }
+  const span = max - min;
+  const x = (i) => pad + (i / (points.length - 1)) * (width - pad * 2);
+  const y = (v) => height - pad - ((v - min) / span) * (height - pad * 2);
+  const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "obs-cat-spark", preserveAspectRatio: "none" });
+  if (baseline) {
+    svg.append(svgEl("line", { x1: pad, x2: width - pad, y1: y(baseline.mean), y2: y(baseline.mean), class: "base" }));
+  }
+  svg.append(svgEl("polyline", { class: "line", points: points.map((p, i) => `${x(i)},${y(p.value)}`).join(" ") }));
+  return svg;
+}
+
+/* --- ticker ------------------------------------------------------------ */
+
+function obsTickerBar(data) {
+  const items = data.ticker || [];
+  const track = el("div", { class: "obs-ticker-track" });
+  if (items.length === 0) {
+    track.append(el("span", { class: "obs-ticker-item", text: t().obs.tickerIdle }));
+  } else {
+    // Duplicated once so the CSS translate(-50%) loop is seamless.
+    const line = () => items.map((item) =>
+      el("span", { class: "obs-ticker-item" }, [
+        el("b", { text: `${fmtClock(item.at)} · ` }),
+        item.text,
+      ])
+    );
+    track.append(el("span", { class: "obs-ticker-run" }, [...line(), ...line()]));
+  }
+  return el("div", { class: "obs-ticker" }, [
+    el("span", { class: "obs-ticker-tag", "data-idle": String(items.length === 0), text: t().obs.tickerTag }),
+    track,
+  ]);
+}
+
+/**
+ * The broadcast watermark.
+ *
+ * A recorded stream of this board must never be mistakable for a live one. The
+ * watermark states the data origin and the freshness, and it is shown in
+ * broadcast mode (where the chrome that would otherwise carry that context is
+ * hidden). It is deliberately plain text, not a logo.
+ */
+function obsWatermark(data) {
+  const age = data.data_age_seconds;
+  const state = data.monitoring
+    ? (data.collection_enabled ? t().world.watching : t().world.paused)
+    : t().world.notWatching;
+  const freshness = age === null || age === undefined ? t().obs.noData : fmtAgo(age);
+  return el("div", { class: "obs-watermark" }, [
+    el("span", { text: "WORLD SIGNAL ENGINE" }),
+    el("span", { text: `${state} · ${t().obs.metricFreshness} ${freshness}` }),
+    el("span", { id: "obs-watermark-time", text: new Date().toISOString().slice(0, 19).replace("T", " ") + "Z" }),
+  ]);
+}
+
+function obsPanel(title, meta, body) {
+  return el("section", { class: "obs-panel" }, [
+    el("header", { class: "obs-panel-head" }, [
+      el("h2", { class: "obs-panel-title", text: title }),
+      meta ? el("span", { class: "obs-panel-meta", text: meta }) : null,
+    ]),
+    body,
+  ]);
+}
+
+/* --- alert modal ------------------------------------------------------- */
+
+let alertOpenFor = null;
+
+function closeAlert() {
+  alertOpenFor = null;
+  const existing = document.getElementById("obs-alert");
+  if (existing) existing.remove();
+}
+
+/**
+ * The alert modal: one signal, the evidence for it, and the way to investigate.
+ *
+ * It is opened by a click on a feed row, or automatically for a CRITICAL signal
+ * the reader has not seen yet. It is deliberately not shown for routine
+ * signals: a modal that appears constantly is one people learn to dismiss.
+ */
+function openAlert(item) {
+  closeAlert();
+  alertOpenFor = item.signal_id;
+  const facts = [
+    [t().facts.deviation, evidenceSigma(item)],
+    [t().facts.persistence, fmtDuration(item.duration_seconds)],
+    [t().obs.alertSources, String((item.sources || []).length)],
+    [t().obs.alertConfidence, `${Math.round((item.confidence || 0) * 100)}%`],
+  ].filter(([, v]) => v !== null && v !== undefined);
+
+  const scrim = el("div", { class: "obs-alert-scrim", id: "obs-alert", onclick: (e) => { if (e.target === scrim) closeAlert(); } }, [
+    el("div", { class: "obs-alert", role: "dialog", "aria-modal": "true", "aria-label": item.title }, [
+      el("div", { class: "obs-alert-kicker" }, [
+        el("span", { "aria-hidden": "true", text: TYPE_GLYPH[primaryType(item.types)] || "•" }),
+        el("span", { text: t().obs.alertKicker(item.severity) }),
+      ]),
+      el("h2", { class: "obs-alert-title", text: item.title }),
+      el("p", { class: "obs-alert-summary", text: item.summary }),
+      el("div", { class: "obs-alert-reason", text: item.severity_reason }),
+      el("div", { class: "obs-alert-facts" }, facts.map(([k, v]) =>
+        el("span", {}, [el("b", { text: k }), el("span", { text: v })])
+      )),
+      el("div", { class: "obs-alert-actions" }, [
+        el("button", { class: "btn", type: "button", text: t().obs.alertClose, onclick: closeAlert }),
+        el("a", { class: "btn primary", href: withLens(`#/signal/${item.signal_id}`), text: t().signal.investigate }),
+      ]),
+    ]),
+  ]);
+  document.body.append(scrim);
+  const closer = (e) => { if (e.key === "Escape") { closeAlert(); document.removeEventListener("keydown", closer); } };
+  document.addEventListener("keydown", closer);
+}
+
+/** The first stated deviation in a feed item's evidence, formatted, or a dash. */
+function evidenceSigma(item) {
+  const sigma = item.deviation_sigma;
+  if (sigma === null || sigma === undefined) return "—";
+  return `${sigma >= 0 ? "+" : ""}${sigma.toFixed(1)}σ`;
+}
+
+/** Show the alert modal for a CRITICAL signal the reader has not seen. */
+function paintAlert(alert) {
+  if (!alert) return;
+  if (alertOpenFor === alert.signal_id) return;
+  openAlert(alert);
 }
 
 /* ----------------------------------------------------------------- pages */
@@ -1547,6 +2151,8 @@ function setConn(state, text) {
 /** Apply the current language to the static chrome (nav, labels, footer). */
 function applyChrome() {
   document.documentElement.lang = t().lang;
+  // Broadcast mode strips the chrome so a stream shows only the world state.
+  document.body.classList.toggle("broadcast", broadcastMode());
   document.querySelectorAll("[data-nav]").forEach((a) => {
     const key = a.dataset.nav;
     if (t().nav[key]) a.textContent = t().nav[key];
@@ -1570,14 +2176,16 @@ async function route() {
   // a leaving view owns.
   viewEpoch += 1;
   stopActivityStream();
+  stopObservatory();
 
-  const hash = window.location.hash || "#/world";
+  const hash = window.location.hash || "#/observatory";
   const clean = hash.split("?")[0];
   const parts = clean.replace(/^#\//, "").split("/");
   const [name, ...rest] = parts;
   const id = rest.join("/");
   try {
     switch (name) {
+      case "observatory": return await observatoryView();
       case "signal": return await signalView(id);
       case "event": return await eventView(id);
       case "observation": return await observationView(id);
