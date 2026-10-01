@@ -136,6 +136,10 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
                 raw,
             )
             .with_received_at(received_at)
+            // A GDELT bucket is keyed by its series and its time bucket; the
+            // 1-day window is re-fetched each poll, so retained buckets must
+            // keep one id.
+            .with_record_key(format!("{}|{}", series.series, point.date))
             .with_dimension("query", query.clone())
             .with_dimension("series", series.series.clone());
             observations.push(observation);

@@ -104,6 +104,9 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
             raw,
         )
         .with_received_at(received_at)
+        // The point's own `time_tag` is its natural key: the product is a
+        // rolling window, so a retained 3-hourly point must keep one id.
+        .with_record_key(&point.time_tag)
         .with_attribute("time_tag", point.time_tag.clone());
         if let Some(a) = point.a_running {
             observation = observation.with_attribute("a_running", format!("{a:.0}"));

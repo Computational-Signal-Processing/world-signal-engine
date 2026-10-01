@@ -120,6 +120,16 @@ No network or credentials are needed to run it.
   captured payload so this cannot silently regress to an empty source.
 - **GitHub search responses are wrapped** in an envelope; the repos are under
   `items`. The fixture reflects this.
+- **Observation ids are the record key, not the payload hash.** A multi-record
+  feed or a sliding window changes its whole-body hash whenever *any* record
+  changes, so seeding ids with that hash re-mints the ids of the records that
+  did not change and re-ingests them as duplicates. Ids are now
+  `series_key | observed_at | record_key`, where the record key is the source's
+  stable identity for the record (USGS feature id, AFAD `eventID`, ECB period,
+  NOAA `time_tag`, GDELT `series|date`). The payload hash is only the fallback
+  for a source with one record per series per timestamp. Never put the measured
+  value in the record key: a revised measurement for the same record must keep
+  one identity. `Observation::with_record_key` sets it.
 - **Several records per series per timestamp need `Observation.identity`.**
   GitHub search returns many repositories, Hacker News many stories — all with
   the same `observed_at` and payload hash. Without a discriminator they share an

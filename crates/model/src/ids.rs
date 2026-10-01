@@ -90,30 +90,27 @@ string_id!(
 );
 
 impl ObservationId {
-    /// Deterministic identifier derived from the observation identity and the
-    /// hash of its raw payload.
+    /// Deterministic identifier derived from the observation's series, its
+    /// timestamp, and its **record key**.
     ///
     /// Determinism makes duplicate detection trivial: collecting the same
-    /// payload twice yields the same id, so the store can reject it without
-    /// comparing every field.
+    /// record twice yields the same id, so the store can reject the second copy
+    /// without comparing every field.
     ///
-    /// `identity` is the per-record discriminator (a repository name, a story
-    /// id). Sources that emit several records per series per timestamp must
-    /// pass one, or those records collide on `(series, timestamp, payload)` and
-    /// are silently de-duplicated down to a single survivor. A `None` identity
-    /// keeps the original id, so single-record sources are unaffected.
-    pub fn deterministic(
-        series_key: &str,
-        observed_at: &str,
-        payload_hash: &str,
-        identity: Option<&str>,
-    ) -> Self {
-        let seed = match identity {
-            Some(identity) => format!("{series_key}|{observed_at}|{payload_hash}|{identity}"),
-            // No discriminator: keep the original seed format, so ids for
-            // single-record sources are unchanged by this addition.
-            None => format!("{series_key}|{observed_at}|{payload_hash}"),
-        };
+    /// The `record_key` is the source's stable identity for the record — an
+    /// upstream event id, an accession id, a permalink, or the record's natural
+    /// key (a timestamp for a time-series point). When one is supplied it
+    /// *fully* determines the id: the payload hash is deliberately **excluded**,
+    /// so a record whose measured value changes while its upstream identity
+    /// stays the same keeps one id instead of minting a new one on every poll.
+    ///
+    /// When no record key is supplied (a source with exactly one record per
+    /// series per timestamp) the payload hash is used instead. That preserves
+    /// the historical behaviour of single-record sources: re-fetching an
+    /// identical payload de-duplicates, while a changed payload is a new
+    /// observation.
+    pub fn deterministic(series_key: &str, observed_at: &str, record_key: &str) -> Self {
+        let seed = format!("{series_key}|{observed_at}|{record_key}");
         Self(format!("obs_{}", fnv1a_hex(&seed)))
     }
 }
@@ -153,39 +150,38 @@ mod tests {
 
     #[test]
     fn deterministic_observation_ids_are_stable_and_distinct() {
-        let a = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", None);
-        let b = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", None);
-        let c = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:01Z", "abc", None);
+        let a = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "rec");
+        let b = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "rec");
+        let c = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:01Z", "rec");
         assert_eq!(a, b);
         assert_ne!(a, c);
     }
 
     #[test]
-    fn a_record_discriminator_separates_records_sharing_a_timestamp() {
-        // Two records, same series, same timestamp, same payload hash — exactly
-        // the GitHub/HN shape. The discriminator is what keeps them apart.
-        let repo_a =
-            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", Some("a/b"));
-        let repo_b =
-            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", Some("c/d"));
+    fn a_record_key_separates_records_sharing_a_timestamp() {
+        // Two records, same series, same timestamp — exactly the GitHub/HN
+        // shape. The record key is what keeps them apart.
+        let repo_a = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "a/b");
+        let repo_b = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "c/d");
         assert_ne!(repo_a, repo_b);
         // Same record re-collected is still the same id, so it de-duplicates.
-        let repo_a_again =
-            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", Some("a/b"));
+        let repo_a_again = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "a/b");
         assert_eq!(repo_a, repo_a_again);
     }
 
     #[test]
-    fn a_missing_discriminator_keeps_the_original_id() {
-        // Backwards compatibility: a source with one record per timestamp must
-        // not see its ids change just because the discriminator was added.
-        let no_identity =
-            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "abc", None);
-        let legacy = ObservationId::new(format!(
-            "obs_{}",
-            fnv1a_hex("s::m::u|2026-01-01T00:00:00Z|abc")
-        ));
-        assert_eq!(no_identity, legacy);
+    fn a_record_key_ignores_the_measurement_but_the_payload_hash_does_not() {
+        // The whole point of a record key: a changed measurement for the same
+        // upstream record must keep the id (the value is not part of the seed).
+        let first = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "event-1");
+        let changed_value =
+            ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "event-1");
+        assert_eq!(first, changed_value);
+        // Without a record key the caller passes the payload hash, so a changed
+        // payload is a new observation (single-record sources keep this).
+        let h1 = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "hash-1");
+        let h2 = ObservationId::deterministic("s::m::u", "2026-01-01T00:00:00Z", "hash-2");
+        assert_ne!(h1, h2);
     }
 
     #[test]

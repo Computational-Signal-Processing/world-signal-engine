@@ -1,10 +1,9 @@
 //! Regression specs for the semantic bugs found in `docs/source-semantic-audit.md`.
 //!
-//! Each test encodes the behaviour the source *should* have. They are marked
-//! `#[ignore]` because the bug is still present: the point is to have the fix
-//! turn them green, one at a time, rather than to break the suite today.
-//!
-//! Run them with `cargo test -p wse-sources --test semantic_regression -- --ignored`.
+//! The F1 specs (per-record observation identity) are active: they pass under
+//! the record-key contract and fail without it. The F2 spec is still `#[ignore]`
+//! because F2 has not been implemented; run it with
+//! `cargo test -p wse-sources --test semantic_regression -- --ignored`.
 
 use chrono::{DateTime, Utc};
 
@@ -16,7 +15,6 @@ fn received() -> DateTime<Utc> {
 /// payload. Re-collecting the same record inside a changed feed must keep its id
 /// so the engine de-duplicates it instead of inserting a duplicate point.
 #[test]
-#[ignore = "F1: observation id is seeded with the whole-payload hash; see docs/source-semantic-audit.md"]
 fn usgs_a_re_polled_quake_keeps_its_id() {
     let base = include_bytes!("../../../tests/fixtures/usgs_all_hour.geojson").to_vec();
     let a = wse_sources::usgs::parse(&base, received()).unwrap();
@@ -35,12 +33,14 @@ fn usgs_a_re_polled_quake_keeps_its_id() {
         first_a.id, first_b.id,
         "the same earthquake must keep one id across feeds"
     );
+    // The newly appearing quake gets its own id, distinct from the rest.
+    let new = b.iter().find(|o| o.value == 3.3).unwrap();
+    assert!(a.iter().all(|o| o.id != new.id));
 }
 
 /// F1 — AFAD's window slides between polls; an event retained in both windows
 /// must keep its id.
 #[test]
-#[ignore = "F1: observation id is seeded with the whole-payload hash; see docs/source-semantic-audit.md"]
 fn afad_a_window_retained_event_keeps_its_id() {
     let base = include_bytes!("../../../tests/fixtures/afad_events.json").to_vec();
     let a = wse_sources::afad::parse(&base, received()).unwrap();
@@ -65,46 +65,60 @@ fn afad_a_window_retained_event_keeps_its_id() {
 }
 
 /// F1 — ECB returns a rolling `lastNObservations` window; a rate retained in
-/// both windows must keep its id.
+/// both windows must keep its id. The window is simulated the way the API does
+/// it: append the newest day, then drop the oldest, so retained days are not
+/// re-indexed.
 #[test]
-#[ignore = "F1: observation id is seeded with the whole-payload hash; see docs/source-semantic-audit.md"]
 fn ecb_a_window_retained_rate_keeps_its_id() {
     let base = include_bytes!("../../../tests/fixtures/ecb_exr.json").to_vec();
     let a = wse_sources::ecb::parse(&base, received()).unwrap();
 
-    let text = String::from_utf8(base).unwrap();
-    // Append one extra day to the time axis and one value, mimicking a slid window.
-    let body2 = text
-        .replace(
-            r#"{"id": "2026-09-30", "name": "2026-09-30"}"#,
-            r#"{"id": "2026-09-30", "name": "2026-09-30"}, {"id": "2026-10-01", "name": "2026-10-01"}"#,
-        )
-        .replace(
-            r#""2": [1.1355, 0, 0, null, null]"#,
-            r#""2": [1.1355, 0, 0, null, null], "3": [1.1320, 0, 0, null, null]"#,
-        )
-        .into_bytes();
+    let mut v: serde_json::Value = serde_json::from_slice(&base).unwrap();
+    let series = v["dataSets"][0]["series"]["0:0:0:0:0"]["observations"]
+        .as_object_mut()
+        .unwrap();
+    // Shift the retained window up by one index (append newest, drop oldest).
+    let v2 = series["2"].clone();
+    let v1 = series["1"].clone();
+    series.insert(
+        "2".to_string(),
+        serde_json::json!([1.1320, 0, 0, null, null]),
+    );
+    series.insert("1".to_string(), v2);
+    series.insert("0".to_string(), v1);
+    series.remove("3");
+    v["structure"]["dimensions"]["observation"][0]["values"] = serde_json::json!([
+        {"id": "2026-09-29", "name": "2026-09-29"},
+        {"id": "2026-09-30", "name": "2026-09-30"},
+        {"id": "2026-10-01", "name": "2026-10-01"}
+    ]);
+    let body2 = serde_json::to_vec(&v).unwrap();
     let b = wse_sources::ecb::parse(&body2, received()).unwrap();
 
-    let first_a = a.iter().find(|o| o.value == 1.1403).unwrap();
-    let first_b = b.iter().find(|o| o.value == 1.1403).unwrap();
-    assert_eq!(
-        first_a.id, first_b.id,
-        "an unchanged ECB observation must keep its id across a window slide"
-    );
+    // 2026-09-29 (1.1378) and 2026-09-30 (1.1355) are retained across the slide.
+    for value in [1.1378, 1.1355] {
+        let first_a = a.iter().find(|o| o.value == value).unwrap();
+        let first_b = b.iter().find(|o| o.value == value).unwrap();
+        assert_eq!(
+            first_a.id, first_b.id,
+            "an unchanged ECB observation ({value}) must keep its id across a window slide"
+        );
+    }
+    // 2026-09-28 (1.1403) was dropped; it must not appear in the new window.
+    assert!(b.iter().all(|o| o.value != 1.1403));
 }
 
 /// F1 — NOAA Kp returns a rolling window of 3-hourly points; a point retained in
-/// both windows must keep its id.
+/// both windows must keep its id. The extra point is appended, so the retained
+/// points keep their timestamps.
 #[test]
-#[ignore = "F1: observation id is seeded with the whole-payload hash; see docs/source-semantic-audit.md"]
 fn noaa_kp_a_window_retained_point_keeps_its_id() {
     let base = include_bytes!("../../../tests/fixtures/noaa_kp_index.json").to_vec();
     let a = wse_sources::noaa_kp::parse(&base, received()).unwrap();
 
     let text = String::from_utf8(base).unwrap();
     let extra = r#"{"time_tag": "2026-09-24T09:00:00", "Kp": 5.0}"#;
-    let body2 = text.replacen('[', &format!("[{extra},"), 1).into_bytes();
+    let body2 = text.replacen(']', &format!(",{extra}]"), 1).into_bytes();
     let b = wse_sources::noaa_kp::parse(&body2, received()).unwrap();
 
     let first_a = &a[0];
@@ -119,29 +133,88 @@ fn noaa_kp_a_window_retained_point_keeps_its_id() {
 }
 
 /// F1 — GDELT returns a 1-day window every poll; a bucket retained in both
-/// windows must keep its id.
+/// windows must keep its id. A stale bucket is dropped and a new one appended,
+/// so the retained buckets keep their timestamps.
 #[test]
-#[ignore = "F1: observation id is seeded with the whole-payload hash; see docs/source-semantic-audit.md"]
 fn gdelt_a_window_retained_bucket_keeps_its_id() {
     let base = include_bytes!("../../../tests/fixtures/gdelt_timelinevol.json").to_vec();
     let a = wse_sources::gdelt::parse(&base, received()).unwrap();
 
-    let text = String::from_utf8(base).unwrap();
-    let extra = r#"{"date": "20260929T000000Z", "value": 1.0}"#;
-    let body2 = text
-        .replace("\"data\": [", &format!("\"data\": [{extra}, "))
-        .into_bytes();
+    let mut v: serde_json::Value = serde_json::from_slice(&base).unwrap();
+    let data = v["timeline"][0]["data"].as_array_mut().unwrap();
+    data.remove(0); // drop the oldest bucket
+    data.push(serde_json::json!({"date": "20231118000000", "value": 0.95}));
+    let body2 = serde_json::to_vec(&v).unwrap();
     let b = wse_sources::gdelt::parse(&body2, received()).unwrap();
 
-    let first_a = &a[0];
-    let first_b = b
-        .iter()
-        .find(|o| o.observed_at == first_a.observed_at)
-        .unwrap();
+    // 20231115120000 (0.455) is retained across the slide.
+    let first_a = a.iter().find(|o| o.value == 0.455).unwrap();
+    let first_b = b.iter().find(|o| o.value == 0.455).unwrap();
     assert_eq!(
         first_a.id, first_b.id,
         "an unchanged GDELT bucket must keep its id across a window slide"
     );
+}
+
+/// F1 — reordering a feed must not change any record's id (identity is not
+/// positional).
+#[test]
+fn usgs_reordering_the_feed_does_not_change_ids() {
+    let base = include_bytes!("../../../tests/fixtures/usgs_all_hour.geojson").to_vec();
+    let a = wse_sources::usgs::parse(&base, received()).unwrap();
+
+    let mut v: serde_json::Value = serde_json::from_slice(&base).unwrap();
+    v["features"].as_array_mut().unwrap().reverse();
+    let b = wse_sources::usgs::parse(&serde_json::to_vec(&v).unwrap(), received()).unwrap();
+
+    let ids = |obs: &[wse_model::Observation]| {
+        let mut ids: Vec<String> = obs.iter().map(|o| o.id.as_str().to_string()).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids(&a), ids(&b), "reordering must not change ids");
+}
+
+/// F1 — removing an unrelated record must not change the ids of the records that
+/// remain.
+#[test]
+fn usgs_removing_an_unrelated_quake_does_not_change_ids() {
+    let base = include_bytes!("../../../tests/fixtures/usgs_all_hour.geojson").to_vec();
+    let a = wse_sources::usgs::parse(&base, received()).unwrap();
+
+    // Drop the last feature (hv73000001, magnitude 1.8).
+    let mut v: serde_json::Value = serde_json::from_slice(&base).unwrap();
+    v["features"].as_array_mut().unwrap().pop();
+    let b = wse_sources::usgs::parse(&serde_json::to_vec(&v).unwrap(), received()).unwrap();
+
+    assert_eq!(b.len(), a.len() - 1);
+    for kept in &b {
+        let same = a.iter().find(|o| o.value == kept.value).unwrap();
+        assert_eq!(
+            kept.id, same.id,
+            "removing an unrelated record must not change the remaining ids"
+        );
+    }
+}
+
+/// F1 — a revised measurement for the same upstream record keeps its identity.
+/// A magnitude revision is a change in the *value*, not a new earthquake.
+#[test]
+fn usgs_a_revised_magnitude_keeps_identity() {
+    let base = include_bytes!("../../../tests/fixtures/usgs_all_hour.geojson").to_vec();
+    let a = wse_sources::usgs::parse(&base, received()).unwrap();
+    let original = a.iter().find(|o| o.value == 5.4).unwrap();
+
+    let mut v: serde_json::Value = serde_json::from_slice(&base).unwrap();
+    v["features"][0]["properties"]["mag"] = serde_json::json!(5.7);
+    let b = wse_sources::usgs::parse(&serde_json::to_vec(&v).unwrap(), received()).unwrap();
+    let revised = b.iter().find(|o| o.value == 5.7).unwrap();
+
+    assert_eq!(
+        original.id, revised.id,
+        "a revised magnitude for the same quake must keep one identity"
+    );
+    assert_eq!(original.series_key(), revised.series_key());
 }
 
 /// F2 — the catalog declares Hacker News a `fixed_universe`, but the collector

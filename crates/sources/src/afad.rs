@@ -140,7 +140,9 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
             raw,
         )
         .with_received_at(received_at)
-        .with_identity(&event.event_id)
+        // AFAD's event id is the stable upstream identity; the query window
+        // slides between polls, so the same event must keep one id.
+        .with_record_key(&event.event_id)
         .with_attribute("event_id", event.event_id.clone())
         .with_attribute("place", event.location.clone())
         .with_dimension("province", province.to_string());
@@ -221,9 +223,13 @@ mod tests {
             .map(|o| o.entity_id.as_ref().unwrap().as_str())
             .collect();
         assert!(entities.iter().any(|e| e.contains("kahramanmaras")));
-        // Location and identity are kept for drill-down.
+        // Location and the event id are kept for drill-down.
         assert!(observations[0].latitude.is_some());
-        assert!(!observations[0].identity.as_deref().unwrap().is_empty());
+        assert!(!observations[0]
+            .attributes
+            .get("event_id")
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

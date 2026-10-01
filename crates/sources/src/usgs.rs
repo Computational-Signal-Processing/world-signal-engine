@@ -137,7 +137,11 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
             observed_at,
             raw,
         )
-        .with_received_at(received_at);
+        .with_received_at(received_at)
+        // The USGS feature id is the quake's stable upstream identity. The
+        // feed is re-fetched every minute, so without this a quake retained in
+        // the next feed would be re-minted as a new observation.
+        .with_record_key(&feature.id);
 
         if let Some(geometry) = &feature.geometry {
             if geometry.coordinates.len() >= 2 {

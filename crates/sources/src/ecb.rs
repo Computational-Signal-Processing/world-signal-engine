@@ -161,6 +161,10 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
                         raw,
                     )
                     .with_received_at(received_at)
+                    // The SDMX period is the observation's natural key: a
+                    // rolling `lastNObservations` window re-fetches the same
+                    // days, and each day must keep one id.
+                    .with_record_key(date)
                     .with_attribute("pair", "USD/EUR".to_string())
                     .with_attribute("period", date.clone()),
                 );

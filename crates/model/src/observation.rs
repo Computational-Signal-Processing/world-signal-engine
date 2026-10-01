@@ -72,6 +72,11 @@ pub struct Observation {
 impl Observation {
     /// Build an observation with a deterministic id derived from its series
     /// key, timestamp and payload hash.
+    ///
+    /// Use this for a source that emits exactly one record per series per
+    /// timestamp, where the payload hash *is* the record identity. A source
+    /// whose payload bundles many records (or re-fetches a sliding window) must
+    /// call [`with_record_key`](Self::with_record_key) instead.
     pub fn new(
         source_id: SourceId,
         entity_id: Option<EntityId>,
@@ -85,9 +90,10 @@ impl Observation {
         let unit = unit.into();
         let entity_key = entity_id.as_ref().map(|e| e.as_str()).unwrap_or("-");
         let key = series_key(&source_id, entity_key, &metric, &unit);
-        // No `identity` yet: the id is finalized by `with_identity`, which is
-        // what a source with several records per timestamp calls.
-        let id = ObservationId::deterministic(&key, &observed_at.to_rfc3339(), &raw.hash, None);
+        // No record key yet: fall back to the payload hash, which is correct
+        // for single-record sources and is overridden by `with_record_key` /
+        // `with_identity` for the rest.
+        let id = ObservationId::deterministic(&key, &observed_at.to_rfc3339(), &raw.hash);
         Self {
             id,
             source_id,
@@ -121,16 +127,36 @@ impl Observation {
     /// unchanged payload still produces the same id and is de-duplicated.
     pub fn with_identity(mut self, identity: impl Into<String>) -> Self {
         let identity = identity.into();
-        let entity_key = self.entity_id.as_ref().map(|e| e.as_str()).unwrap_or("-");
-        let key = series_key(&self.source_id, entity_key, &self.metric, &self.unit);
-        self.id = ObservationId::deterministic(
-            &key,
-            &self.observed_at.to_rfc3339(),
-            &self.raw.hash,
-            Some(&identity),
-        );
+        self.id = self.derive_id(&identity);
         self.identity = Some(identity);
         self
+    }
+
+    /// Give the observation the source's **stable record key** and re-derive
+    /// its id from that key instead of the payload hash.
+    ///
+    /// This is the record-level identity contract. A record key answers "is
+    /// this the same source record as before?" — an upstream event id, an
+    /// accession id, a permalink, or a time-series point's own timestamp. It
+    /// must **not** include the measured value: a record keeps its identity
+    /// while its measurement changes.
+    ///
+    /// Unlike [`with_identity`](Self::with_identity), the key is not exposed as
+    /// a per-record discriminator; it is only folded into the id. Use
+    /// `with_identity` for sources with several records per series per
+    /// timestamp, and this for sources whose records are individually keyed but
+    /// which are re-fetched in a changing payload.
+    pub fn with_record_key(mut self, key: impl Into<String>) -> Self {
+        let key = key.into();
+        self.id = self.derive_id(&key);
+        self
+    }
+
+    /// Derive the deterministic id from a record key (or payload hash).
+    fn derive_id(&self, record_key: &str) -> ObservationId {
+        let entity_key = self.entity_id.as_ref().map(|e| e.as_str()).unwrap_or("-");
+        let series = series_key(&self.source_id, entity_key, &self.metric, &self.unit);
+        ObservationId::deterministic(&series, &self.observed_at.to_rfc3339(), record_key)
     }
 
     /// Override the receipt timestamp.
@@ -237,7 +263,31 @@ mod tests {
 
     #[test]
     fn different_payload_hash_produces_different_id() {
+        // The single-record contract: with no record key the payload hash *is*
+        // the identity, so a changed payload is a new observation.
         assert_ne!(obs(1.0, "h1").id, obs(1.0, "h2").id);
+    }
+
+    #[test]
+    fn a_record_key_keeps_identity_while_the_value_changes() {
+        // The multi-record / sliding-window contract: identity follows the
+        // upstream record, not the payload, so a changed measurement for the
+        // same record keeps its id.
+        let first = obs(1.0, "h1").with_record_key("event-1");
+        let changed_value = obs(99.0, "h2").with_record_key("event-1");
+        assert_eq!(first.id, changed_value.id);
+        assert_eq!(first.series_key(), changed_value.series_key());
+        assert!(
+            first.identity.is_none(),
+            "record key is not a discriminator"
+        );
+    }
+
+    #[test]
+    fn a_record_key_separates_distinct_records() {
+        let a = obs(1.0, "h").with_record_key("event-a");
+        let b = obs(1.0, "h").with_record_key("event-b");
+        assert_ne!(a.id, b.id, "different records must not collide");
     }
 
     #[test]

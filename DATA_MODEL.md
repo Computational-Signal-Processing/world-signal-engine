@@ -47,11 +47,30 @@ attributes          non-numeric source fields, e.g. {"author": "..."}
 
 ### Identity and de-duplication
 
-An observation's id is derived from its series key, its timestamp and the hash of
-its raw payload. This makes ingestion idempotent: collecting the same payload
-twice produces the same id, and the second copy is dropped as a duplicate rather
-than stored again. A source that returns unchanged data therefore produces no new
-observations.
+An observation's id is derived from its series key, its timestamp and the
+**record's stable key**:
+
+```text
+source::entity::metric::unit | observed_at | record_key
+```
+
+The record key is the strongest stable identity the source offers for the
+record — an upstream event id, an accession id, a permalink, or a time-series
+point's own timestamp. It must not include the measured value: a record keeps
+its identity while its measurement changes. This makes ingestion idempotent
+without re-minting ids on every poll: a multi-record feed or a sliding window
+whose *other* records changed still yields the same id for a record that did
+not, so the second copy is dropped as a duplicate. A source that returns
+unchanged data therefore produces no new observations.
+
+A source with exactly one record per series per timestamp may omit the record
+key; its payload hash is then used as the key, so re-fetching an identical
+payload de-duplicates and a changed payload is a new observation.
+
+`Observation::with_record_key` sets the record key. `Observation::with_identity`
+sets a per-record *discriminator* for sources that emit several records per
+series per timestamp (GitHub search, Hacker News); it is folded into the id and
+kept on the observation for drill-down, but never enters the series key.
 
 ### The series key
 

@@ -23,13 +23,19 @@ Legend for detection eligibility:
 | **EVIDENCE_ONLY** | The value is real and worth storing for drill-down and convergence, but its own series is not a trustworthy basis for an anomaly. |
 | **NOT_DETECTABLE** | The series does not mean what detection would assume. Detection must not run. |
 
-## Cross-cutting finding: observation identity is derived from the whole payload
+## Cross-cutting finding: observation identity was derived from the whole payload
 
-The single most important semantic bug in the network is in the *shared* id
+> **Status: FIXED.** The identity contract now derives an observation's id from
+> the record's **stable record key**, not the whole-body payload hash. The five
+> probes below were promoted to active regression tests in
+> `crates/sources/tests/semantic_regression.rs` and pass. The finding is kept
+> here as the record of what was wrong and why.
+
+The single most important semantic bug in the network was in the *shared* id
 derivation, not in any one collector. It is documented here once and referenced
 by each affected source.
 
-`ObservationId::deterministic` seeds the id with the **whole-body payload hash**:
+`ObservationId::deterministic` seeded the id with the **whole-body payload hash**:
 
 ```text
 series_key | observed_at | payload_hash | identity
@@ -38,24 +44,47 @@ series_key | observed_at | payload_hash | identity
 For a *single-record* source this is harmless: the body changes only when the
 record changes. But for every source that returns a **multi-record window or
 feed**, the body changes whenever *any* record in it changes, so the payload
-hash changes, so **the ids of the records that did not change are re-minted**.
+hash changes, so **the ids of the records that did not change were re-minted**.
 
 The dedup check in `Engine::ingest_observations` is `contains_observation(id)`.
-Because the id changed, the "unchanged" record is not recognised as a duplicate
-and is ingested as a brand-new observation. It is then pushed into the rolling
+Because the id changed, the "unchanged" record was not recognised as a duplicate
+and was ingested as a brand-new observation. It was then pushed into the rolling
 window as a *second* point at the *same* `observed_at` (the window dedups on
 nothing — see `RollingWindow::push`), which double-counts and distorts the
 baseline.
 
-Reproduced by probe (each currently fails against `main`):
+Reproduced by probe (each failed against `main` before the fix):
 
-| Source | Probe | Result |
+| Source | Probe | Result before fix |
 | --- | --- | --- |
 | USGS | same quake, feed with one extra quake | id changed `obs_8293…` → `obs_4aff…` |
 | AFAD | same event, window slid by one | id changed `obs_0f3e…` → `obs_3cbb…` |
 | ECB | same rate, `lastNObservations=7` slid | id changed `obs_8064…` → `obs_2195…` |
 | NOAA Kp | same 3-hourly point, window slid | id changed `obs_7815…` → `obs_09db…` |
 | GDELT | same bucket, 1-day window slid | id changed `obs_7f50…` → `obs_3c4b…` |
+
+### The fix
+
+Identity is now the record's own stable key:
+
+```text
+series_key | observed_at | record_key
+```
+
+where `record_key` is the strongest stable identity the source offers. The
+payload hash is used *only* as the fallback for a source with exactly one record
+per series per timestamp, where the hash already is the record identity.
+
+| Source | Record key used |
+| --- | --- |
+| USGS | the GeoJSON feature id (the quake's upstream id) |
+| AFAD | `eventID` |
+| ECB | the SDMX period (`YYYY-MM-DD`) |
+| NOAA Kp | the point's `time_tag` |
+| GDELT | `series \| bucket date` |
+
+Each key excludes the measured value, so a record keeps its identity while its
+measurement changes (a revised magnitude is a change in value, not a new quake).
 
 Impact by source character:
 
@@ -640,7 +669,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 
 | # | Fix | Scope | Test to add first |
 | --- | --- | --- | --- |
-| F1 | Derive observation ids from the **record key**, not the payload hash (seed with `event_id`/`time_tag`/`date`, or hash the record's own bytes) | `crates/model/src/ids.rs`, `observation.rs`, + per-source `parse` | the five probes in this audit, promoted to regression tests |
+| F1 | ~~Derive observation ids from the **record key**, not the payload hash~~ **DONE** — ids are now `series_key \| observed_at \| record_key`; the five sources pass `event_id`/`period`/`time_tag`/`series\|date` | `crates/model/src/ids.rs`, `observation.rs`, + per-source `parse` | five probes promoted to active tests in `crates/sources/tests/semantic_regression.rs` |
 | F2 | Make Hacker News honour `fixed_universe`: persist and reuse the universe via `next_universe`, or declare `unstable_population` | `crates/sources/src/collectors.rs` (+ state) or `hackernews.rs` | universe stability across two polls |
 | F3 | Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total | `crates/sources/src/arxiv.rs` | two polls → delta metric |
 | F4 | Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance | `crates/sources/src/nasa.rs` | distance-threshold count |
