@@ -647,19 +647,17 @@ async function worldView(options = {}) {
         ]),
       ])
     );
-    paintWorldNotice();
     startActivityStream();
     if (remount) startWorldStream();
+    paintWorldNotice();
     return;
   }
-
   const nodes = [];
 
   // The monitoring banner: whether the world is being watched, and how fresh
   // the data is. Rendered from the summary and updated in place, so it can
   // never claim "live" while nothing is running.
   nodes.push(el("div", { class: "world-notice", id: "world-notice" }));
-  paintWorldNotice();
 
   // The NOW strip: what is changing, in one glance, before the long feed.
   // It only appears on the unfiltered view — a lens is already a filter.
@@ -733,6 +731,7 @@ async function worldView(options = {}) {
   // signal forms, so a change appears on its own.
   startActivityStream();
   if (remount) startWorldStream();
+  paintWorldNotice();
 }
 
 /** The header chips for a world summary, reused on live refresh. */
@@ -1211,9 +1210,10 @@ async function mapView() {
 
 /* --------------------------------------------------------------- SYSTEM -- */
 
+/* Activity kinds arrive SCREAMING_SNAKE_CASE (the engine's serde form). */
 const ACTIVITY_ICON = {
-  Started: "▶", Observation: "·", Anomaly: "◇", Event: "□", Signal: "⚡",
-  SourceRecovered: "✓", SourceFailed: "✕", SourceRateLimited: "⏳", Control: "⚙",
+  STARTED: "▶", OBSERVATION: "·", ANOMALY: "◇", EVENT: "□", SIGNAL: "⚡",
+  SOURCE_RECOVERED: "✓", SOURCE_FAILED: "✕", SOURCE_RATE_LIMITED: "⏳", CONTROL: "⚙",
 };
 
 let activityLog = [];
@@ -1434,7 +1434,7 @@ function startWorldStream() {
 
   // A signal frame is the only thing that can add a signal to the world.
   state.sseHandler = (activity) => {
-    if (activity.kind !== "signal") return;
+    if (activity.kind !== "SIGNAL") return;
     scheduleWorldRefresh();
   };
   addSseHandler(state.sseHandler);

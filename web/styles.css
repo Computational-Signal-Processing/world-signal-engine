@@ -327,10 +327,10 @@ a { color: inherit; text-decoration: none; }
 .act-time { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 .act-ico { text-align: center; }
 .act-msg { color: var(--text-dim); }
-.act[data-kind="Signal"] .act-msg { color: var(--text); }
-.act[data-kind="SourceFailed"] .act-msg,
-.act[data-kind="SourceRateLimited"] .act-msg { color: var(--bad); }
-.act[data-kind="Control"] .act-msg { color: var(--warn); }
+.act[data-kind="SIGNAL"] .act-msg { color: var(--text); }
+.act[data-kind="SOURCE_FAILED"] .act-msg,
+.act[data-kind="SOURCE_RATE_LIMITED"] .act-msg { color: var(--bad); }
+.act[data-kind="CONTROL"] .act-msg { color: var(--warn); }
 
 /* --------------------------------------------------------------- system -- */
 

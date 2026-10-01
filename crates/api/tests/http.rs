@@ -820,9 +820,26 @@ async fn the_activity_stream_reflects_what_happened() {
         !items.is_empty(),
         "expected activity after 205 cycles: {body}"
     );
-    // Newest first, and every entry carries a real kind.
+    // Newest first, and every entry carries a real kind. The kind is the
+    // wire contract the web client switches on (icons, filters, and the
+    // World screen's live refresh), so it must stay SCREAMING_SNAKE_CASE.
+    const KNOWN_KINDS: &[&str] = &[
+        "STARTED",
+        "OBSERVATION",
+        "ANOMALY",
+        "EVENT",
+        "SIGNAL",
+        "SOURCE_RECOVERED",
+        "SOURCE_FAILED",
+        "SOURCE_RATE_LIMITED",
+        "CONTROL",
+    ];
     for item in items {
-        assert!(item["kind"].as_str().is_some());
+        let kind = item["kind"].as_str().expect("kind is a string");
+        assert!(
+            KNOWN_KINDS.contains(&kind),
+            "activity kind {kind:?} is not one the client knows; the wire format changed"
+        );
         assert!(item["message"].as_str().is_some());
     }
 }
