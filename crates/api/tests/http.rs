@@ -84,6 +84,38 @@ async fn serve_app(app: axum::Router) -> String {
     format!("http://{addr}")
 }
 
+/// Boot a server whose world is *about* to produce a signal.
+///
+/// The acceptance world emits one ANOMALY at index 200. We drive 200 cycles
+/// (indices 0..200) before serving, so the very next collection run is the one
+/// that forms the signal. The collector is handed back so the test can drive
+/// that run itself, while a live reader is attached.
+async fn serve_ready_for_the_next_signal() -> (String, AppState, SyntheticCollector) {
+    let origin = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let mut engine = Engine::new(EngineConfig::default());
+    engine
+        .register_source(Source::new(
+            wse_model::SourceId::new("synthetic_sensor"),
+            "Synthetic Sensor",
+            "synthetic",
+        ))
+        .unwrap();
+
+    let collector = SyntheticCollector::new(SyntheticWorld::acceptance(origin));
+    for _ in 0..200 {
+        engine.run_collector(&collector).await;
+    }
+
+    let state = AppState::new(engine);
+    let app = router_with_web_dir(
+        state.clone(),
+        "/nonexistent-web-dir-for-tests",
+        wse_api::SecurityConfig::default(),
+    );
+    let base = serve_app(app).await;
+    (base, state, collector)
+}
+
 async fn get_json(base: &str, path: &str) -> (u16, Value) {
     let response = reqwest::get(format!("{base}{path}"))
         .await
@@ -882,6 +914,79 @@ async fn the_events_sse_endpoint_streams_activity() {
     assert!(
         collected.contains("event: control") && collected.contains("collection paused"),
         "expected the control activity on the SSE stream, got: {collected}"
+    );
+}
+
+/// Finding 8 — the live SSE → world-refresh path, automated.
+///
+/// The World screen is live by exactly one rule: it re-fetches `/world` when a
+/// `signal` frame arrives on the stream. That path was previously verified only
+/// by hand. This test drives it end to end over a real socket:
+///
+/// 1. boot a world that is one collection run away from forming a signal,
+/// 2. attach a live reader (the same SSE request the UI makes),
+/// 3. change the world while the reader watches,
+/// 4. assert the `signal` frame arrives, and
+/// 5. assert the re-fetch the frame triggers now reports the new signal.
+///
+/// It is the runtime counterpart to the wire-contract test above: that one
+/// pins the frame *shape*, this one proves a real signal produces a real
+/// refresh, so the World screen can never silently stop being live.
+#[tokio::test]
+async fn a_live_signal_frame_triggers_a_world_refresh() {
+    let (base, state, collector) = serve_ready_for_the_next_signal().await;
+
+    // What the World screen shows on load, before the change.
+    let (status, before) = get_json(&base, "/world").await;
+    assert_eq!(status, 200);
+    let before_active = before["active_signals"].as_u64().unwrap();
+
+    // Attach a live reader, exactly as the World screen does.
+    let client = reqwest::Client::new();
+    let mut stream = client
+        .get(format!("{base}/events"))
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .expect("connect to SSE");
+    assert_eq!(stream.status(), 200);
+
+    // Advance the world one run at a time, draining frames as they arrive, so
+    // a burst can never overflow the subscriber's buffer. Stop at the first
+    // `signal` frame — the only frame the World screen re-fetches on.
+    let mut collected = String::new();
+    let mut saw_signal_frame = false;
+    for _ in 0..20 {
+        {
+            let mut engine = state.write().await;
+            engine.run_collector(&collector).await;
+        }
+        while let Ok(Ok(Some(chunk))) =
+            tokio::time::timeout(std::time::Duration::from_secs(1), stream.chunk()).await
+        {
+            collected.push_str(&String::from_utf8_lossy(&chunk));
+            if collected.contains("event: signal") {
+                saw_signal_frame = true;
+                break;
+            }
+        }
+        if saw_signal_frame {
+            break;
+        }
+    }
+
+    assert!(
+        saw_signal_frame,
+        "the World screen re-fetches only on a `signal` frame, but none arrived: {collected}"
+    );
+
+    // The re-fetch the frame triggers now reports the signal that just arrived.
+    let (status, after) = get_json(&base, "/world").await;
+    assert_eq!(status, 200);
+    assert!(
+        after["active_signals"].as_u64().unwrap() > before_active,
+        "a signal frame must be followed by a world that shows the new signal: \
+         before={before_active} after={after}"
     );
 }
 
