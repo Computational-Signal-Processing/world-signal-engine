@@ -13,6 +13,8 @@ SOURCE -> COLLECTOR -> NORMALIZATION -> OBSERVATION -> STORAGE -> BASELINE -> DE
 ```
 
 Audit run: 2026-09-30, `main` @ `399c880`, Rust 1.88.0.
+Last reconciled: 2026-09-30 — every enumerated fix (F1–F11) is **DONE**, so all
+13 sources are now DETECTABLE.
 
 Legend for detection eligibility:
 
@@ -281,10 +283,9 @@ nationally (`weather_united_states`) and per state (`weather_us_<code>`).
 10. **Same event as another source?** Possibly overlaps EONET (a storm appears in
     both as an NWS alert and an EONET storm event) and USGS (an earthquake can
     trigger alerts). Not mergeable — different granularity.
-11. **Lenses:** none configured today (category `weather` is claimed by the
-    unfed AGRICULTURE lens, and EARTH lists `weather` but has no bbox). **Gap:**
-    NWS is a Tier-1 real-time source that reaches the WORLD view but no domain
-    lens.
+11. **Lenses:** EARTH — reached by provenance, not by category: NWS declares
+    `feeds_lenses: [lens_earth]` and the engine routes a signal to the lenses its
+    sources declare (F11), so the Tier-1 real-time feed reaches a domain view.
 12. **Never infer:** that the national count is a sum of human impact; that a
     zero count is calm if the collector failed (rule 29 — a failed poll is not a
     zero count).
@@ -463,9 +464,8 @@ and `kev_catalog_total` (catalog size). Entity `cyber_kev`.
     a cumulative level; that a quiet catalog means a quiet threat landscape (KEV
     only lists *confirmed* exploitation).
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: `kev_catalog_total`
-only as a differenced series (done, CAP-2B); `kev_added` is a non-overlapping
-daily count (done, CAP-2D).
+**Eligibility: DETECTABLE** — `kev_catalog_total` is differenced, not detected on
+as a level (CAP-2B); `kev_added` is a non-overlapping daily count (CAP-2D).
 
 **Update (CAP-2B):** `kev_catalog_total` is now differenced, not detected on as
 a level. The catalog declares `kev_catalog_growth = Delta(kev_catalog_total)` and
@@ -688,16 +688,18 @@ an `O` against almost every event source by nature — it reports *on* them.
 
 # 4. TOP 10 SEMANTIC RISKS
 
-1. **Payload-hash observation ids re-mint unchanged records** (USGS, AFAD, ECB,
-   NOAA Kp, GDELT). Silent duplication of event feeds and sliding windows;
-   corrupts baselines. Probe-confirmed for all five.
+1. ~~**Payload-hash observation ids re-mint unchanged records** (USGS, AFAD, ECB,
+   NOAA Kp, GDELT).~~ **RESOLVED (F1).** Each of the five now derives its id from
+   a stable upstream record key (`event id`, `time_tag`, `series|date`, SDMX
+   date), so an unchanged record re-collected in a sliding window keeps one id.
 2. ~~**Hacker News catalog/implementation contradiction.**~~ **RESOLVED (CAP-2C).**
    The collector now commits the universe on first resolution and reuses it, so
    the population no longer churns and the engine detects on the series the
    catalog declares.
-3. **arXiv stores a cumulative level where the doc claims a velocity.** A
-   monotonic total is not an anomaly target; the intended series is never
-   computed.
+3. ~~**arXiv stores a cumulative level where the doc claims a velocity.**~~
+   **RESOLVED (CAP-2A).** The catalog declares `preprint_new = Delta(preprint_total)`;
+   detection runs on the derived increment and the raw cumulative level is
+   evidence-only.
 4. ~~**NASA NEO pools all objects into `neo_class_all`.**~~ **RESOLVED (CAP-2D).**
    The series is now the UTC day's count of close approaches; the day's closest
    object is kept as drill-down attributes.
@@ -741,7 +743,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F7 | ~~Mark the Crossref latest point as partial (quality flag) or shift the window back a day~~ **DONE (CAP-2D)** — the collector measures one completed day (yesterday), so consecutive polls never overlap and the latest point is fully deposited | `crates/sources/src/crossref.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/crossref.rs` tests |
 | F8 | ~~Handle business-day gaps for ECB (absence ≠ zero)~~ **DONE (CAP-2D/0021)** — detection is count-based, a missing day inserts no observation, and a normal move across a weekend gap yields no anomaly while a real move is still caught | `crates/engine/tests/business_day_gaps.rs` | `a_normal_move_across_a_weekend_gap_is_not_anomalous`, `a_genuine_move_across_a_gap_is_still_caught`, `a_missing_business_day_is_absent_not_zero` |
 | F9 | ~~Cold-start guard: no level deviation before a per-repo baseline exists~~ **DONE (CAP-2D)** — each repository is its own series via the `repo` dimension, so a first appearance is judged against that repository's own history, not a pooled baseline | `crates/sources/src/github.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/github.rs` tests |
-| F10 | Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view | `config/lenses/*` | lens-coverage test update |
+| F10 | ~~Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view~~ **DONE (F11)** — NWS and EONET both declare `lens_earth`, and the engine routes a signal to the lenses its sources declare, so both reach EARTH by provenance; covered by the generic runtime check | `config/lenses/earth.yaml` | `a_declared_lens_is_reachable_at_runtime` in `lens_coverage.rs` |
 | F11 | ~~Make `feeds_lenses` enforced~~ **DONE** — the engine routes a signal to the lenses its sources declare, by provenance, alongside the lens filters; a declared lens is now one the source's signals actually reach | `crates/signals`, `crates/engine` | `a_declared_lens_is_reachable_at_runtime` in `lens_coverage.rs`, plus `lens_routing.rs` |
 
 F1 was the only fix that touched the shared id contract and it landed first and
