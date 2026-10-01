@@ -310,6 +310,8 @@ const I18N = {
       feedMeta: (n) => `${n} active`,
       catSignals: (n) => `${n} live`,
       catNoData: "no data yet",
+      catMore: (n) => `${n} more categories`,
+      catMoreHint: "shown on the sources page",
       tickerTag: "Breaking",
       tickerIdle: "No active signal. The engine is observing; a departure from normal will appear here.",
       alertKicker: (sev) => `${sev} · attention required`,
@@ -317,6 +319,14 @@ const I18N = {
       alertConfidence: "confidence",
       alertClose: "Dismiss",
       broadcastHint: "Presentation mode: hide the chrome",
+      live: "Live",
+      stale: "Stale",
+      readout: "Readout",
+      readoutMeta: (total) => `${total} signals since start`,
+      flash: "Flash",
+      flashMeta: (sev) => `${sev} · highest on the board`,
+      flashEmpty: "No signal is active right now. The board is observing; the moment something departs from normal it takes this card.",
+      flashDetail: "Evidence",
     },
     world: {
       title: "World",
@@ -433,6 +443,8 @@ const I18N = {
       feedMeta: (n) => `${n} aktif`,
       catSignals: (n) => `${n} canlı`,
       catNoData: "henüz veri yok",
+      catMore: (n) => `${n} kategori daha`,
+      catMoreHint: "kaynaklar sayfasında",
       tickerTag: "Son dakika",
       tickerIdle: "Aktif sinyal yok. Motor gözlemliyor; normalden bir sapma burada görünecek.",
       alertKicker: (sev) => `${sev} · dikkat gerekli`,
@@ -440,6 +452,14 @@ const I18N = {
       alertConfidence: "güven",
       alertClose: "Kapat",
       broadcastHint: "Sunum modu: arayüzü gizle",
+      live: "Canlı",
+      stale: "Bayat",
+      readout: "Gösterge",
+      readoutMeta: (total) => `başlangıçtan beri ${total} sinyal`,
+      flash: "Flaş",
+      flashMeta: (sev) => `${sev} · panodaki en yüksek`,
+      flashEmpty: "Şu anda aktif sinyal yok. Pano gözlemliyor; normalden bir sapma olduğu an bu kartı alır.",
+      flashDetail: "Kanıt",
     },
     world: {
       title: "Dünya",
@@ -711,9 +731,8 @@ async function observatoryView() {
   const root = el("div", { class: "obs" });
   root.append(
     obsHeader(data),
-    obsMetrics(data),
-    obsBody(data),
     obsCategories(data),
+    obsBody(data),
     obsTickerBar(data),
     obsWatermark(data),
   );
@@ -769,18 +788,29 @@ function obsHeader(data) {
   const state = data.monitoring
     ? (data.collection_enabled ? t().world.watching : t().world.paused)
     : t().world.notWatching;
+  const age = data.data_age_seconds;
+  const fresh = age !== null && age !== undefined && age < 900;
+  const nav = [
+    ["#/world", t().nav.world],
+    ["#/map", t().nav.map],
+    ["#/sources", t().nav.sources],
+    ["#/system", t().nav.system],
+  ];
   return el("header", { class: "obs-head" }, [
     el("div", { class: "obs-brand" }, [
       el("span", { class: "obs-title", text: t().obs.title }),
       el("span", { class: "obs-sub", text: state }),
     ]),
-    el("nav", { class: "obs-nav" }, [
-      el("a", { href: "#/world", text: t().nav.world }),
-      el("a", { href: "#/map", text: t().nav.map }),
-      el("a", { href: "#/sources", text: t().nav.sources }),
-      el("a", { href: "#/system", text: t().nav.system }),
-    ]),
+    el("nav", { class: "obs-nav" }, nav.map(([href, label]) =>
+      el("a", { href: withLens(href), text: label })
+    )),
     el("div", { class: "obs-clock" }, [
+      // The live badge states the stream, not the world: it is the freshness of
+      // the data that decides whether the board is live.
+      el("span", { class: "obs-live", "data-idle": String(!fresh) }, [
+        el("span", { class: "obs-live-dot", "aria-hidden": "true" }),
+        el("span", { text: fresh ? t().obs.live : t().obs.stale }),
+      ]),
       el("span", { class: "obs-clock-time", id: "obs-clock", text: new Date().toISOString().slice(11, 19) }),
       el("span", { class: "obs-clock-zone", text: "UTC" }),
       el("button", {
@@ -802,41 +832,101 @@ function toggleBroadcast() {
   window.history.replaceState(null, "", url);
 }
 
-/** The top strip: the six numbers that say what the world is doing. */
-function obsMetrics(data) {
-  const age = data.data_age_seconds;
-  const healthy = data.sources_total > 0 && data.sources_healthy === data.sources_total;
-  const activity = data.activity || {};
-  const windowLabel = activity.window || "24H";
-  return el("div", { class: "obs-metrics" }, [
-    obsMetric(t().obs.metricSignals, String(data.active_signals), "bad",
-      t().obs.metricSignalsHint(data.signals_total)),
-    obsMetric(t().obs.metricObserved, String(data.observations_total), null,
-      t().obs.metricObservedHint),
-    obsMetric(t().obs.metricSources, `${data.sources_healthy}/${data.sources_total}`,
-      healthy ? "ok" : "warn", t().obs.metricSourcesHint),
-    obsMetric(t().obs.metricActivity(windowLabel), String(activity.current ?? 0), null,
-      t().obs.metricActivityHint(Math.round(activity.baseline ?? 0))),
-    obsMetric(t().obs.metricElevated, String(activity.elevated_buckets ?? 0),
-      (activity.elevated_buckets ?? 0) > 0 ? "warn" : null, t().obs.metricElevatedHint),
-    obsMetric(t().obs.metricFreshness,
-      age === null || age === undefined ? t().obs.noData : fmtAgo(age),
-      age === null || age === undefined ? "muted" : null, t().obs.metricFreshnessHint),
-  ]);
-}
-
-function obsMetric(label, value, tone, hint) {
-  return el("div", { class: "obs-metric" }, [
-    el("span", { class: "obs-metric-label", text: label }),
-    el("span", { class: "obs-metric-value", "data-tone": tone || "", text: value }),
-    el("span", { class: "obs-metric-hint", text: hint }),
-  ]);
-}
+/* --- body: activity + globe + feed ------------------------------------- */
 
 function obsBody(data) {
   const body = el("div", { class: "obs-body" });
-  body.append(obsGlobe(data), obsActivityPanel(data), obsFeedPanel(data));
+  body.append(
+    el("div", { class: "obs-col obs-col-left" }, [
+      obsActivityPanel(data),
+      obsReadoutPanel(data),
+    ]),
+    el("div", { class: "obs-col obs-col-center" }, [
+      obsGlobe(data),
+      obsFlashPanel(data),
+    ]),
+    el("div", { class: "obs-col obs-col-feed" }, [
+      obsFeedPanel(data),
+    ]),
+  );
   return body;
+}
+
+/** The signal the board is about: the highest-severity active one, else newest. */
+function obsSelected(data) {
+  const feed = data.feed || [];
+  if (feed.length === 0) return null;
+  const rank = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+  return feed.slice().sort((a, b) => {
+    const d = (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9);
+    if (d !== 0) return d;
+    return new Date(b.last_updated) - new Date(a.last_updated);
+  })[0];
+}
+
+/**
+ * The readout: the numbers behind the board's own health.
+ *
+ * Every row is a measurement — stored observations, healthy collectors, the
+ * age of the newest one. None of it is a derived "score", because a score
+ * would hide which measurement moved.
+ */
+function obsReadoutPanel(data) {
+  const age = data.data_age_seconds;
+  const activity = data.activity || {};
+  const healthy = data.sources_total > 0 && data.sources_healthy === data.sources_total;
+  const rows = [
+    [t().obs.metricObserved, String(data.observations_total), null, t().obs.metricObservedHint],
+    [t().obs.metricSources, `${data.sources_healthy}/${data.sources_total}`, healthy ? "ok" : "warn", t().obs.metricSourcesHint],
+    [t().obs.metricActivity(activity.window || "24H"), String(activity.current ?? 0), null, t().obs.metricActivityHint(Math.round(activity.baseline ?? 0))],
+    [t().obs.metricElevated, String(activity.elevated_buckets ?? 0), (activity.elevated_buckets ?? 0) > 0 ? "warn" : null, t().obs.metricElevatedHint],
+    [t().obs.metricSignals, String(data.active_signals), data.active_signals > 0 ? "bad" : null, t().obs.metricSignalsHint(data.signals_total)],
+    [t().obs.metricFreshness, age === null || age === undefined ? t().obs.noData : fmtAgo(age), age === null || age === undefined ? null : null, t().obs.metricFreshnessHint],
+  ];
+  const body = el("div", { class: "obs-kv" }, rows.map(([key, value, tone, hint]) =>
+    el("div", { class: "obs-kv-row", title: hint }, [
+      el("span", { class: "obs-kv-key", text: key }),
+      el("span", { class: "obs-kv-val", "data-tone": tone || "", text: value }),
+    ])
+  ));
+  return obsPanel(t().obs.readout, t().obs.readoutMeta(data.signals_total), body);
+}
+
+/**
+ * The flash card: the selected signal's own figures, inline under the globe.
+ *
+ * It is the same signal the feed row and the alert modal describe; it carries
+ * the evidence line verbatim rather than paraphrasing it into drama.
+ */
+function obsFlashPanel(data) {
+  const item = obsSelected(data);
+  const body = el("div", { class: "obs-panel-body obs-flash-body" });
+  if (!item) {
+    body.append(el("div", { class: "obs-empty", text: t().obs.flashEmpty }));
+    return obsPanel(t().obs.flash, null, body, { class: "obs-panel obs-flash", bodyClass: true });
+  }
+  const facts = [
+    [t().facts.deviation, evidenceSigma(item), item.deviation_sigma !== null && item.deviation_sigma !== undefined ? (Math.abs(item.deviation_sigma) >= 2 ? "bad" : null) : null],
+    [t().facts.persistence, fmtDuration(item.duration_seconds), null],
+    [t().obs.alertSources, String((item.sources || []).length), null],
+    [t().obs.alertConfidence, `${Math.round((item.confidence || 0) * 100)}%`, null],
+  ];
+  body.append(
+    el("h3", { class: "obs-flash-title", text: item.title }),
+    el("p", { class: "obs-flash-summary", text: item.summary }),
+    el("div", { class: "obs-flash-reason", text: item.severity_reason }),
+    el("div", { class: "obs-flash-facts" }, facts.map(([k, v, tone]) =>
+      el("span", {}, [
+        el("b", { text: k }),
+        el("span", { "data-tone": tone || "", text: v }),
+      ])
+    )),
+    el("div", { class: "obs-flash-actions" }, [
+      el("button", { class: "btn", type: "button", text: t().obs.flashDetail, onclick: () => openAlert(item) }),
+      el("a", { class: "btn primary", href: withLens(`#/signal/${item.signal_id}`), text: t().signal.investigate }),
+    ]),
+  );
+  return obsPanel(t().obs.flash, t().obs.flashMeta(item.severity), body, { class: "obs-panel obs-flash", bodyClass: true });
 }
 
 /* --- globe ------------------------------------------------------------- */
@@ -852,7 +942,7 @@ function obsBody(data) {
  * distance; it is cheap to compute and needs no tiles or network.
  */
 function obsGlobe(data) {
-  const width = 520, height = 380, radius = 150;
+  const width = 620, height = 460, radius = 186;
   const cx = width / 2, cy = height / 2;
   const located = (data.feed || []).filter((s) => s.location);
   const body = el("div", { class: "obs-panel-body" });
@@ -863,6 +953,9 @@ function obsGlobe(data) {
   }
 
   const svg = svgEl("svg", { viewBox: `0 0 ${width} ${height}`, class: "obs-globe", preserveAspectRatio: "xMidYMid meet" });
+  // A faint disc under the graticule: it reads as a body rather than a wire
+  // cage, without pretending to be a satellite image.
+  svg.append(svgEl("circle", { cx, cy, r: radius, class: "disc" }));
   svg.append(svgEl("circle", { cx, cy, r: radius, class: "limb" }));
   // Graticule at 30° steps. Longitude lines collapse toward the limb, which is
   // the visual cue that this is a sphere and not a flat map.
@@ -985,7 +1078,11 @@ function obsFeedPanel(data) {
 function obsFeedRow(item) {
   const glyph = TYPE_GLYPH[primaryType(item.types)] || "•";
   const ts = new Date(item.last_updated).getTime();
-  return el("li", { class: "obs-feed-row", onclick: () => openAlert(item) }, [
+  return el("li", {
+    class: "obs-feed-row",
+    "data-sev": item.severity,
+    onclick: () => openAlert(item),
+  }, [
     el("span", { class: "obs-feed-glyph", "aria-hidden": "true", text: glyph }),
     el("span", { class: "obs-feed-main" }, [
       el("span", { class: "obs-feed-title", text: item.title }),
@@ -1001,53 +1098,96 @@ function obsFeedRow(item) {
 /* --- categories -------------------------------------------------------- */
 
 function obsCategories(data) {
-  const cards = (data.categories || []).map((card) => {
-    const dir = (card.change_pct ?? 0) >= 0 ? "up" : "down";
-    const children = [
-      el("div", { class: "obs-cat-top" }, [
-        el("span", { class: "obs-cat-name", text: card.label }),
-        card.active_signals > 0
+  const all = data.categories || [];
+  const capacity = stripCapacity();
+  // The catalog returns categories in priority order, so the ones that fall
+  // off the strip are the least relevant — but they are never dropped
+  // silently: the last slot becomes a tile that says how many are behind it
+  // and where to find them.
+  const shown = all.length > capacity ? all.slice(0, capacity - 1) : all;
+  const hidden = all.length - shown.length;
+  const cards = shown.map(obsCategoryCard);
+  if (hidden > 0) cards.push(obsMoreTile(hidden, all.slice(shown.length)));
+  return el("div", { class: "obs-cats" }, cards);
+}
+
+/** How many category cards fit on one row at the current width. */
+function stripCapacity() {
+  const w = window.innerWidth;
+  if (w >= 1700) return 7;
+  if (w >= 1400) return 6;
+  if (w >= 1150) return 5;
+  if (w >= 900) return 4;
+  if (w >= 620) return 3;
+  return 2;
+}
+
+function obsCategoryCard(card) {
+  const dir = (card.change_pct ?? 0) >= 0 ? "up" : "down";
+  const children = [
+    el("div", { class: "obs-cat-top" }, [
+      el("span", { class: "obs-cat-name", text: card.label }),
+      card.top_type
+        ? el("span", { class: "obs-cat-badge", "data-type": card.top_type, text: t().type[card.top_type] || card.top_type })
+        : card.active_signals > 0
           ? el("span", { class: "obs-cat-badge", text: t().obs.catSignals(card.active_signals) })
           : null,
-      ]),
-    ];
+    ]),
+  ];
 
-    if (card.has_data) {
-      children.push(el("div", { class: "obs-cat-value" }, [
-        fmtValue(card.value),
-        card.unit ? el("span", { class: "obs-cat-unit", text: card.unit }) : null,
-      ]));
-      children.push(el("div", { class: "obs-cat-delta", "data-dir": dir }, [
-        card.change_pct !== null && card.change_pct !== undefined
-          ? `${card.change_pct >= 0 ? "+" : ""}${card.change_pct.toFixed(1)}%`
-          : "—",
-        card.deviation_sigma !== null && card.deviation_sigma !== undefined
-          ? ` · ${card.deviation_sigma >= 0 ? "+" : ""}${card.deviation_sigma.toFixed(1)}σ`
-          : "",
-      ]));
-      const spark = catSparkline(card.sparkline, card.baseline);
-      if (spark) children.push(spark);
-    } else {
-      children.push(el("div", { class: "obs-cat-value", "data-empty": "true", text: t().obs.catNoData }));
-      children.push(el("div", { class: "obs-cat-reason", text: card.empty_reason || "" }));
+  if (card.has_data) {
+    children.push(el("div", { class: "obs-cat-value", title: fmtValue(card.value) }, [
+      fmtValue(card.value),
+      card.unit ? el("span", { class: "obs-cat-unit", text: card.unit }) : null,
+    ]));
+    children.push(el("div", { class: "obs-cat-delta", "data-dir": dir }, [
+      card.change_pct !== null && card.change_pct !== undefined
+        ? `${card.change_pct >= 0 ? "+" : ""}${card.change_pct.toFixed(1)}%`
+        : "—",
+      card.deviation_sigma !== null && card.deviation_sigma !== undefined
+        ? ` · ${card.deviation_sigma >= 0 ? "+" : ""}${card.deviation_sigma.toFixed(1)}σ`
+        : "",
+    ]));
+    const spark = catSparkline(card.sparkline, card.baseline);
+    if (spark) children.push(spark);
+    // The reason line is only worth its space when it says something the
+    // number and the delta have not already said.
+    if (card.active_signals > 0 || card.severity !== "LOW") {
+      children.push(el("div", { class: "obs-cat-reason", text: card.severity_reason }));
     }
-    children.push(el("div", { class: "obs-cat-reason", text: card.severity_reason }));
+  } else {
+    children.push(el("div", { class: "obs-cat-value", "data-empty": "true", text: t().obs.catNoData }));
+    children.push(el("div", { class: "obs-cat-reason", text: card.empty_reason || card.severity_reason }));
+  }
 
-    // A card with a series opens that series' timeline — the actual evidence
-    // for the number. An empty card has nothing to show, so it goes to the
-    // sources list instead of pretending there is a chart behind it.
-    const target = card.has_data && card.series_key
-      ? `#/timeline/${encodeURIComponent(card.series_key)}`
-      : "#/sources";
-    return el("article", {
-      class: "obs-cat",
-      "data-sev": card.severity,
-      "data-empty": String(!card.has_data),
-      title: card.severity_reason,
-      onclick: () => { window.location.hash = withLens(target); },
-    }, children);
-  });
-  return el("div", { class: "obs-cats" }, cards);
+  // A card with a series opens that series' timeline — the actual evidence for
+  // the number. An empty card has nothing to show, so it goes to the sources
+  // list instead of pretending there is a chart behind it.
+  const target = card.has_data && card.series_key
+    ? `#/timeline/${encodeURIComponent(card.series_key)}`
+    : "#/sources";
+  return el("article", {
+    class: "obs-cat",
+    "data-sev": card.severity,
+    "data-empty": String(!card.has_data),
+    title: card.severity_reason,
+    onclick: () => { window.location.hash = withLens(target); },
+  }, children);
+}
+
+/** The slot that admits the strip is showing a subset, and where the rest is. */
+function obsMoreTile(count, rest) {
+  return el("article", {
+    class: "obs-cat",
+    "data-more": "true",
+    title: rest.map((c) => c.label).join(", "),
+    onclick: () => { window.location.hash = withLens("#/sources"); },
+  }, [
+    el("div", { class: "obs-cat-top" }, [
+      el("span", { class: "obs-cat-name", text: t().obs.catMore(count) }),
+    ]),
+    el("div", { class: "obs-cat-more-list", text: rest.map((c) => c.label).join(" · ") }),
+  ]);
 }
 
 /** A category's recent points against its baseline, small enough to fit a card. */
@@ -1082,6 +1222,7 @@ function obsTickerBar(data) {
     const line = () => items.map((item) =>
       el("span", { class: "obs-ticker-item" }, [
         el("b", { text: `${fmtClock(item.at)} · ` }),
+        el("span", { class: "obs-ticker-sev", text: `${t().sev[item.severity] || item.severity} ` }),
         item.text,
       ])
     );
@@ -1114,14 +1255,15 @@ function obsWatermark(data) {
   ]);
 }
 
-function obsPanel(title, meta, body) {
-  return el("section", { class: "obs-panel" }, [
+function obsPanel(title, meta, body, opts = {}) {
+  const section = el("section", { class: opts.class || "obs-panel" }, [
     el("header", { class: "obs-panel-head" }, [
       el("h2", { class: "obs-panel-title", text: title }),
       meta ? el("span", { class: "obs-panel-meta", text: meta }) : null,
     ]),
     body,
   ]);
+  return section;
 }
 
 /* --- alert modal ------------------------------------------------------- */
