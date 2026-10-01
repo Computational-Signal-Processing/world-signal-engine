@@ -130,6 +130,14 @@ No network or credentials are needed to run it.
   for a source with one record per series per timestamp. Never put the measured
   value in the record key: a revised measurement for the same record must keep
   one identity. `Observation::with_record_key` sets it.
+- **A dimensioned source must pass its full `series_key()` as the record key.**
+  The id is seeded with the *base* series key (`source::entity::metric::unit`),
+  which does **not** include dimensions. A source that emits several series per
+  entity that differ only by a dimension — NWS emits four severities per entity —
+  collapses them onto one id and silently drops all but one. Passing
+  `observation.series_key()` (base key plus dimensions) fixes it: the dimensions
+  stay out of the series key, so each count is its own series *and* its own id.
+  Alternatively, encode the dimension in the entity, as EONET/AFAD/GDELT do.
 - **Several records per series per timestamp need `Observation.identity`.**
   GitHub search returns many repositories, Hacker News many stories — all with
   the same `observed_at` and payload hash. Without a discriminator they share an

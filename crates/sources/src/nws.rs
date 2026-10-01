@@ -184,6 +184,13 @@ fn count_observation(
 
     // The observation time is the collection time: this is a snapshot count,
     // not a per-alert event, so it belongs to the moment it was measured.
+    //
+    // The record key is the full series key (base series *plus* dimensions).
+    // Every count is distinguished by its severity — and, for a state, by the
+    // state — so a base-key id would collide across the four severities of one
+    // entity and silently drop three of them. `with_record_key` folds the
+    // dimensions into the id without putting them in the series key, so the
+    // series keep their own dimensions while the ids stay distinct.
     let mut observation = Observation::new(
         source_id.clone(),
         Some(entity),
@@ -199,7 +206,8 @@ fn count_observation(
     if let Some(state) = state {
         observation = observation.with_dimension("state", state.to_string());
     }
-    observation
+    let record_key = observation.series_key();
+    observation.with_record_key(record_key)
 }
 
 /// US state/territory codes, so an area description can be reduced to states.
@@ -321,6 +329,22 @@ mod tests {
             keys.len(),
             observations.len(),
             "every count must have its own series"
+        );
+    }
+
+    #[test]
+    fn every_series_has_its_own_id() {
+        // The four severities of one entity share a base series key and differ
+        // only by the `severity` dimension. The id must include that dimension,
+        // or three of the four counts would de-duplicate away and only one
+        // severity would ever reach storage or the baseline.
+        let observations = parse(&fixture(), received()).unwrap();
+        let ids: std::collections::HashSet<&str> =
+            observations.iter().map(|o| o.id.as_str()).collect();
+        assert_eq!(
+            ids.len(),
+            observations.len(),
+            "each (entity, severity) series must have a distinct observation id"
         );
     }
 

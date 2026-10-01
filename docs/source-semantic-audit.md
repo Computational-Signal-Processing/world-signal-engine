@@ -82,9 +82,26 @@ per series per timestamp, where the hash already is the record identity.
 | ECB | the SDMX period (`YYYY-MM-DD`) |
 | NOAA Kp | the point's `time_tag` |
 | GDELT | `series \| bucket date` |
+| NWS | the full series key, so each (entity, severity) count is distinct |
 
 Each key excludes the measured value, so a record keeps its identity while its
 measurement changes (a revised magnitude is a change in value, not a new quake).
+
+### Follow-up: NWS severity collision (F1.1)
+
+The F1 change surfaced a second, *dimension-level* collision in NWS. The id is
+seeded with the **base** series key (`source::entity::metric::unit`), which does
+not include dimensions. NWS emits one count per (entity, severity) — the four
+severities of one entity share a base key — so all four collapsed onto one id:
+20 parsed observations produced only 5 ids, and `contains_observation` dropped
+three of every four counts before they could reach storage or the baseline.
+
+Fixed the same way: NWS passes its full `series_key()` (base key *plus*
+dimensions) as the record key. The dimensions stay out of the series key, so
+each (entity, severity) count is its own series **and** its own identity. The
+same audit of the other dimensioned sources shows they already encode their
+dimension in the entity (EONET `natural_<category>`, AFAD `province_<x>`, GDELT
+`topic_<query>`), so NWS was the only source affected.
 
 Impact by source character:
 
