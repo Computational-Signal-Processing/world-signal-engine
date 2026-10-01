@@ -113,3 +113,29 @@ and "a world watch you can open".
 7. Prove the live path with an automated acceptance test (finding 8).
 
 Findings 9 and 10 are left as documented limitations rather than faked.
+
+## H. Follow-up status (2026-10-01, after productization)
+
+| # | Finding | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Daily cadence runs 24h from launch | FIXED | `schedule_for` maps `Daily { hour_utc }` to the next wall-clock hour; verified next run at the declared hour. |
+| 2 | `serve` without `--collect` serves an empty dashboard | FIXED | Monitoring is the default for `serve`; `/health` reports `monitoring`, `collector_active`, `collection_enabled`. |
+| 3 | World screen is not live | FIXED | `worldView` opens the stream, re-fetches on a `SIGNAL` frame, and shows a new-signal banner. Verified in the browser: "7 new signals since you started watching". |
+| 4 | Monitoring requires `--collect` | FIXED | Same as finding 2. |
+| 5 | No latency telemetry | FIXED | System screen shows source lag, collector fetch, detection, and newest-signal age, each measured from stored timestamps. |
+| 6 | Cold-start degenerate baseline | OPEN | Still honest (flagged cold-start); magnitude still not usable on a median-0/MAD-0 history. |
+| 7 | Coverage is 4 narrow domains | IMPROVED | 7 sources across 7 categories: geophysics, space, weather, earth, global events, technology ×2. |
+| 8 | No acceptance test for the live SSE → world path | PARTIAL | The activity wire contract (SCREAMING_SNAKE_CASE kinds) is now locked by an API test; the full UI refresh path is verified by hand, not yet automated. |
+| 9 | `IMPACT` has no producer | OPEN (documented) | |
+| 10 | No labelled ground truth | OPEN (documented) | |
+
+### New sources added
+
+| Source | Domain | Cadence | Auth | What it measures |
+| --- | --- | --- | --- | --- |
+| `nws_alerts` | weather | 600s | none | active weather alerts per severity, national + per US state |
+| `nasa_eonet` | earth | 1800s | none | open natural events (wildfires, storms, volcanoes) per category, geospatial |
+
+Both are snapshots: their counts fall as well as rise, which exercises the
+baseline engine in both directions. Both are verified live (72 and 13 records
+per poll respectively). `nasa_eonet` gives the map real coordinates.
