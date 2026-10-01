@@ -64,6 +64,34 @@ fn afad_a_window_retained_event_keeps_its_id() {
     );
 }
 
+/// F6 — an AFAD event revision (`isEventUpdate=true`) is a change in the
+/// *value* of an existing earthquake, not a new one. The record key is the
+/// upstream `eventID`, so a revised magnitude keeps the same identity and the
+/// engine de-duplicates it instead of appending a second "earthquake". The
+/// revised magnitude still reaches the pipeline as a drill-down attribute.
+#[test]
+fn afad_an_event_update_keeps_identity() {
+    let received = received();
+    let original = br#"[{"eventID":"727421","location":"Ege Denizi (Izmir)","latitude":"38.4","longitude":"26.7","depth":"11.2","type":"ML","magnitude":"3.4","province":"Izmir","district":"","date":"2026-09-02T14:22:10","isEventUpdate":false}]"#;
+    let revised = br#"[{"eventID":"727421","location":"Ege Denizi (Izmir)","latitude":"38.4","longitude":"26.7","depth":"10.9","type":"ML","magnitude":"3.9","province":"Izmir","district":"","date":"2026-09-02T14:22:10","isEventUpdate":true}]"#;
+
+    let a = wse_sources::afad::parse(original, received).unwrap();
+    let b = wse_sources::afad::parse(revised, received).unwrap();
+
+    assert_eq!(a[0].value, 3.4);
+    assert_eq!(b[0].value, 3.9);
+    assert_eq!(
+        a[0].id, b[0].id,
+        "an isEventUpdate revision must not append a second earthquake"
+    );
+    assert_eq!(a[0].series_key(), b[0].series_key());
+    // The event id survives as drill-down, so the revision is explainable.
+    assert_eq!(
+        b[0].attributes.get("event_id").map(String::as_str),
+        Some("727421")
+    );
+}
+
 /// F1 — ECB returns a rolling `lastNObservations` window; a rate retained in
 /// both windows must keep its id. The window is simulated the way the API does
 /// it: append the newest day, then drop the oldest, so retained days are not

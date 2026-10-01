@@ -188,8 +188,8 @@ quake time (source), location = epicentre.
     is not frequency); that "no observations this hour" means "no earthquakes"
     (the feed is a window, and a failed poll is not a quiet planet).
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: per-record id
-de-duplication must be fixed first.
+**Eligibility: DETECTABLE** — per-record id de-duplication is handled by the
+upstream `id` record key (F1).
 
 ## 2. afad_earthquakes — AFAD Turkey Earthquake Catalogue
 
@@ -200,15 +200,14 @@ de-duplication must be fixed first.
 1. **What one observation represents:** a single AFAD catalogue event.
 2. **Type:** event (geophysical), regional.
 3. **Population stable?** Yes — events are historical facts.
-4. **Aggregate usable?** Only after de-duplication. `with_identity(event_id)` is
-   set, but the payload hash still seeds the id, so the same event re-collected
-   in a slid window gets a new id (probe-confirmed).
+4. **Aggregate usable?** Yes — the id is derived from the upstream `eventID`
+   record key (F1), so a window-retained or revised event keeps one identity.
 5. **What an increase means:** more recorded seismicity in Turkish provinces.
-6. **False increases:** (a) the id bug; (b) AFAD's window overlapping between
-   polls; (c) `isEventUpdate=true` rows — a revised magnitude for an existing
-   event is parsed as a *new* observation, so a correction can look like
-   activity. This is a genuine semantic gap: updates should supersede, not
-   append.
+6. **False increases:** (a) ~~the id bug~~ **fixed (F1)**; (b) AFAD's window
+   overlapping between polls — de-duplicated by the `eventID` record key
+   (F1); (c) ~~`isEventUpdate=true` rows appended as new events~~ **fixed
+   (F1)** — a revision keeps the event's identity, so a correction is not read
+   as new activity.
 7. **Appropriate baseline:** per-province rolling statistics; province is a
    stable administrative key, which is better than USGS's free-text region.
 8. **Temporal resolution:** event time (UTC+3 → UTC), window-based polling.
@@ -219,8 +218,8 @@ de-duplication must be fixed first.
 12. **Never infer:** that a province's rise is a national rise (provinces are
     independent series); that an `isEventUpdate` row is a new earthquake.
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraints: per-record id
-de-duplication, and event-update semantics.
+**Eligibility: DETECTABLE** — per-record id de-duplication and event-update
+semantics are handled by the `eventID` record key (F1).
 
 ## 3. nasa_neo — NASA Near-Earth Object Feed
 
@@ -360,8 +359,9 @@ bucket. Entity `topic_oil supply`.
     that the topic's series is about "oil" — it is about news *mentioning* oil
     supply.
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: id de-duplication,
-and it should be treated as an *attention* series, never as the phenomenon.
+**Eligibility: DETECTABLE** — id de-duplication is handled by the
+`series|date` record key (F1). Treat it as an *attention* series, never as the
+phenomenon.
 
 ## 7. hackernews_frontpage — Hacker News Front Page
 
@@ -619,8 +619,9 @@ the engine from the declared derivation rather than claimed in a comment.
 12. **Never infer:** that a Kp rise measured in σ maps linearly to impact; that
     an hourly poll is hourly *resolution*.
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraints: id de-duplication and
-bounded-scale-aware baselining.
+**Eligibility: DETECTABLE** — id de-duplication is handled by the `time_tag`
+record key (F1). The bounded Kp scale is a baseline caveat, not an eligibility
+blocker.
 
 ---
 
@@ -648,11 +649,11 @@ bounded-scale-aware baselining.
 | --- | --- | --- |
 | nws_alerts | **DETECTABLE** | — |
 | nasa_eonet | **DETECTABLE** | — |
-| usgs_earthquakes | DETECTABLE_WITH_CONSTRAINTS | fix per-record id dedup |
-| afad_earthquakes | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; handle `isEventUpdate` |
-| gdelt_news_volume | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; treat as attention, not phenomenon |
+| usgs_earthquakes | **DETECTABLE** | id contract fixed (F1) |
+| afad_earthquakes | **DETECTABLE** | id contract fixed (F1); `isEventUpdate` revisions de-duplicated by `eventID` |
+| gdelt_news_volume | **DETECTABLE** | id contract fixed (F1); treat as attention, not phenomenon |
 | ecb_exchange_rates | **DETECTABLE** | id contract fixed (F1); count-based detection handles business-day gaps (CAP-2D/0021) |
-| noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
+| noaa_kp_index | **DETECTABLE** | id contract fixed (F1); bounded-scale baseline caveat |
 | cisa_kev | **DETECTABLE** | `kev_added` non-overlapping daily (CAP-2D); `kev_catalog_total` differenced (CAP-2B) |
 | crossref_works | **DETECTABLE** | single completed day; no overlap, no partial latest point (CAP-2D) |
 | github_rust_activity | **DETECTABLE** | per-repository series; cold start is a per-repo guard (CAP-2D) |
@@ -702,8 +703,10 @@ an `O` against almost every event source by nature — it reports *on* them.
    object is kept as drill-down attributes.
 5. ~~**CISA `kev_added` is a trailing 7-day sum sampled daily.**~~ **RESOLVED
    (CAP-2D).** It is now a non-overlapping daily count.
-6. **AFAD `isEventUpdate` rows are appended as new events.** A magnitude
-   correction looks like new seismic activity.
+6. ~~**AFAD `isEventUpdate` rows are appended as new events.**~~ **RESOLVED
+   (F1).** The record key is the upstream `eventID`, so a revised magnitude
+   keeps the same identity and is de-duplicated instead of appended; the event
+   id survives as drill-down. Guarded by `afad_an_event_update_keeps_identity`.
 7. ~~**Crossref latest-day partial deposit.**~~ **RESOLVED (CAP-2D).** The
    measured day is now a completed day (yesterday), not a window ending today.
 8. ~~**ECB business-day gaps.**~~ **RESOLVED (CAP-2D/0021).** Detection is
@@ -734,7 +737,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F4 | ~~Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance~~ **DONE (CAP-2D)** — one observation is one UTC day's count of close approaches; the day's closest object is a drill-down attribute | `crates/sources/src/nasa.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/nasa.rs` tests |
 | F5 | ~~Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline~~ **DONE (CAP-2D)** — `kev_added` is now the count dated to the collection day, a non-overlapping daily series; no `WindowCount` kind was needed | `crates/sources/src/cisa_kev.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/cisa_kev.rs` tests |
 | F5a | ~~Difference `kev_catalog_total` instead of detecting the level~~ **DONE (CAP-2B)** — the catalogue declares `kev_catalog_growth = Delta(kev_catalog_total)`; the raw total is evidence-only | `crates/sources/src/cisa_kev.rs` | `crates/cli/tests/cisa_derived_metric.rs` |
-| F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
+| F6 | ~~Supersede AFAD events with `isEventUpdate=true` rather than appending~~ **DONE (F1)** — the `eventID` record key gives a revised event the same identity, so it is de-duplicated, not appended; the event id survives as drill-down | `crates/sources/src/afad.rs` | `afad_an_event_update_keeps_identity` |
 | F7 | ~~Mark the Crossref latest point as partial (quality flag) or shift the window back a day~~ **DONE (CAP-2D)** — the collector measures one completed day (yesterday), so consecutive polls never overlap and the latest point is fully deposited | `crates/sources/src/crossref.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/crossref.rs` tests |
 | F8 | ~~Handle business-day gaps for ECB (absence ≠ zero)~~ **DONE (CAP-2D/0021)** — detection is count-based, a missing day inserts no observation, and a normal move across a weekend gap yields no anomaly while a real move is still caught | `crates/engine/tests/business_day_gaps.rs` | `a_normal_move_across_a_weekend_gap_is_not_anomalous`, `a_genuine_move_across_a_gap_is_still_caught`, `a_missing_business_day_is_absent_not_zero` |
 | F9 | ~~Cold-start guard: no level deviation before a per-repo baseline exists~~ **DONE (CAP-2D)** — each repository is its own series via the `repo` dimension, so a first appearance is judged against that repository's own history, not a pooled baseline | `crates/sources/src/github.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/github.rs` tests |
