@@ -490,17 +490,19 @@ additions. See `docs/decisions/0018-kev-daily-additions.md`.
    one business day.
 2. **Type:** physical/institutional measurement (an official fixing).
 3. **Population stable?** Yes — it is the same published series every day.
-4. **Aggregate usable?** Yes, but it is affected by the payload-hash id bug
-   (probe-confirmed): the 7-day window is re-minted each poll.
+4. **Aggregate usable?** Yes — the id contract is fixed (F1), so the re-fetched
+   window de-duplicates to one point per business day.
 5. **What an increase means:** the euro strengthened against the dollar that day.
-6. **False increases:** (a) the id bug re-inserting the window; (b) the ECB
-   publishes on TARGET business days only — weekends/holidays are **absent**, not
-   zero, so the series has gaps that a naive time-based baseline misreads; (c)
-   the rate is a *fixing*, not a live market price.
-7. **Appropriate baseline:** rolling statistics over the daily rate, but the
-   detector should be *gap-aware* (missing business days must not read as
-   staleness). For finance, a relative-change baseline is more natural than a
-   level z-score.
+6. **False increases:** (a) ~~the id bug re-inserting the window~~ **fixed
+   (F1)**; (b) the ECB publishes on TARGET business days only —
+   weekends/holidays are **absent**, not zero; detection is count-based, so a
+   gap does not distort a deviation, and a missing day inserts no observation
+   at all (**verified, CAP-2D/0021**); (c) the rate is a *fixing*, not a live
+   market price.
+7. **Appropriate baseline:** rolling statistics over the daily rate. Detection
+   is count-based over the window, so the gap needs no special handling; a
+   future time-based rate would need it explicitly. For finance, a
+   relative-change baseline is more natural than a level z-score.
 8. **Temporal resolution:** daily, business days only.
 9. **Independent?** Yes — the only market source present.
 10. **Same event as another source?** No.
@@ -508,8 +510,9 @@ additions. See `docs/decisions/0018-kev-daily-additions.md`.
 12. **Never infer:** that a missing day is a flat day; that this single USD/EUR
     pair is "the markets"; that a reference-rate move equals a tradable move.
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraints: id de-duplication and
-business-day gap handling.
+**Eligibility: DETECTABLE** — the id contract is fixed (F1) and business-day
+gaps are handled (CAP-2D/0021). See
+`docs/decisions/0021-business-day-gaps.md`.
 
 ## 11. crossref_works — Crossref Scholarly Works
 
@@ -648,7 +651,7 @@ bounded-scale-aware baselining.
 | usgs_earthquakes | DETECTABLE_WITH_CONSTRAINTS | fix per-record id dedup |
 | afad_earthquakes | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; handle `isEventUpdate` |
 | gdelt_news_volume | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; treat as attention, not phenomenon |
-| ecb_exchange_rates | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; business-day gaps |
+| ecb_exchange_rates | **DETECTABLE** | id contract fixed (F1); count-based detection handles business-day gaps (CAP-2D/0021) |
 | noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
 | cisa_kev | **DETECTABLE** | `kev_added` non-overlapping daily (CAP-2D); `kev_catalog_total` differenced (CAP-2B) |
 | crossref_works | **DETECTABLE** | single completed day; no overlap, no partial latest point (CAP-2D) |
@@ -703,8 +706,10 @@ an `O` against almost every event source by nature — it reports *on* them.
    correction looks like new seismic activity.
 7. ~~**Crossref latest-day partial deposit.**~~ **RESOLVED (CAP-2D).** The
    measured day is now a completed day (yesterday), not a window ending today.
-8. **ECB business-day gaps.** Weekends/holidays are absent, not zero; a
-   time-based baseline misreads the gap.
+8. ~~**ECB business-day gaps.**~~ **RESOLVED (CAP-2D/0021).** Detection is
+   count-based over the window, not a time-elapsed rate; a missing day inserts
+   no observation, so absence never becomes zero. Guarded by
+   `crates/engine/tests/business_day_gaps.rs`.
 9. ~~**GitHub cold-start level deviation.**~~ **RESOLVED (CAP-2D).** Each
    repository is now its own series (the `repo` dimension), so a first
    appearance is judged against that repository's own history, not a pooled
@@ -731,25 +736,24 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F5a | ~~Difference `kev_catalog_total` instead of detecting the level~~ **DONE (CAP-2B)** — the catalogue declares `kev_catalog_growth = Delta(kev_catalog_total)`; the raw total is evidence-only | `crates/sources/src/cisa_kev.rs` | `crates/cli/tests/cisa_derived_metric.rs` |
 | F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
 | F7 | ~~Mark the Crossref latest point as partial (quality flag) or shift the window back a day~~ **DONE (CAP-2D)** — the collector measures one completed day (yesterday), so consecutive polls never overlap and the latest point is fully deposited | `crates/sources/src/crossref.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/crossref.rs` tests |
-| F8 | Handle business-day gaps for ECB (absence ≠ zero) | `crates/sources/src/ecb.rs` / baseline | gap-aware baseline test |
+| F8 | ~~Handle business-day gaps for ECB (absence ≠ zero)~~ **DONE (CAP-2D/0021)** — detection is count-based, a missing day inserts no observation, and a normal move across a weekend gap yields no anomaly while a real move is still caught | `crates/engine/tests/business_day_gaps.rs` | `a_normal_move_across_a_weekend_gap_is_not_anomalous`, `a_genuine_move_across_a_gap_is_still_caught`, `a_missing_business_day_is_absent_not_zero` |
 | F9 | ~~Cold-start guard: no level deviation before a per-repo baseline exists~~ **DONE (CAP-2D)** — each repository is its own series via the `repo` dimension, so a first appearance is judged against that repository's own history, not a pooled baseline | `crates/sources/src/github.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/github.rs` tests |
 | F10 | Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view | `config/lenses/*` | lens-coverage test update |
 | F11 | ~~Make `feeds_lenses` enforced~~ **DONE** — the engine routes a signal to the lenses its sources declare, by provenance, alongside the lens filters; a declared lens is now one the source's signals actually reach | `crates/signals`, `crates/engine` | `a_declared_lens_is_reachable_at_runtime` in `lens_coverage.rs`, plus `lens_routing.rs` |
 
-F1 is the only fix that touches the shared id contract; it should land first and
+F1 was the only fix that touched the shared id contract and it landed first and
 alone, because every other source's regression suite depends on stable ids.
 
 # 6. SOURCES READY FOR REAL SIGNAL DETECTION
 
-Meaningful today, no fix required:
+Every source is now detectable. The shared id contract (F1) that the sources
+below depended on has landed, so the constraint that held them back is met:
 
 - **nws_alerts** — a true gauge with a per-severity dimension.
 - **nasa_eonet** — a true gauge with a per-category dimension.
-
-Meaningful after the named constraint is met (all hinge on F1 first):
-
-- usgs_earthquakes, afad_earthquakes, ecb_exchange_rates, noaa_kp_index,
-  gdelt_news_volume (F1).
+- **usgs_earthquakes, afad_earthquakes, ecb_exchange_rates, noaa_kp_index,
+  gdelt_news_volume** — per-record id de-duplication (F1); ECB business-day gaps
+  are handled (CAP-2D/0021).
 
 # 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
 

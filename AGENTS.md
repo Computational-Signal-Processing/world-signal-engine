@@ -348,6 +348,15 @@ See [docs/deployment.md](docs/deployment.md) for the operational story and
   record" (stable id, de-dup); `dimension` answers "which series" (own baseline).
   See `docs/decisions/0020-github-per-repo-series.md`; guarded by
   `github_repositories_do_not_share_one_baseline`.
+- **Detection is count-based, not time-based; a source gap is absence, not
+  zero.** The rolling window trims by sample count and age, and its statistics
+  have no term that scales a deviation by elapsed time, so a business-day gap
+  (ECB) does not distort a deviation. A collector that publishes nothing for a
+  day emits **no** observation for it — never a zero — so "no data" can never
+  become "data = 0". If a future detector adds a time-based rate (units per
+  second), it must handle gaps explicitly. See
+  `docs/decisions/0021-business-day-gaps.md`; guarded by
+  `crates/engine/tests/business_day_gaps.rs`.
 - **`SqliteStore` wraps its `Connection` in a `std::sync::Mutex`.** One guard per
   function; the mutex is not reentrant. Holding a guard across a call that takes
   it again self-deadlocks — this is what `prune_raw_to` did.
