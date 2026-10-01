@@ -246,9 +246,13 @@ is the fix: pin the members, then the count means something.
 - **License:** public API; GitHub Acceptable Use terms apply
 - **Entities:** `ecosystem_rust`
 - **Notes:** `measurement: fixed_universe`. The collector walks a fixed list of
-  well-known Rust repositories and measures stars for each. Token authentication
-  is optional and only raises the rate limit. If every request fails the
-  collection is a source failure, never "zero activity".
+  well-known Rust repositories and measures stars for each. Each repository is
+  its own series (the `repo` dimension), so a repository's baseline is its own
+  history rather than a pool of unrelated projects' star counts — the cold-start
+  guard. Token authentication is optional and only raises the rate limit. If
+  every request fails the collection is a source failure, never "zero activity".
+  See
+  [docs/decisions/0020-github-per-repo-series.md](docs/decisions/0020-github-per-repo-series.md).
 
 ## Source health
 

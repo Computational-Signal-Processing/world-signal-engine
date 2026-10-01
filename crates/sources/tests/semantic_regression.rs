@@ -3,7 +3,7 @@
 //! All specs are active: they pass under the fixed contracts (per-record
 //! observation identity for F1, a committed universe for F2, a coherent daily
 //! count for F4, a non-overlapping daily count for F5, a single completed day
-//! for F7) and fail without them.
+//! for F7, a per-repository series for F9) and fail without them.
 
 use chrono::{DateTime, Utc};
 
@@ -397,4 +397,40 @@ fn crossref_measures_one_completed_day_never_today() {
         a.observed_at,
         DateTime::parse_from_rfc3339("2026-09-30T00:00:00Z").unwrap()
     );
+}
+
+/// F9 — GitHub repositories must not share one baseline. All repositories use
+/// entity `ecosystem_rust` / metric `repo_stars` / unit `stars`; without a
+/// discriminator they pool into one series, so a repository's first appearance
+/// is scored against the others' star counts and fires a meaningless cold-start
+/// deviation (~1527σ, `docs/reality-audit.md` finding 6). The `repo` dimension
+/// gives each repository its own series, so the baseline is that repository's
+/// own history and the sample minimum is a per-repo cold-start guard.
+#[test]
+fn github_repositories_do_not_share_one_baseline() {
+    let fixture = include_bytes!("../../../tests/fixtures/github_repo.json").to_vec();
+    let at = DateTime::parse_from_rfc3339("2026-10-01T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+
+    let tokio = wse_sources::github::parse_repo(&fixture, at)
+        .unwrap()
+        .unwrap();
+    let serde = wse_sources::github::parse_repo(
+        br#"{"id":2,"full_name":"serde-rs/serde","stargazers_count":5}"#,
+        at,
+    )
+    .unwrap()
+    .unwrap();
+
+    // Distinct series, distinguished by the repository, not pooled.
+    assert_ne!(tokio.series_key(), serde.series_key());
+    assert!(tokio.series_key().contains("repo=tokio-rs/tokio"));
+    assert!(serde.series_key().contains("repo=serde-rs/serde"));
+
+    // The same repository across polls stays on one series.
+    let tokio_again = wse_sources::github::parse_repo(&fixture, at)
+        .unwrap()
+        .unwrap();
+    assert_eq!(tokio.series_key(), tokio_again.series_key());
 }

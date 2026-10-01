@@ -404,31 +404,32 @@ universe, so the engine's detection now runs on a stable population. See
 16-repo `UNIVERSE` constant, every 3600s. `measurement: fixed_universe`, tier 3.
 
 1. **What one observation represents:** the star count of one named repository,
-   by `identity = owner/name`.
+   by `identity = owner/name`, and — since CAP-2D — its own series
+   (`dimension: repo = owner/name`).
 2. **Type:** platform behavior (attention on a project).
 3. **Population stable?** **Yes, genuinely** — the universe is a hard-coded
    constant, re-measured each poll. This one *does* honour the contract.
 4. **Aggregate usable?** Yes, and it is the well-built half of the pair.
-5. **What an increase means:** the tracked projects gained stars.
-6. **False increases:** (a) a star-bot wave on one repo; (b) the *one-time*
-   ~1527σ cold-start already recorded in `docs/reality-audit.md` — the first
-   point against an empty/zero baseline; (c) `observed_at` = collection time, so
-   a poll delay shifts the point, not its value.
-7. **Appropriate baseline:** rolling statistics per repository (`repo_stars` with
-   `identity` = repo). Star counts are near-monotonic, so the *derivative* is the
-   interesting series; a level z-score will mostly fire on cold start.
+5. **What an increase means:** the tracked project gained stars.
+6. **False increases:** (a) a star-bot wave on one repo; (b) ~~the *one-time*
+   ~1527σ cold-start~~ **fixed (CAP-2D/0020)**: each repository is now its own
+   series, so a first appearance is judged against that repository's own
+   history, not a pool of the others' star counts; (c) `observed_at` =
+   collection time, so a poll delay shifts the point, not its value.
+7. **Appropriate baseline:** rolling statistics **per repository** — now
+   achieved by the `repo` dimension, so `repo_stars` is a per-repo series and a
+   level z-score is judged within that repository's own history.
 8. **Temporal resolution:** hourly, `observed_at` = collection time.
 9. **Independent?** Yes.
 10. **Same event as another source?** Weakly, with Hacker News (a repo trending
     on HN may also gain stars). Convergence only.
 11. **Lenses:** SOFTWARE.
 12. **Never infer:** that a star rise is adoption or usage; that the aggregate is
-    "the Rust ecosystem" — it is 16 chosen projects; that a level change is a
-    world change rather than the one-time baseline gap.
+    "the Rust ecosystem" — it is 16 chosen projects.
 
-**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: the first observation
-per repo must establish a baseline (cold-start guard) before a level deviation is
-meaningful.
+**Eligibility: DETECTABLE (CAP-2D)** — the cold-start constraint is resolved by
+the per-repository series; a repository is not judged until its own baseline has
+the minimum samples. See `docs/decisions/0020-github-per-repo-series.md`.
 
 ## 9. cisa_kev — CISA Known Exploited Vulnerabilities
 
@@ -651,7 +652,7 @@ bounded-scale-aware baselining.
 | noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
 | cisa_kev | **DETECTABLE** | `kev_added` non-overlapping daily (CAP-2D); `kev_catalog_total` differenced (CAP-2B) |
 | crossref_works | **DETECTABLE** | single completed day; no overlap, no partial latest point (CAP-2D) |
-| github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
+| github_rust_activity | **DETECTABLE** | per-repository series; cold start is a per-repo guard (CAP-2D) |
 | nasa_neo | **DETECTABLE** | daily approach count is coherent (CAP-2D) |
 | arxiv_submissions | **DETECTABLE** | detection runs on the derived `preprint_new`; raw level evidence-only (CAP-2A) |
 | hackernews_frontpage | **DETECTABLE** | fixed universe committed and reused (CAP-2C) |
@@ -704,9 +705,10 @@ an `O` against almost every event source by nature — it reports *on* them.
    measured day is now a completed day (yesterday), not a window ending today.
 8. **ECB business-day gaps.** Weekends/holidays are absent, not zero; a
    time-based baseline misreads the gap.
-9. **GitHub cold-start level deviation.** Star counts are near-monotonic and
-   start from an empty baseline (~1527σ already recorded). Level z-scores mostly
-   fire on cold start, not on world change.
+9. ~~**GitHub cold-start level deviation.**~~ **RESOLVED (CAP-2D).** Each
+   repository is now its own series (the `repo` dimension), so a first
+   appearance is judged against that repository's own history, not a pooled
+   baseline.
 10. **NWS/EONET national counts are batch-driven.** One weather system or one
     EONET ingestion can move a national count without the world changing.
 11. ~~**`feeds_lenses` is declared but never enforced.**~~ **Fixed.** Lens
@@ -730,7 +732,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
 | F7 | ~~Mark the Crossref latest point as partial (quality flag) or shift the window back a day~~ **DONE (CAP-2D)** — the collector measures one completed day (yesterday), so consecutive polls never overlap and the latest point is fully deposited | `crates/sources/src/crossref.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/crossref.rs` tests |
 | F8 | Handle business-day gaps for ECB (absence ≠ zero) | `crates/sources/src/ecb.rs` / baseline | gap-aware baseline test |
-| F9 | Cold-start guard: no level deviation before a per-repo baseline exists | `crates/detection/src/anomaly.rs` or GitHub config | first-point no-signal test |
+| F9 | ~~Cold-start guard: no level deviation before a per-repo baseline exists~~ **DONE (CAP-2D)** — each repository is its own series via the `repo` dimension, so a first appearance is judged against that repository's own history, not a pooled baseline | `crates/sources/src/github.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/github.rs` tests |
 | F10 | Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view | `config/lenses/*` | lens-coverage test update |
 | F11 | ~~Make `feeds_lenses` enforced~~ **DONE** — the engine routes a signal to the lenses its sources declare, by provenance, alongside the lens filters; a declared lens is now one the source's signals actually reach | `crates/signals`, `crates/engine` | `a_declared_lens_is_reachable_at_runtime` in `lens_coverage.rs`, plus `lens_routing.rs` |
 
@@ -747,8 +749,7 @@ Meaningful today, no fix required:
 Meaningful after the named constraint is met (all hinge on F1 first):
 
 - usgs_earthquakes, afad_earthquakes, ecb_exchange_rates, noaa_kp_index,
-  gdelt_news_volume (F1);
-- github_rust_activity (F9).
+  gdelt_news_volume (F1).
 
 # 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
 

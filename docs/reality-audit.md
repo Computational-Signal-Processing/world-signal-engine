@@ -52,7 +52,7 @@ kill + restart against the same --data-dir
 | 3 | The **World screen is not live**. `startActivityStream()` is called only by `systemView()`; `worldView()` fetches once and never re-fetches. A new signal does not appear until manual navigation/refresh. | BROKEN |
 | 4 | No **startup default**: monitoring requires the operator to know `--collect`. | PARTIALLY IMPLEMENTED |
 | 5 | No **latency telemetry** for detection/signal formation/UI delivery; only observation `lag_ms` and collector latency exist. | MISSING |
-| 6 | Cold-start degenerate baseline: GitHub emitted **`+1527σ`** from a median-0/MAD-0 history (classical z on a near-zero σ). Honest-ish (flagged cold-start) but not a usable magnitude. | PARTIALLY IMPLEMENTED |
+| 6 | Cold-start degenerate baseline: GitHub emitted **`+1527σ`** from a median-0/MAD-0 history (classical z on a near-zero σ), because all repositories pooled into one series. | FIXED (CAP-2D) |
 | 7 | Coverage is **4 narrow domains** (geophysics, space, technology ×2, and one GDELT topic "oil supply"). Calling this "the world" is not justified. | PARTIALLY IMPLEMENTED |
 | 8 | No acceptance test for the **live SSE → world-update** path; the SSE test only asserts a control event. | MISSING |
 | 9 | `IMPACT` type has no producer. | MISSING (documented) |
@@ -123,7 +123,7 @@ Findings 9 and 10 are left as documented limitations rather than faked.
 | 3 | World screen is not live | FIXED | `worldView` opens the stream, re-fetches on a `SIGNAL` frame, and shows a new-signal banner. Verified in the browser: "7 new signals since you started watching". |
 | 4 | Monitoring requires `--collect` | FIXED | Same as finding 2. |
 | 5 | No latency telemetry | FIXED | System screen shows source lag, collector fetch, detection, and newest-signal age, each measured from stored timestamps. |
-| 6 | Cold-start degenerate baseline | OPEN | Still honest (flagged cold-start); magnitude still not usable on a median-0/MAD-0 history. |
+| 6 | Cold-start degenerate baseline | FIXED (CAP-2D) | GitHub's pooled baseline is gone: each repository is its own series (`repo` dimension), so a first appearance is judged against that repository's own history. See `docs/decisions/0020-github-per-repo-series.md`. |
 | 7 | Coverage is 4 narrow domains | IMPROVED | 13 sources across 9 categories: geophysics ×2, space ×2, weather, earth, global events, cyber, finance, science ×2, technology ×2. See *Source network* below. |
 | 8 | No acceptance test for the live SSE → world path | PARTIAL | The activity wire contract (SCREAMING_SNAKE_CASE kinds) is now locked by an API test; the full UI refresh path is verified by hand, not yet automated. |
 | 9 | `IMPACT` has no producer | OPEN (documented) | |

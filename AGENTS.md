@@ -338,7 +338,16 @@ See [docs/deployment.md](docs/deployment.md) for the operational story and
   records share one series key and differ only by `identity` (e.g. GitHub's
   per-repo `repo_stars`): the predecessor lookup keys on `series_key` alone, so a
   delta there would subtract across different records. GitHub's cold-start
-  problem is F9, a baseline concern, not a derivation.
+  problem is solved instead by giving each repository its own series (F9).
+- **A source that emits several independent records under one entity/metric must
+  give each record a `dimension`.** The engine keys trackers and rolling windows
+  on the series key, which folds in `dimensions` but not `identity`. Two
+  repositories, stations or categories sharing an entity/metric/unit would
+  otherwise pool into one baseline and score each record against the others'
+  values — the GitHub cold-start spike (~1527σ). `identity` answers "which
+  record" (stable id, de-dup); `dimension` answers "which series" (own baseline).
+  See `docs/decisions/0020-github-per-repo-series.md`; guarded by
+  `github_repositories_do_not_share_one_baseline`.
 - **`SqliteStore` wraps its `Connection` in a `std::sync::Mutex`.** One guard per
   function; the mutex is not reentrant. Holding a guard across a call that takes
   it again self-deadlocks — this is what `prune_raw_to` did.

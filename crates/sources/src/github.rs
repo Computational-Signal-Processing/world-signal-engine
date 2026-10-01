@@ -17,6 +17,18 @@
 //! The catalog marks this source `measurement: fixed_universe` and tier 3
 //! (community/platform signal), so the engine treats it honestly.
 //!
+//! ## Why each repository is its own series
+//!
+//! All repositories share the entity `ecosystem_rust`, metric `repo_stars` and
+//! unit `stars`. Without more, they would share one `series_key` and therefore
+//! one rolling baseline, pooling unrelated repositories: a repository's first
+//! appearance would be scored against the others' star counts and fire a
+//! meaningless cold-start deviation (~1527σ was recorded this way, see
+//! `docs/reality-audit.md` finding 6). Each observation therefore carries
+//! `dimension: repo = owner/name`, so the baseline is per repository — exactly
+//! the "rolling statistics per repository" the semantic audit asks for. See
+//! `docs/decisions/0020-github-per-repo-series.md`.
+//!
 //! API docs: <https://docs.github.com/en/rest/repos/repos>
 //!
 //! Authentication: works unauthenticated at 60 requests/hour (the universe is
@@ -163,6 +175,9 @@ pub fn parse_repo(
     // The repository is the record identity; it is stable across collections,
     // so an unchanged star count de-duplicates instead of re-inserting.
     .with_identity(&repo.full_name)
+    // The repository is also the series dimension, so its baseline is its own
+    // history rather than a pool of unrelated repositories' star counts.
+    .with_dimension("repo", repo.full_name.clone())
     .with_attribute("repo", repo.full_name.clone())
     .with_attribute("repo_id", repo.id.to_string())
     .with_attribute("forks", format!("{:.0}", repo.forks_count))
@@ -208,7 +223,25 @@ mod tests {
     }
 
     #[test]
-    fn the_universe_shares_one_series() {
+    fn each_repository_is_its_own_series() {
+        // Two different repositories must not share a baseline: they are
+        // distinguished by the `repo` dimension, not pooled under one key.
+        let tokio = parse_repo(&fixture(), received()).unwrap().unwrap();
+        let other = parse_repo(
+            br#"{"id":2,"full_name":"serde-rs/serde","stargazers_count":5}"#,
+            received(),
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(tokio.series_key(), other.series_key());
+        assert!(tokio.series_key().contains("repo=tokio-rs/tokio"));
+        assert!(other.series_key().contains("repo=serde-rs/serde"));
+    }
+
+    #[test]
+    fn the_same_repository_shares_one_series_across_polls() {
+        // Two polls of the same repository stay on one series, so the rolling
+        // baseline is that repository's own history.
         let a = parse_repo(&fixture(), received()).unwrap().unwrap();
         let b = parse_repo(&fixture(), received()).unwrap().unwrap();
         assert_eq!(a.series_key(), b.series_key());
