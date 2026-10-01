@@ -38,8 +38,8 @@ web UI. Current state:
 
 | Stage | State |
 | --- | --- |
-| Source catalog | 7 sources across 7 categories |
-| Collectors | USGS, NASA NEO, NASA EONET, NWS alerts, GDELT, Hacker News, GitHub |
+| Source catalog | 13 sources across 9 categories, each with a provenance tier and measurement semantics |
+| Collectors | USGS, AFAD, NASA NEO, NASA EONET, NOAA Kp, NWS alerts, GDELT, CISA KEV, ECB rates, Crossref, arXiv, Hacker News, GitHub |
 | Normalization | Observation model with dimensions and attributes |
 | Storage | In-memory or SQLite `Observation`/`Event`/`Signal`/`Source`/`Baseline`/`Raw` stores |
 | Baseline | Rolling and robust statistics |
@@ -50,7 +50,7 @@ web UI. Current state:
 | Operations | `/control`, pause/resume, per-source enable/run, live activity over SSE |
 | Web UI | World, signal, event, observation, source, lenses, timeline, map, system |
 
-347 tests pass across the workspace.
+412 tests pass across the workspace.
 
 ## Quick start
 

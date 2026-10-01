@@ -65,16 +65,24 @@ lens might weight `novelty` and `relevance`.
 ## Suggested lens set
 
 ```text
-GLOBAL       the empty lens; everything
-AGRICULTURE
-ENERGY
-FINANCE
-SOFTWARE
-SCIENCE
-SPACE
-TURKEY       bbox over Turkey
-PERSONAL     user-defined entities and keywords
+WORLD         the empty lens; everything
+EARTH         geophysics, weather, natural events
+SPACE         near-Earth objects, geomagnetic activity
+GLOBAL EVENTS news volume
+CYBER         exploited vulnerabilities
+FINANCE       reference rates
+SCIENCE       publications and preprints
+AI            AI/ML research velocity
+SOFTWARE      developer attention and releases
+AGRICULTURE   (no connected source yet)
+ENERGY        (no connected source yet)
+TURKEY        bbox over Turkey
+PERSONAL      user-defined entities and keywords
 ```
+
+A lens whose category no connected source emits shows nothing today. That is
+visible rather than silent: `wse lenses` prints the match count next to each
+lens, so a dead lens reads as `0` rather than looking healthy.
 
 ## What lenses must not do
 

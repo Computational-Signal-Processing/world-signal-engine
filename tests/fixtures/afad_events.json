@@ -1,0 +1,50 @@
+[
+  {
+    "rms": "0.74",
+    "eventID": "727420",
+    "location": "Pazarcık (Kahramanmaraş)",
+    "latitude": "37.26117",
+    "longitude": "37.098",
+    "depth": "8.37",
+    "type": "ML",
+    "magnitude": "2.0",
+    "country": "Türkiye",
+    "province": "Kahramanmaraş",
+    "district": "Pazarcık",
+    "neighborhood": "Evri",
+    "date": "2026-09-01T01:00:44",
+    "isEventUpdate": false
+  },
+  {
+    "rms": "0.61",
+    "eventID": "727421",
+    "location": "Ege Denizi (İzmir)",
+    "latitude": "38.4123",
+    "longitude": "26.7891",
+    "depth": "11.2",
+    "type": "ML",
+    "magnitude": "3.4",
+    "country": "Türkiye",
+    "province": "İzmir",
+    "district": "Seferihisar",
+    "neighborhood": "",
+    "date": "2026-09-02T14:22:10",
+    "isEventUpdate": false
+  },
+  {
+    "rms": "0.52",
+    "eventID": "727422",
+    "location": "Gökova Körfezi (Muğla)",
+    "latitude": "36.8891",
+    "longitude": "28.1234",
+    "depth": "6.9",
+    "type": "ML",
+    "magnitude": "2.7",
+    "country": "Türkiye",
+    "province": "Muğla",
+    "district": "Bodrum",
+    "neighborhood": "",
+    "date": "2026-09-03T03:05:00",
+    "isEventUpdate": false
+  }
+]

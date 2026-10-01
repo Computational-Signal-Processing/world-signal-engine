@@ -1,0 +1,23 @@
+# AI: artificial-intelligence research velocity.
+#
+# Fed by the Crossref and arXiv collectors, whose topics/categories include
+# artificial intelligence and machine learning. This lens shows the *rate* of
+# research output on AI topics, which is a leading indicator that moves before
+# the mainstream news cycle notices.
+id: lens_ai
+name: AI
+description: "Artificial-intelligence research velocity, from Crossref works and arXiv preprint categories."
+categories:
+  - science
+entities:
+  - research_artificial_intelligence
+  - research_machine_learning
+  - arxiv_cs_ai
+  - arxiv_cs_lg
+keywords:
+  - artificial intelligence
+  - machine learning
+  - preprints
+weights:
+  novelty: 1.5
+  convergence: 1.3

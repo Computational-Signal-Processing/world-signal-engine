@@ -1,0 +1,39 @@
+{
+  "header": {
+    "id": "78321fb4-c1a5-413b-b281-146ed44668ff",
+    "test": false,
+    "prepared": "2026-10-01T04:14:45.606+02:00",
+    "sender": { "id": "ECB" }
+  },
+  "dataSets": [
+    {
+      "action": "Replace",
+      "validFrom": "2026-10-01T04:14:45.606+02:00",
+      "series": {
+        "0:0:0:0:0": {
+          "attributes": [0, 0, 0, null, null],
+          "observations": {
+            "0": [1.1403, 0, 0, null, null],
+            "1": [1.1378, 0, 0, null, null],
+            "2": [1.1355, 0, 0, null, null]
+          }
+        }
+      }
+    }
+  ],
+  "structure": {
+    "dimensions": {
+      "observation": [
+        {
+          "id": "TIME_PERIOD",
+          "name": "Time period",
+          "values": [
+            { "id": "2026-09-28", "name": "2026-09-28" },
+            { "id": "2026-09-29", "name": "2026-09-29" },
+            { "id": "2026-09-30", "name": "2026-09-30" }
+          ]
+        }
+      ]
+    }
+  }
+}

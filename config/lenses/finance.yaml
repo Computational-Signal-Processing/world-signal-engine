@@ -1,10 +1,11 @@
 # Finance: rates, indices, credit.
 #
-# No connected source emits these categories yet; see energy.yaml for why it is
-# shipped anyway.
+# `finance` is the category the ECB euro reference-rate collector emits. The
+# euro reference rate is an institutional, stable series, so a move in it is
+# real rather than a reporting artifact.
 id: lens_finance
 name: FINANCE
-description: "Money and markets: prices, rates and flows. No connected source feeds it yet."
+description: "Money and markets: reference rates and flows, from the ECB reference-rate series."
 categories:
   - finance
   - markets

@@ -1,0 +1,11 @@
+{
+  "by": "ada",
+  "descendants": 138,
+  "id": 41000001,
+  "kids": [41000002, 41000003],
+  "score": 412,
+  "time": 1700000100,
+  "title": "Show HN: A tiny deterministic signal engine in Rust",
+  "type": "story",
+  "url": "https://example.com/tiny-signal-engine"
+}

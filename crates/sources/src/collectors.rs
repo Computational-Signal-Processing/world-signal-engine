@@ -19,7 +19,10 @@ use wse_collector::{
 use wse_model::SourceId;
 use wse_scheduler::{Clock, LiveClock};
 
-use crate::{eonet, gdelt, github, hackernews, nasa, nws, usgs};
+use crate::{
+    afad, arxiv, cisa_kev, crossref, ecb, eonet, gdelt, github, hackernews, nasa, noaa_kp, nws,
+    usgs,
+};
 
 /// A single HTTP GET, plus the headers the source needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -337,49 +340,185 @@ http_collector!(
     "application/json"
 );
 
-fn hackernews_request() -> Request {
-    Request::get(format!(
-        "{}?tags=front_page&hitsPerPage=50",
-        hackernews::API_ENDPOINT
-    ))
+/// GitHub is collected differently from the single-request sources: it walks
+/// the fixed repository universe, one request per repository, and merges the
+/// per-repository observations into one result.
+#[derive(Clone)]
+pub struct GitHubCollector {
+    context: CollectorContext,
 }
 
-http_collector!(
-    /// Hacker News front page, polled every 10 minutes.
-    HackerNewsCollector,
-    hackernews::source,
-    Schedule::Interval { seconds: 600 },
-    hackernews_request,
-    hackernews::parse,
-    "application/json"
-);
+impl GitHubCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
 
-fn github_request() -> Request {
-    let request = Request::get(format!(
-        "{}?q=language:{}&sort=updated&order=desc&per_page=50",
-        github::API_ENDPOINT,
-        github::LANGUAGE
-    ))
-    .with_header("Accept", "application/vnd.github+json");
-    // A token is optional; without one the API still answers, at a lower rate
-    // limit. The token is read from the environment and never logged.
-    match std::env::var("GITHUB_TOKEN") {
-        Ok(token) if !token.is_empty() => {
-            request.with_header("Authorization", format!("Bearer {token}"))
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    /// The request for one repository in the universe.
+    pub fn repo_request(&self, repo: &str) -> Request {
+        let request = Request::get(github::REPO_ENDPOINT.replace("{repo}", repo))
+            .with_header("Accept", "application/vnd.github+json");
+        match std::env::var("GITHUB_TOKEN") {
+            Ok(token) if !token.is_empty() => {
+                request.with_header("Authorization", format!("Bearer {token}"))
+            }
+            _ => request,
         }
-        _ => request,
     }
 }
 
-http_collector!(
-    /// GitHub Rust-ecosystem activity, polled hourly.
-    GitHubCollector,
-    github::source,
-    Schedule::Interval { seconds: 3600 },
-    github_request,
-    github::parse,
-    "application/json"
-);
+#[async_trait]
+impl Collector for GitHubCollector {
+    fn source_id(&self) -> SourceId {
+        github::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 3600 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let mut result = CollectionResult::new(self.source_id());
+        let mut errors = 0usize;
+
+        for repo in github::UNIVERSE {
+            let request = self.repo_request(repo);
+            match self.context.transport.fetch(&request) {
+                Ok(body) => {
+                    result.records_received += 1;
+                    match github::parse_repo(&body, started_at)? {
+                        Some(observation) => {
+                            result.records_changed += 1;
+                            result.observations.push(observation);
+                        }
+                        // Archived or unmeasurable: counted, not an observation.
+                        None => result.records_duplicate += 1,
+                    }
+                    result.raw_payloads.push(RawPayload::new(
+                        request.url.clone(),
+                        body,
+                        "application/json",
+                    ));
+                }
+                Err(err) => {
+                    errors += 1;
+                    result.errors.push(format!("{repo}: {}", err.message));
+                }
+            }
+        }
+
+        // Every request failed: the source is down, not empty. Reporting an
+        // empty success would read as "no activity" — the exact confusion the
+        // brief forbids.
+        if errors > 0 && result.observations.is_empty() {
+            return Err(CollectorError::Transport(format!(
+                "all {} repository requests failed: {}",
+                github::UNIVERSE.len(),
+                result.errors.first().cloned().unwrap_or_default()
+            )));
+        }
+
+        result.started_at = Some(started_at);
+        result.finished_at = Some(Utc::now());
+        Ok(result)
+    }
+}
+
+/// Hacker News is collected in two steps: resolve the fixed universe from the
+/// top-story list, then fetch each tracked item. The item ids are durable, so a
+/// story's score stays comparable across collections.
+#[derive(Clone)]
+pub struct HackerNewsCollector {
+    context: CollectorContext,
+}
+
+impl HackerNewsCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn top_request(&self) -> Request {
+        Request::get(hackernews::TOP_STORIES_ENDPOINT)
+    }
+
+    pub fn item_request(&self, id: i64) -> Request {
+        Request::get(hackernews::ITEM_ENDPOINT.replace("{id}", &id.to_string()))
+    }
+}
+
+#[async_trait]
+impl Collector for HackerNewsCollector {
+    fn source_id(&self) -> SourceId {
+        hackernews::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 600 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let mut result = CollectionResult::new(self.source_id());
+
+        // The fixed universe is the first `UNIVERSE_SIZE` ids of the top-story
+        // list. Reusing the same ids each collection is what makes the series
+        // comparable; only a story leaving the top list opens a slot.
+        let top_request = self.top_request();
+        let top_body = self
+            .context
+            .transport
+            .fetch(&top_request)
+            .map_err(|e| CollectorError::Transport(e.message))?;
+        let ids = hackernews::parse_ids(&top_body)?;
+        result.raw_payloads.push(RawPayload::new(
+            top_request.url.clone(),
+            top_body,
+            "application/json",
+        ));
+
+        for id in ids.into_iter().take(hackernews::UNIVERSE_SIZE) {
+            let request = self.item_request(id);
+            match self.context.transport.fetch(&request) {
+                Ok(body) => {
+                    result.records_received += 1;
+                    match hackernews::parse_item(&body, started_at)? {
+                        Some(observation) => {
+                            result.records_changed += 1;
+                            result.observations.push(observation);
+                        }
+                        None => result.records_duplicate += 1,
+                    }
+                    result.raw_payloads.push(RawPayload::new(
+                        request.url.clone(),
+                        body,
+                        "application/json",
+                    ));
+                }
+                Err(err) => result.errors.push(format!("item {id}: {}", err.message)),
+            }
+        }
+
+        result.started_at = Some(started_at);
+        result.finished_at = Some(Utc::now());
+        Ok(result)
+    }
+}
 
 fn nws_request() -> Request {
     // The NWS asks callers to identify themselves; a plain User-Agent is the
@@ -413,6 +552,263 @@ http_collector!(
     "application/json"
 );
 
+fn cisa_kev_request() -> Request {
+    Request::get(cisa_kev::API_ENDPOINT).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// CISA Known Exploited Vulnerabilities, collected daily.
+    CisaKevCollector,
+    cisa_kev::source,
+    Schedule::Interval { seconds: 86_400 },
+    cisa_kev_request,
+    cisa_kev::parse,
+    "application/json"
+);
+
+fn ecb_request() -> Request {
+    Request::get(ecb::API_ENDPOINT).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// ECB euro reference rates, collected daily.
+    EcbRatesCollector,
+    ecb::source,
+    Schedule::Interval { seconds: 86_400 },
+    ecb_request,
+    ecb::parse,
+    "application/json"
+);
+
+fn noaa_kp_request() -> Request {
+    Request::get(noaa_kp::API_ENDPOINT).with_header("Accept", "application/json")
+}
+
+http_collector!(
+    /// NOAA planetary K-index, polled hourly.
+    NoaaKpCollector,
+    noaa_kp::source,
+    Schedule::Interval { seconds: 3600 },
+    noaa_kp_request,
+    noaa_kp::parse,
+    "application/json"
+);
+
+/// Crossref is collected per topic: one request per fixed topic, merged into
+/// one result. The topic list is fixed, so each topic is a stable series.
+#[derive(Clone)]
+pub struct CrossrefCollector {
+    context: CollectorContext,
+}
+
+impl CrossrefCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn topic_request(&self, query: &str, now: DateTime<Utc>) -> Request {
+        let (from, until) = crossref::window(now);
+        let mailto = std::env::var("CROSSREF_MAILTO").ok();
+        Request::get(crossref::works_url(query, &from, &until, mailto.as_deref()))
+            .with_header("Accept", "application/json")
+    }
+}
+
+#[async_trait]
+impl Collector for CrossrefCollector {
+    fn source_id(&self) -> SourceId {
+        crossref::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 86_400 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let mut result = CollectionResult::new(self.source_id());
+        let mut errors = 0usize;
+
+        for (slug, label, query) in crossref::TOPICS {
+            let request = self.topic_request(query, started_at);
+            match self.context.transport.fetch(&request) {
+                Ok(body) => {
+                    result.records_received += 1;
+                    let count = crossref::parse_count(&body)?;
+                    result.observations.push(crossref::observation_for(
+                        slug, label, count, started_at, &body,
+                    ));
+                    result.records_changed += 1;
+                    result.raw_payloads.push(RawPayload::new(
+                        request.url.clone(),
+                        body,
+                        "application/json",
+                    ));
+                }
+                Err(err) => {
+                    errors += 1;
+                    result.errors.push(format!("{slug}: {}", err.message));
+                }
+            }
+        }
+
+        if errors > 0 && result.observations.is_empty() {
+            return Err(CollectorError::Transport(format!(
+                "all crossref topic requests failed: {}",
+                result.errors.first().cloned().unwrap_or_default()
+            )));
+        }
+
+        result.started_at = Some(started_at);
+        result.finished_at = Some(Utc::now());
+        Ok(result)
+    }
+}
+
+/// arXiv is collected per category, one request each.
+#[derive(Clone)]
+pub struct ArxivCollector {
+    context: CollectorContext,
+}
+
+impl ArxivCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn category_request(&self, category: &str) -> Request {
+        Request::get(arxiv::category_url(category)).with_header("Accept", "application/atom+xml")
+    }
+}
+
+#[async_trait]
+impl Collector for ArxivCollector {
+    fn source_id(&self) -> SourceId {
+        arxiv::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 86_400 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let mut result = CollectionResult::new(self.source_id());
+        let mut errors = 0usize;
+
+        for (slug, label, category) in arxiv::CATEGORIES {
+            let request = self.category_request(category);
+            match self.context.transport.fetch(&request) {
+                Ok(body) => {
+                    result.records_received += 1;
+                    let total = arxiv::parse_total(&body)?;
+                    result.observations.push(arxiv::observation_for(
+                        slug, label, total, started_at, &body,
+                    ));
+                    result.records_changed += 1;
+                    result.raw_payloads.push(RawPayload::new(
+                        request.url.clone(),
+                        body,
+                        "application/atom+xml",
+                    ));
+                }
+                Err(err) => {
+                    errors += 1;
+                    result.errors.push(format!("{slug}: {}", err.message));
+                }
+            }
+        }
+
+        if errors > 0 && result.observations.is_empty() {
+            return Err(CollectorError::Transport(format!(
+                "all arxiv category requests failed: {}",
+                result.errors.first().cloned().unwrap_or_default()
+            )));
+        }
+
+        result.started_at = Some(started_at);
+        result.finished_at = Some(Utc::now());
+        Ok(result)
+    }
+}
+
+/// AFAD is collected over a rolling window computed at collection time, so a
+/// long-running process does not freeze the window it started with.
+#[derive(Clone)]
+pub struct AfadCollector {
+    context: CollectorContext,
+}
+
+impl AfadCollector {
+    pub fn live() -> Self {
+        Self::with_context(CollectorContext::live())
+    }
+
+    pub fn with_context(context: CollectorContext) -> Self {
+        Self { context }
+    }
+
+    pub fn window_request(&self, now: DateTime<Utc>) -> Request {
+        let end = now.date_naive();
+        let start = end - chrono::Duration::days(1);
+        Request::get(afad::filter_url(
+            &start.format("%Y-%m-%d").to_string(),
+            &end.format("%Y-%m-%d").to_string(),
+        ))
+        .with_header("Accept", "application/json")
+    }
+}
+
+#[async_trait]
+impl Collector for AfadCollector {
+    fn source_id(&self) -> SourceId {
+        afad::source().id
+    }
+
+    fn schedule(&self) -> Schedule {
+        Schedule::Interval { seconds: 3600 }
+    }
+
+    fn mode(&self) -> CollectionMode {
+        self.context.clock.mode()
+    }
+
+    async fn collect(&self) -> Result<CollectionResult, CollectorError> {
+        let started_at = self.context.now();
+        let request = self.window_request(started_at);
+        let body = self
+            .context
+            .transport
+            .fetch(&request)
+            .map_err(|e| CollectorError::Transport(e.message))?;
+        let observations = afad::parse(&body, started_at)?;
+        Ok(build_result(
+            afad::source().id,
+            &request,
+            &body,
+            observations,
+            "application/json",
+            started_at,
+        ))
+    }
+}
+
 /// Build one live collector per catalog entry.
 ///
 /// This is the bridge from the catalog to the pipeline: adding a source means
@@ -426,6 +822,12 @@ pub fn live_collectors() -> Vec<Box<dyn Collector>> {
         Box::new(GitHubCollector::live()),
         Box::new(NwsAlertsCollector::live()),
         Box::new(EonetCollector::live()),
+        Box::new(NoaaKpCollector::live()),
+        Box::new(CisaKevCollector::live()),
+        Box::new(EcbRatesCollector::live()),
+        Box::new(CrossrefCollector::live()),
+        Box::new(ArxivCollector::live()),
+        Box::new(AfadCollector::live()),
     ]
 }
 
@@ -447,7 +849,7 @@ mod tests {
                 include_bytes!("../../../tests/fixtures/usgs_all_hour.geojson").to_vec(),
             );
             fixtures.insert(
-                "nasa".to_string(),
+                "neo/rest".to_string(),
                 include_bytes!("../../../tests/fixtures/nasa_neo_feed.json").to_vec(),
             );
             fixtures.insert(
@@ -455,12 +857,48 @@ mod tests {
                 include_bytes!("../../../tests/fixtures/gdelt_timelinevol.json").to_vec(),
             );
             fixtures.insert(
-                "algolia".to_string(),
-                include_bytes!("../../../tests/fixtures/hackernews_search.json").to_vec(),
+                "topstories".to_string(),
+                include_bytes!("../../../tests/fixtures/hackernews_topstories.json").to_vec(),
             );
             fixtures.insert(
-                "github".to_string(),
-                include_bytes!("../../../tests/fixtures/github_repos_search.json").to_vec(),
+                "item/41000001".to_string(),
+                include_bytes!("../../../tests/fixtures/hackernews_item.json").to_vec(),
+            );
+            fixtures.insert(
+                "item/41000002".to_string(),
+                include_bytes!("../../../tests/fixtures/hackernews_item2.json").to_vec(),
+            );
+            fixtures.insert(
+                "item/41000003".to_string(),
+                include_bytes!("../../../tests/fixtures/hackernews_item3.json").to_vec(),
+            );
+            fixtures.insert(
+                "repos/".to_string(),
+                include_bytes!("../../../tests/fixtures/github_repo.json").to_vec(),
+            );
+            fixtures.insert(
+                "known_exploited".to_string(),
+                include_bytes!("../../../tests/fixtures/cisa_kev.json").to_vec(),
+            );
+            fixtures.insert(
+                "EXR/".to_string(),
+                include_bytes!("../../../tests/fixtures/ecb_exr.json").to_vec(),
+            );
+            fixtures.insert(
+                "planetary-k-index".to_string(),
+                include_bytes!("../../../tests/fixtures/noaa_kp_index.json").to_vec(),
+            );
+            fixtures.insert(
+                "api.crossref.org".to_string(),
+                include_bytes!("../../../tests/fixtures/crossref_works.json").to_vec(),
+            );
+            fixtures.insert(
+                "export.arxiv.org".to_string(),
+                include_bytes!("../../../tests/fixtures/arxiv_query.xml").to_vec(),
+            );
+            fixtures.insert(
+                "deprem.afad".to_string(),
+                include_bytes!("../../../tests/fixtures/afad_events.json").to_vec(),
             );
             Self { fixtures }
         }
@@ -535,19 +973,82 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn hackernews_collector_normalizes_its_fixture() {
+    async fn hackernews_collector_resolves_its_fixed_universe() {
         let collector = HackerNewsCollector::with_context(context());
         let result = collector.collect().await.unwrap();
+        // One top-story list request plus one request per tracked story.
         assert_eq!(result.observations.len(), 3);
         assert_eq!(result.observations[0].metric, "story_score");
+        assert_eq!(result.raw_payloads.len(), 4);
     }
 
     #[tokio::test]
-    async fn github_collector_normalizes_its_fixture() {
+    async fn github_collector_walks_its_universe() {
         let collector = GitHubCollector::with_context(context());
         let result = collector.collect().await.unwrap();
+        // One request and one observation per repository in the fixed
+        // universe. De-duplication of unchanged star counts happens downstream
+        // in the pipeline, not here.
+        assert_eq!(result.observations.len(), github::UNIVERSE.len());
+        assert!(result.observations.iter().all(|o| o.metric == "repo_stars"));
+    }
+
+    #[tokio::test]
+    async fn cisa_kev_collector_emits_both_series() {
+        let collector = CisaKevCollector::with_context(context());
+        let result = collector.collect().await.unwrap();
         assert_eq!(result.observations.len(), 2);
-        assert_eq!(result.observations[0].metric, "repo_stars");
+        assert!(result.observations.iter().any(|o| o.metric == "kev_added"));
+        assert!(result
+            .observations
+            .iter()
+            .any(|o| o.metric == "kev_catalog_total"));
+    }
+
+    #[tokio::test]
+    async fn ecb_collector_normalizes_its_fixture() {
+        let collector = EcbRatesCollector::with_context(context());
+        let result = collector.collect().await.unwrap();
+        assert_eq!(result.observations.len(), 3);
+        assert_eq!(result.observations[0].metric, "exchange_rate");
+    }
+
+    #[tokio::test]
+    async fn noaa_kp_collector_normalizes_its_fixture() {
+        let collector = NoaaKpCollector::with_context(context());
+        let result = collector.collect().await.unwrap();
+        assert_eq!(result.observations.len(), 3);
+        assert_eq!(result.observations[0].metric, "kp_index");
+    }
+
+    #[tokio::test]
+    async fn crossref_collector_covers_every_topic() {
+        let collector = CrossrefCollector::with_context(context());
+        let result = collector.collect().await.unwrap();
+        assert_eq!(result.observations.len(), crossref::TOPICS.len());
+        assert!(result
+            .observations
+            .iter()
+            .all(|o| o.metric == "works_registered"));
+    }
+
+    #[tokio::test]
+    async fn arxiv_collector_covers_every_category() {
+        let collector = ArxivCollector::with_context(context());
+        let result = collector.collect().await.unwrap();
+        assert_eq!(result.observations.len(), arxiv::CATEGORIES.len());
+        assert!(result
+            .observations
+            .iter()
+            .all(|o| o.metric == "preprint_total"));
+    }
+
+    #[tokio::test]
+    async fn afad_collector_normalizes_its_fixture() {
+        let collector = AfadCollector::with_context(context());
+        let result = collector.collect().await.unwrap();
+        assert_eq!(result.observations.len(), 3);
+        assert_eq!(result.observations[0].metric, "earthquake_magnitude");
     }
 
     #[tokio::test]
@@ -612,12 +1113,15 @@ mod tests {
         assert!(gdelt.request().url.contains("format=json"));
 
         let hn = HackerNewsCollector::live();
-        assert!(hn.request().url.contains("tags=front_page"));
+        assert!(hn.top_request().url.contains("topstories"));
 
         let github = GitHubCollector::live();
-        assert!(github.request().url.contains("q=language:rust"));
         assert!(github
-            .request()
+            .repo_request("rust-lang/rust")
+            .url
+            .contains("repos/rust-lang/rust"));
+        assert!(github
+            .repo_request("rust-lang/rust")
             .headers
             .iter()
             .any(|(k, v)| k == "Accept" && v.contains("github")));
@@ -625,6 +1129,16 @@ mod tests {
         let nasa = NasaNeoCollector::live();
         assert!(nasa.request().url.contains("api_key="));
         assert!(nasa.request().url.contains("start_date="));
+
+        let now = Utc::now();
+        let crossref = CrossrefCollector::live();
+        assert!(crossref
+            .topic_request("machine learning", now)
+            .url
+            .contains("query.bibliographic=machine+learning"));
+
+        let arxiv = ArxivCollector::live();
+        assert!(arxiv.category_request("cs.AI").url.contains("cat:cs.AI"));
     }
 
     #[test]
@@ -648,7 +1162,8 @@ mod tests {
     fn collectors_never_put_a_token_in_the_url() {
         // A token in a URL leaks into logs and raw references.
         let github = GitHubCollector::live();
-        assert!(!github.request().url.contains("token"));
-        assert!(!github.request().url.contains("Bearer"));
+        let request = github.repo_request("rust-lang/rust");
+        assert!(!request.url.contains("token"));
+        assert!(!request.url.contains("Bearer"));
     }
 }

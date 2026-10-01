@@ -51,6 +51,9 @@ pub fn source() -> Source {
         enabled: true,
         collector_type: COLLECTOR_TYPE.to_string(),
         parameters,
+        tier: wse_model::SourceTier::Tier2,
+        measurement: wse_model::MeasurementSemantics::StableSeries,
+        feeds_lenses: vec!["lens_global_events".to_string()],
     }
 }
 

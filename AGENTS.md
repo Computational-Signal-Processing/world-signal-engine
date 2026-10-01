@@ -19,7 +19,8 @@ Read [docs/philosophy.md](docs/philosophy.md) before making design decisions.
 ```text
 crates/model        vocabulary only; no I/O, no detection
 crates/collector    Collector contract + synthetic world
-crates/sources      real collectors (usgs, nasa, gdelt, hackernews, github)
+crates/sources      real collectors (usgs, afad, nasa, eonet, noaa_kp, nws,
+                    gdelt, cisa_kev, ecb, crossref, arxiv, hackernews, github)
 crates/normalize    payload → observation
 crates/storage      store traits + in-memory and SQLite impls (incl. RawStore)
 crates/baseline     rolling/robust statistics
@@ -86,6 +87,21 @@ No network or credentials are needed to run it.
 - Edit existing files; do not create `foo_v2.rs` variants.
 - Adding a source: module + fixture + test + two registrations in
   `crates/sources/src/lib.rs`. No core changes.
+- **A source declares its `measurement` semantics.** `stable_series` and
+  `fixed_universe` are detected on; `unstable_population` (a top-N ranking, a
+  search result) is stored for evidence but never detected on, because its
+  aggregate is membership churn, not a world change. The engine reads this in
+  `Engine::ingest_observations`; do not "fix" a churning source by detecting on it.
+- **A source declares `feeds_lenses`.** `crates/cli/tests/lens_coverage.rs`
+  fails if a source feeds a lens that does not exist, or if a lens has no
+  connected source and is not listed in `INTENTIONALLY_UNFED`. Keep that list
+  honest: it is the difference between a deliberate placeholder and a dead lens.
+- **arXiv rejects `max_results=0`** with HTTP 500 while still reporting the true
+  `opensearch:totalResults`; the smallest accepted value is `1`. Fetch one and
+  discard it.
+- **A "spike" can be entirely artificial if the population churns.** Before
+  adding a source, ask whether the same query would return a different member
+  set next poll; if so, it is `unstable_population`.
 
 ## Gotchas
 

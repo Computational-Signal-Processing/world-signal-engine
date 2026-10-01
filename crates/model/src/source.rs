@@ -11,6 +11,97 @@ use serde::{Deserialize, Serialize};
 
 use crate::ids::SourceId;
 
+/// How trustworthy a source is, as provenance metadata.
+///
+/// This is deliberately **not** a signal score. It says where a measurement
+/// came from, so a signal corroborated by several independent institutional
+/// measurements can be told apart from one produced by a single community
+/// feed. It never multiplies into a signal's magnitude.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceTier {
+    /// Official, primary or scientific institutional data (USGS, NASA, NWS,
+    /// FRED, ECB, EIA, CISA, arXiv).
+    Tier1,
+    /// An established independent data provider (GDELT, Crossref, npm).
+    Tier2,
+    /// A community or platform signal (Hacker News, GitHub).
+    Tier3,
+    /// Exploratory or weak; kept for experiments, not for world claims.
+    Tier4,
+}
+
+impl SourceTier {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SourceTier::Tier1 => "tier_1",
+            SourceTier::Tier2 => "tier_2",
+            SourceTier::Tier3 => "tier_3",
+            SourceTier::Tier4 => "tier_4",
+        }
+    }
+
+    /// A short human label for the registry.
+    pub fn label(&self) -> &'static str {
+        match self {
+            SourceTier::Tier1 => "Tier 1 — institutional",
+            SourceTier::Tier2 => "Tier 2 — independent provider",
+            SourceTier::Tier3 => "Tier 3 — community signal",
+            SourceTier::Tier4 => "Tier 4 — exploratory",
+        }
+    }
+
+    /// Whether this is institutional, primary data. Used by the UI to
+    /// distinguish institutional corroboration from community noise.
+    pub fn is_institutional(&self) -> bool {
+        matches!(self, SourceTier::Tier1)
+    }
+}
+
+/// Whether the quantity a source emits is a stable time series.
+///
+/// A series is only meaningful if the *population* being measured is fixed (or
+/// changes in a way we can account for). A changing search-result set is not a
+/// stable series: the top-50 repositories by "recently updated" churn
+/// constantly, so a change in the aggregate reflects membership churn, not a
+/// change in the world. This field makes that judgement explicit and
+/// machine-readable, so a semantically invalid metric cannot masquerade as a
+/// world measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeasurementSemantics {
+    /// The source reports an authoritative measurement of a fixed subject: a
+    /// count of open events, a gauge reading, an index level. Comparable across
+    /// collections.
+    StableSeries,
+    /// The source reports a fixed universe that is re-measured each poll: a
+    /// declared set of repositories, a fixed set of packages. Membership is
+    /// stable, so the aggregate is comparable.
+    FixedUniverse,
+    /// The source reports a set whose *membership changes* between collections
+    /// (a top-N ranking, a search result). The aggregate is **not** a stable
+    /// series and must not be treated as one.
+    UnstablePopulation,
+}
+
+impl MeasurementSemantics {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            MeasurementSemantics::StableSeries => "stable_series",
+            MeasurementSemantics::FixedUniverse => "fixed_universe",
+            MeasurementSemantics::UnstablePopulation => "unstable_population",
+        }
+    }
+
+    /// Whether a change in this metric can be read as a real-world change.
+    ///
+    /// Only `false` for `UnstablePopulation`; that is the case the engine must
+    /// never promote into a signal.
+    pub fn is_comparable(&self) -> bool {
+        !matches!(self, MeasurementSemantics::UnstablePopulation)
+    }
+}
+
 /// Full source-catalog entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Source {
@@ -39,6 +130,32 @@ pub struct Source {
     pub collector_type: String,
     /// Free-form extras (poll interval hints, query parameters, ...).
     pub parameters: BTreeMap<String, String>,
+    /// Provenance tier: institutional, independent, community or exploratory.
+    ///
+    /// Provenance metadata, not a score. Defaults to the weakest tier so a new
+    /// source must declare its standing rather than inherit a flattering one.
+    #[serde(default = "default_tier")]
+    pub tier: SourceTier,
+    /// Whether the emitted quantity is a stable, comparable time series.
+    #[serde(default = "default_semantics")]
+    pub measurement: MeasurementSemantics,
+    /// The lenses this source is intended to feed.
+    ///
+    /// A source is a sensor; a lens is a view. One sensor can feed several
+    /// lenses (USGS feeds EARTH, WORLD and TURKEY when geographically
+    /// relevant). The mapping is declared here so the Lens screen can show
+    /// which sensors actually back each lens — and say `NO CONNECTED SOURCES`
+    /// rather than showing a lens as healthy when nothing feeds it.
+    #[serde(default)]
+    pub feeds_lenses: Vec<String>,
+}
+
+fn default_tier() -> SourceTier {
+    SourceTier::Tier4
+}
+
+fn default_semantics() -> MeasurementSemantics {
+    MeasurementSemantics::StableSeries
 }
 
 impl Source {
@@ -66,7 +183,28 @@ impl Source {
             enabled: true,
             collector_type: collector_type.into(),
             parameters: BTreeMap::new(),
+            tier: SourceTier::Tier4,
+            measurement: MeasurementSemantics::StableSeries,
+            feeds_lenses: Vec::new(),
         }
+    }
+
+    /// Declare the provenance tier.
+    pub fn with_tier(mut self, tier: SourceTier) -> Self {
+        self.tier = tier;
+        self
+    }
+
+    /// Declare whether the emitted quantity is a stable time series.
+    pub fn with_measurement(mut self, measurement: MeasurementSemantics) -> Self {
+        self.measurement = measurement;
+        self
+    }
+
+    /// Declare the lenses this source feeds.
+    pub fn feeding(mut self, lenses: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        self.feeds_lenses = lenses.into_iter().map(Into::into).collect();
+        self
     }
 
     pub fn with_category(mut self, category: impl Into<String>) -> Self {

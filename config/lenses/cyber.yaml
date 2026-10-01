@@ -1,0 +1,17 @@
+# Cyber: exploited vulnerabilities, security activity.
+#
+# `cyber` is the category the CISA KEV collector emits: additions to the
+# known-exploited-vulnerability catalogue. A rise is a real increase in
+# vulnerabilities being exploited in the wild, not security news chatter.
+id: lens_cyber
+name: CYBER
+description: "Security activity grounded in what is actually being exploited: the CISA known-exploited-vulnerability catalogue."
+categories:
+  - cyber
+keywords:
+  - vulnerability
+  - exploited
+  - ransomware
+weights:
+  novelty: 1.4
+  strength: 1.2

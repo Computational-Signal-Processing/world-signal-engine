@@ -392,3 +392,83 @@ async fn apply_collection_ingests_a_precomputed_result() {
     assert_eq!(outcome.observations_new, 1);
     assert!(!outcome.source_failed);
 }
+
+/// A source that declares `unstable_population` must be stored for evidence but
+/// never detected on.
+///
+/// The scenario is the worst case for a naive engine: the population itself
+/// jumps, so a metric that would look like a 20σ anomaly is really just a
+/// different set of members being measured. The engine must record the
+/// observations and refuse to form a signal from them.
+#[tokio::test]
+async fn an_unstable_population_is_stored_but_never_detected_on() {
+    use wse_model::MeasurementSemantics;
+
+    let mut churning = engine();
+    churning
+        .register_source(
+            Source::new(
+                wse_model::SourceId::new("synthetic_churn"),
+                "Churning Search",
+                "synthetic",
+            )
+            .with_category("technology")
+            .with_measurement(MeasurementSemantics::UnstablePopulation),
+        )
+        .unwrap();
+
+    let world =
+        SyntheticWorld::new(origin()).with_stream(wse_collector::synthetic::ScriptedStream::new(
+            wse_collector::synthetic::SyntheticStream::new("churn", 100.0, 2.0),
+            vec![wse_collector::synthetic::Phase::spike(50, 400.0)],
+        ));
+    drive(&mut churning, world, 55).await;
+
+    // The spike was recorded...
+    let observations = churning
+        .store()
+        .query_observations(&wse_storage::ObservationQuery::default())
+        .unwrap();
+    assert_eq!(observations.total, 55);
+
+    // ...but produced no signal, because the source is not comparable.
+    let signals = churning
+        .store()
+        .query_signals(&wse_storage::SignalQuery::default())
+        .unwrap();
+    assert!(
+        signals.items.is_empty(),
+        "an unstable population must never produce a signal; got {:?}",
+        signals.items.iter().map(|s| &s.types).collect::<Vec<_>>()
+    );
+
+    // Control: the same scripted spike on a comparable source *does* signal, so
+    // the assertion above is about the measurement semantics, not about the
+    // spike being too small to notice.
+    let mut control = engine();
+    control
+        .register_source(
+            Source::new(
+                wse_model::SourceId::new("synthetic_churn"),
+                "Churning Search",
+                "synthetic",
+            )
+            .with_category("technology")
+            .with_measurement(MeasurementSemantics::StableSeries),
+        )
+        .unwrap();
+    let world =
+        SyntheticWorld::new(origin()).with_stream(wse_collector::synthetic::ScriptedStream::new(
+            wse_collector::synthetic::SyntheticStream::new("churn", 100.0, 2.0),
+            vec![wse_collector::synthetic::Phase::spike(50, 400.0)],
+        ));
+    drive(&mut control, world, 55).await;
+    let control_signals = control
+        .store()
+        .query_signals(&wse_storage::SignalQuery::default())
+        .unwrap();
+    assert!(
+        !control_signals.items.is_empty(),
+        "the control (a stable series with the same spike) must signal"
+    );
+}

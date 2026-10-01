@@ -57,6 +57,9 @@ pub fn source() -> Source {
         enabled: true,
         collector_type: COLLECTOR_TYPE.to_string(),
         parameters: std::collections::BTreeMap::new(),
+        tier: wse_model::SourceTier::Tier1,
+        measurement: wse_model::MeasurementSemantics::StableSeries,
+        feeds_lenses: vec!["lens_earth".to_string()],
     }
 }
 

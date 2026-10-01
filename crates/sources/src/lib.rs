@@ -15,19 +15,27 @@
 //! Nothing here depends on the detection or signal engines: a collector that
 //! fails only affects its own source.
 
+pub mod afad;
+pub mod arxiv;
+pub mod cisa_kev;
 pub mod collectors;
+pub mod crossref;
+pub mod ecb;
 pub mod eonet;
 pub mod gdelt;
 pub mod github;
 pub mod hackernews;
 pub mod nasa;
+pub mod noaa_kp;
 pub mod nws;
 pub mod usgs;
+pub mod xml;
 
 pub use collectors::{
-    live_collectors, CollectorContext, EonetCollector, GdeltCollector, GitHubCollector,
-    HackerNewsCollector, LiveTransport, NasaNeoCollector, NwsAlertsCollector, Request, Transport,
-    TransportError, UsgsCollector,
+    live_collectors, AfadCollector, ArxivCollector, CisaKevCollector, CollectorContext,
+    CrossrefCollector, EcbRatesCollector, EonetCollector, GdeltCollector, GitHubCollector,
+    HackerNewsCollector, LiveTransport, NasaNeoCollector, NoaaKpCollector, NwsAlertsCollector,
+    Request, Transport, TransportError, UsgsCollector,
 };
 
 use wse_model::Source;
@@ -36,8 +44,10 @@ use wse_model::Source;
 ///
 /// This is the single place a new source is registered: add a module, add its
 /// entry here. No core code changes.
+///
+/// Ordering is by `priority` (lower first), which is also collection order.
 pub fn catalog() -> Vec<Source> {
-    vec![
+    let mut entries = vec![
         usgs::source(),
         nasa::source(),
         gdelt::source(),
@@ -45,7 +55,15 @@ pub fn catalog() -> Vec<Source> {
         github::source(),
         nws::source(),
         eonet::source(),
-    ]
+        noaa_kp::source(),
+        cisa_kev::source(),
+        ecb::source(),
+        crossref::source(),
+        arxiv::source(),
+        afad::source(),
+    ];
+    entries.sort_by_key(|s| (s.priority, s.id.as_str().to_string()));
+    entries
 }
 
 /// Look up a catalog entry by id.

@@ -124,7 +124,7 @@ Findings 9 and 10 are left as documented limitations rather than faked.
 | 4 | Monitoring requires `--collect` | FIXED | Same as finding 2. |
 | 5 | No latency telemetry | FIXED | System screen shows source lag, collector fetch, detection, and newest-signal age, each measured from stored timestamps. |
 | 6 | Cold-start degenerate baseline | OPEN | Still honest (flagged cold-start); magnitude still not usable on a median-0/MAD-0 history. |
-| 7 | Coverage is 4 narrow domains | IMPROVED | 7 sources across 7 categories: geophysics, space, weather, earth, global events, technology ×2. |
+| 7 | Coverage is 4 narrow domains | IMPROVED | 13 sources across 9 categories: geophysics ×2, space ×2, weather, earth, global events, cyber, finance, science ×2, technology ×2. See *Source network* below. |
 | 8 | No acceptance test for the live SSE → world path | PARTIAL | The activity wire contract (SCREAMING_SNAKE_CASE kinds) is now locked by an API test; the full UI refresh path is verified by hand, not yet automated. |
 | 9 | `IMPACT` has no producer | OPEN (documented) | |
 | 10 | No labelled ground truth | OPEN (documented) | |
@@ -139,3 +139,56 @@ Findings 9 and 10 are left as documented limitations rather than faked.
 Both are snapshots: their counts fall as well as rise, which exercises the
 baseline engine in both directions. Both are verified live (72 and 13 records
 per poll respectively). `nasa_eonet` gives the map real coordinates.
+
+## I. Source network (2026-10-01, evidence-based expansion)
+
+Finding 7 is the one this pass exists to close. Coverage was widened with
+sources chosen for *measurement character* and *independence*, not count. Each
+new source was picked so that two things hold: the measurement is honest (a
+stable, comparable quantity, not membership churn), and it is independent of the
+sources already connected, so cross-source convergence has real material.
+
+| Source | Domain | Tier | Measurement | Verified live |
+| --- | --- | --- | --- | --- |
+| `afad_earthquakes` | geophysics (Turkey) | 1 | stable series, per province | 16 obs |
+| `noaa_kp_index` | space weather | 1 | stable series | 56 obs |
+| `cisa_kev` | cyber | 1 | stable series ×2 | 2 obs |
+| `ecb_exchange_rates` | finance | 1 | stable series | 7 obs |
+| `crossref_works` | science | 2 | stable series, fixed topic list | 3 obs |
+| `arxiv_submissions` | science | 2 | stable series, fixed category list | 4 obs |
+
+All six were verified against the live APIs with `wse collect` (counts above are
+from one run). `gdelt_news_volume` and `crossref_works` are rate-limited by their
+providers and record that honestly as a source failure rather than as zero
+activity — the distinction the brief's rule 29 requires.
+
+### What changed structurally
+
+Two fields were added to the catalog and are now load-bearing:
+
+- **`measurement`** (`stable_series` / `fixed_universe` / `unstable_population`).
+  The engine reads it before detecting: an `unstable_population` source is
+  stored for evidence but never detected on, because its aggregate is membership
+  churn, not a world change. This is enforced in `Engine::ingest` and locked by
+  `an_unstable_population_is_stored_but_never_detected_on`.
+- **`feeds_lenses`**. Every source declares which lenses it backs, and a test
+  (`crates/cli/tests/lens_coverage.rs`) fails if a source feeds a lens that does
+  not exist, or if a lens has no connected source and is not declared
+  intentionally unfed. Coverage is a checked property, not a claim.
+
+### Lens coverage after this pass
+
+| Lens | Backed by |
+| --- | --- |
+| EARTH | USGS, AFAD, NWS, EONET |
+| SPACE | NASA NEO, NOAA Kp |
+| GLOBAL EVENTS | GDELT |
+| CYBER | CISA KEV |
+| FINANCE | ECB |
+| SCIENCE | Crossref, arXiv |
+| AI | Crossref, arXiv |
+| SOFTWARE | Hacker News, GitHub |
+| TURKEY | USGS, AFAD (geographic) |
+
+`AGRICULTURE` and `ENERGY` remain intentionally unfed and are declared as such
+in the coverage test; they are placeholders, not accidents.

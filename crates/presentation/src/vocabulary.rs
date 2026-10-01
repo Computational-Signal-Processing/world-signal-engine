@@ -71,6 +71,42 @@ pub fn metric_vocab(metric: &str) -> Option<MetricVocab> {
             unit_name: "stars",
             movement_meaning: "developer interest moving faster than the recent norm",
         },
+        "kp_index" => MetricVocab {
+            subject: "geomagnetic disturbance (planetary K-index)",
+            short: "geomagnetic activity",
+            unit_name: "kp",
+            movement_meaning: "a geomagnetic storm stronger than the recent norm",
+        },
+        "kev_added" => MetricVocab {
+            subject: "vulnerabilities added to the known-exploited catalogue",
+            short: "exploited-vulnerability activity",
+            unit_name: "vulnerabilities",
+            movement_meaning: "more newly exploited vulnerabilities than usual",
+        },
+        "kev_catalog_total" => MetricVocab {
+            subject: "the size of the known-exploited vulnerability catalogue",
+            short: "exploited-vulnerability catalogue",
+            unit_name: "vulnerabilities",
+            movement_meaning: "the catalogue growing faster than its recent pace",
+        },
+        "exchange_rate" => MetricVocab {
+            subject: "the euro reference exchange rate",
+            short: "exchange rate",
+            unit_name: "rate",
+            movement_meaning: "a move in the reference rate larger than the recent norm",
+        },
+        "works_registered" => MetricVocab {
+            subject: "scholarly works registered on a topic",
+            short: "research output",
+            unit_name: "works",
+            movement_meaning: "research output on this topic moving faster than the recent norm",
+        },
+        "preprint_total" => MetricVocab {
+            subject: "preprints posted to an arXiv category",
+            short: "preprint output",
+            unit_name: "preprints",
+            movement_meaning: "preprint output in this category moving faster than the recent norm",
+        },
         _ => return None,
     };
     Some(entry)
@@ -105,6 +141,36 @@ pub fn entity_vocab(entity: &EntityId) -> Option<EntityVocab> {
             short: "near-Earth objects".to_string(),
             place: None,
         }),
+        "province" => Some(EntityVocab {
+            subject: "a province",
+            short: "provincial seismicity".to_string(),
+            place: Some(words(rest)),
+        }),
+        "research" => Some(EntityVocab {
+            subject: "a research topic",
+            short: format!("research on {}", words(rest)),
+            place: None,
+        }),
+        "arxiv" => Some(EntityVocab {
+            subject: "an arXiv category",
+            short: format!("{} preprints", words(rest)),
+            place: None,
+        }),
+        "geomagnetic" => Some(EntityVocab {
+            subject: "global geomagnetic activity",
+            short: "geomagnetic activity".to_string(),
+            place: None,
+        }),
+        "cyber" => Some(EntityVocab {
+            subject: "the exploited-vulnerability catalogue",
+            short: "exploited vulnerabilities".to_string(),
+            place: None,
+        }),
+        "fx" => Some(EntityVocab {
+            subject: "an exchange rate",
+            short: format!("{} rate", words(rest)),
+            place: None,
+        }),
         _ => None,
     }
 }
@@ -129,6 +195,8 @@ pub fn category_label(category: &str) -> Option<&'static str> {
         "science" => "Science",
         "agriculture" => "Agriculture",
         "transport" => "Transport",
+        "cyber" => "Cyber",
+        "research" => "Research",
         _ => return None,
     };
     Some(label)
@@ -138,10 +206,18 @@ pub fn category_label(category: &str) -> Option<&'static str> {
 pub fn source_label(source_id: &str) -> Option<&'static str> {
     let label = match source_id {
         "usgs_earthquakes" => "USGS earthquakes",
+        "afad_earthquakes" => "AFAD Turkey earthquakes",
         "nasa_neo" => "NASA near-Earth objects",
+        "noaa_kp_index" => "NOAA geomagnetic index",
+        "nasa_eonet" => "NASA natural events",
+        "nws_alerts" => "NWS weather alerts",
         "gdelt_news_volume" => "GDELT news volume",
         "hackernews_frontpage" => "Hacker News",
         "github_rust_activity" => "GitHub activity",
+        "cisa_kev" => "CISA exploited vulnerabilities",
+        "ecb_exchange_rates" => "ECB reference rates",
+        "crossref_works" => "Crossref scholarly works",
+        "arxiv_submissions" => "arXiv preprints",
         _ => return None,
     };
     Some(label)
@@ -153,15 +229,21 @@ mod tests {
 
     #[test]
     fn every_connected_metric_has_vocabulary() {
-        // These are the metrics the five shipped collectors emit. If a
-        // collector starts emitting a new metric, this test is the reminder
-        // that the vocabulary must follow.
+        // These are the metrics the shipped collectors emit. If a collector
+        // starts emitting a new metric, this test is the reminder that the
+        // vocabulary must follow.
         for metric in [
             "earthquake_magnitude",
             "neo_miss_distance",
             "news_volume",
             "story_score",
             "repo_stars",
+            "kp_index",
+            "kev_added",
+            "kev_catalog_total",
+            "exchange_rate",
+            "works_registered",
+            "preprint_total",
         ] {
             assert!(metric_vocab(metric).is_some(), "no vocab for {metric}");
         }

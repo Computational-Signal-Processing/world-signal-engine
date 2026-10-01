@@ -1,0 +1,19 @@
+{
+  "id": 724712,
+  "name": "tokio",
+  "full_name": "tokio-rs/tokio",
+  "owner": { "login": "tokio-rs" },
+  "description": "A runtime for writing reliable asynchronous applications with Rust.",
+  "html_url": "https://github.com/tokio-rs/tokio",
+  "stargazers_count": 33290,
+  "forks_count": 3100,
+  "open_issues_count": 289,
+  "watchers_count": 33290,
+  "created_at": "2016-05-20T20:11:00Z",
+  "updated_at": "2026-09-30T05:50:00Z",
+  "pushed_at": "2026-09-30T05:12:00Z",
+  "language": "Rust",
+  "topics": ["async", "rust"],
+  "archived": false,
+  "license": { "spdx_id": "MIT" }
+}

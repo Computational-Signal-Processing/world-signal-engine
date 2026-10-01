@@ -39,5 +39,6 @@ pub use signal::{
     SignalType,
 };
 pub use source::{
-    AuthKind, Cadence, Cost, DataFormat, FailureKind, HealthStatus, Protocol, Source, SourceHealth,
+    AuthKind, Cadence, Cost, DataFormat, FailureKind, HealthStatus, MeasurementSemantics, Protocol,
+    Source, SourceHealth, SourceTier,
 };

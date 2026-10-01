@@ -1,11 +1,33 @@
 //! Hacker News front-page activity — the technology/software source.
 //!
-//! Uses the public Algolia HN Search API, which needs no key. The measured
-//! quantity is the score of front-page stories in a tag: a jump in the score
-//! distribution or in the number of stories is a real change in what the
-//! software world is paying attention to.
+//! ## Why the population is fixed
 //!
-//! API docs: <https://hn.algolia.com/api>
+//! The public Algolia HN Search endpoint returns *whatever* is on the front
+//! page right now. Two collections return different stories, so a change in the
+//! summed score is largely a change in *which stories we happened to sample*,
+//! not a change in software attention. Interpreting that as a world measurement
+//! is exactly the mistake this source used to make.
+//!
+//! This source instead tracks a **fixed universe**: it resolves the current
+//! top-N story ids once, then re-measures the *same* ids on every later
+//! collection by their item ids, which never change. A story's score rising is
+//! then a real, comparable measurement of attention on a known story.
+//!
+//! ## How the fixed universe is discovered
+//!
+//! The HN Firebase API exposes the current top-story id list
+//! (`v0/topstories.json`). The ids are the durable identity; the score behind
+//! each id is what we track. On each collection the collector fetches the list,
+//! reuses any ids already in its universe, and admits only enough new ids to
+//! keep the universe at `UNIVERSE_SIZE`. Membership therefore grows slowly and
+//! deliberately rather than churning every poll.
+//!
+//! API docs: <https://github.com/HackerNews/API>
+//!
+//! Authentication: none. The catalog marks this tier 3 (community signal) and
+//! `fixed_universe`.
+
+use std::collections::BTreeMap;
 
 use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
@@ -13,16 +35,20 @@ use wse_collector::CollectorError;
 use wse_model::{EntityId, Observation, RawReference, Source, SourceId};
 
 pub const SOURCE_ID: &str = "hackernews_frontpage";
-pub const COLLECTOR_TYPE: &str = "hackernews_search";
+pub const COLLECTOR_TYPE: &str = "hackernews_universe";
 
-/// Front-page stories, newest first.
-pub const API_ENDPOINT: &str = "https://hn.algolia.com/api/v1/search_by_date";
+/// The current top-story id list.
+pub const TOP_STORIES_ENDPOINT: &str = "https://hacker-news.firebaseio.com/v0/topstories.json";
+/// One story item, by id.
+pub const ITEM_ENDPOINT: &str = "https://hacker-news.firebaseio.com/v0/item/{id}.json";
+
+/// How many stories the fixed universe tracks.
+pub const UNIVERSE_SIZE: usize = 30;
 
 /// The catalog entry.
 pub fn source() -> Source {
     let mut parameters = std::collections::BTreeMap::new();
-    parameters.insert("tags".to_string(), "front_page".to_string());
-    parameters.insert("hits_per_page".to_string(), "50".to_string());
+    parameters.insert("universe_size".to_string(), UNIVERSE_SIZE.to_string());
 
     Source {
         id: SourceId::new(SOURCE_ID),
@@ -30,12 +56,12 @@ pub fn source() -> Source {
         provider: "Y Combinator / Algolia".to_string(),
         category: "technology".to_string(),
         subcategory: Some("developer_attention".to_string()),
-        endpoint: API_ENDPOINT.to_string(),
+        endpoint: TOP_STORIES_ENDPOINT.to_string(),
         protocol: wse_model::Protocol::Https,
         format: wse_model::DataFormat::Json,
         cadence: wse_model::Cadence::Interval { seconds: 600 },
         timezone: Some("UTC".to_string()),
-        license: Some("Public API, no key required (Algolia HN Search)".to_string()),
+        license: Some("Public API, no key required (Hacker News)".to_string()),
         authentication: wse_model::AuthKind::None,
         cost: wse_model::Cost::Free,
         historical_available: true,
@@ -46,110 +72,141 @@ pub fn source() -> Source {
         enabled: true,
         collector_type: COLLECTOR_TYPE.to_string(),
         parameters,
+        tier: wse_model::SourceTier::Tier3,
+        measurement: wse_model::MeasurementSemantics::FixedUniverse,
+        feeds_lenses: vec!["lens_software".to_string()],
     }
 }
 
+/// A story item as the Firebase API returns it.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct SearchResponse {
+pub struct Item {
     #[serde(default)]
-    pub hits: Vec<Hit>,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct Hit {
-    #[serde(rename = "objectID", default)]
-    pub object_id: String,
+    pub id: i64,
     #[serde(default)]
     pub title: Option<String>,
     #[serde(default)]
     pub url: Option<String>,
     #[serde(default)]
-    pub author: Option<String>,
+    pub by: Option<String>,
     #[serde(default)]
-    pub points: Option<f64>,
+    pub score: Option<f64>,
     #[serde(default)]
-    pub num_comments: Option<f64>,
+    pub descendants: Option<f64>,
     /// Epoch seconds.
     #[serde(default)]
-    pub created_at_i: Option<i64>,
+    pub time: Option<i64>,
+    #[serde(default, rename = "type")]
+    pub item_type: Option<String>,
     #[serde(default)]
-    pub created_at: Option<String>,
-    #[serde(rename = "_tags", default)]
-    pub tags: Vec<String>,
+    pub deleted: bool,
+    #[serde(default)]
+    pub dead: bool,
 }
 
-/// Parse an Algolia HN response into observations.
+/// Parse the top-story id list.
+pub fn parse_ids(body: &[u8]) -> Result<Vec<i64>, CollectorError> {
+    serde_json::from_slice(body)
+        .map_err(|e| CollectorError::Parse(format!("hackernews topstories: {e}")))
+}
+
+/// Parse one story item into at most one observation.
 ///
-/// One observation per story, measuring its score. The entity is the software
-/// ecosystem as a whole: the series is "how much attention software stories
-/// are getting", and it only becomes a signal when the distribution shifts.
-pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>, CollectorError> {
-    let response: SearchResponse = serde_json::from_slice(body)
-        .map_err(|e| CollectorError::Parse(format!("hackernews search: {e}")))?;
+/// Returns `Ok(None)` for a comment, a deleted/dead item, or one with no score
+/// — none of which is a front-page story measurement.
+pub fn parse_item(
+    body: &[u8],
+    observed_at: DateTime<Utc>,
+) -> Result<Option<Observation>, CollectorError> {
+    let item: Item = serde_json::from_slice(body)
+        .map_err(|e| CollectorError::Parse(format!("hackernews item: {e}")))?;
+
+    if item.deleted || item.dead {
+        return Ok(None);
+    }
+    if item.item_type.as_deref() == Some("comment") {
+        return Ok(None);
+    }
+    let (Some(title), Some(score)) = (item.title.clone(), item.score) else {
+        return Ok(None);
+    };
+    let Some(observed_at_item) = item.time.and_then(|s| Utc.timestamp_opt(s, 0).single()) else {
+        return Ok(None);
+    };
 
     let source_id = SourceId::new(SOURCE_ID);
     let entity = EntityId::new("software_ecosystem");
     let hash = wse_model::fnv1a_hex(&String::from_utf8_lossy(body));
-    let mut observations = Vec::new();
+    let locator = item
+        .url
+        .clone()
+        .unwrap_or_else(|| format!("https://news.ycombinator.com/item?id={}", item.id));
+    let raw = RawReference {
+        locator,
+        hash,
+        content_type: Some("application/json".to_string()),
+        bytes: Some(body.len() as u64),
+    };
 
-    for hit in response.hits {
-        // Comments have no score and no title; they are not front-page stories.
-        if hit.tags.iter().any(|t| t == "comment") {
-            continue;
-        }
-        let (Some(title), Some(points)) = (hit.title.clone(), hit.points) else {
-            continue;
-        };
-        let Some(observed_at) = hit
-            .created_at_i
-            .and_then(|s| Utc.timestamp_opt(s, 0).single())
-            .or_else(|| {
-                hit.created_at
-                    .as_deref()
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                    .map(|d| d.with_timezone(&Utc))
-            })
-        else {
-            continue;
-        };
+    let mut observation = Observation::new(
+        source_id,
+        Some(entity),
+        "story_score",
+        score,
+        "points",
+        // The score is the current value; observed_at is when we looked, so the
+        // series' timestamps track collection rather than the story's birthday.
+        observed_at,
+        raw,
+    )
+    .with_received_at(observed_at)
+    .with_identity(item.id.to_string())
+    .with_attribute("story_id", item.id.to_string())
+    .with_attribute("title", title)
+    .with_attribute("posted_at", observed_at_item.to_rfc3339());
 
-        let locator = hit
-            .url
-            .clone()
-            .unwrap_or_else(|| format!("https://news.ycombinator.com/item?id={}", hit.object_id));
-        let raw = RawReference {
-            locator,
-            hash: hash.clone(),
-            content_type: Some("application/json".to_string()),
-            bytes: Some(body.len() as u64),
-        };
-
-        let mut observation = Observation::new(
-            source_id.clone(),
-            Some(entity.clone()),
-            "story_score",
-            points,
-            "points",
-            observed_at,
-            raw,
-        )
-        .with_received_at(received_at)
-        // Two stories can share a `created_at_i` second. The story id is the
-        // record's identity, so they stay independent instead of colliding.
-        .with_identity(&hit.object_id)
-        .with_attribute("story_id", hit.object_id.clone())
-        .with_attribute("title", title);
-
-        if let Some(author) = &hit.author {
-            observation = observation.with_attribute("author", author.clone());
-        }
-        if let Some(comments) = hit.num_comments {
-            observation = observation.with_attribute("comments", format!("{comments:.0}"));
-        }
-
-        observations.push(observation);
+    if let Some(author) = &item.by {
+        observation = observation.with_attribute("author", author.clone());
+    }
+    if let Some(comments) = item.descendants {
+        observation = observation.with_attribute("comments", format!("{comments:.0}"));
     }
 
+    Ok(Some(observation))
+}
+
+/// Choose the next fixed universe of story ids.
+///
+/// Ids already tracked are kept (their scores remain comparable across
+/// collections); only enough new ids from `candidates` are admitted to refill
+/// the universe to `size`. Order is preserved so the universe is deterministic.
+pub fn next_universe(current: &[i64], candidates: &[i64], size: usize) -> Vec<i64> {
+    let mut universe: Vec<i64> = current.iter().copied().take(size).collect();
+    let known: std::collections::HashSet<i64> = universe.iter().copied().collect();
+    for id in candidates {
+        if universe.len() >= size {
+            break;
+        }
+        if !known.contains(id) {
+            universe.push(*id);
+        }
+    }
+    universe
+}
+
+/// Parse a batch of items keyed by story id into observations.
+///
+/// Used by the collector once it has resolved the fixed universe.
+pub fn parse_items(
+    items: &BTreeMap<i64, Vec<u8>>,
+    observed_at: DateTime<Utc>,
+) -> Result<Vec<Observation>, CollectorError> {
+    let mut observations = Vec::new();
+    for body in items.values() {
+        if let Some(observation) = parse_item(body, observed_at)? {
+            observations.push(observation);
+        }
+    }
     observations.sort_by_key(|o| o.observed_at);
     Ok(observations)
 }
@@ -158,79 +215,83 @@ pub fn parse(body: &[u8], received_at: DateTime<Utc>) -> Result<Vec<Observation>
 mod tests {
     use super::*;
 
-    fn fixture() -> Vec<u8> {
-        include_bytes!("../../../tests/fixtures/hackernews_search.json").to_vec()
-    }
-
     fn received() -> DateTime<Utc> {
         Utc.timestamp_millis_opt(1_700_001_000_000)
             .single()
             .unwrap()
     }
 
-    #[test]
-    fn parses_stories_and_ignores_comments() {
-        let observations = parse(&fixture(), received()).unwrap();
-        assert_eq!(observations.len(), 3, "the comment must be dropped");
-        assert_eq!(observations[0].metric, "story_score");
-        assert_eq!(observations[0].unit, "points");
+    fn item_fixture() -> Vec<u8> {
+        include_bytes!("../../../tests/fixtures/hackernews_item.json").to_vec()
     }
 
     #[test]
-    fn epoch_seconds_become_utc_timestamps() {
-        let observations = parse(&fixture(), received()).unwrap();
-        assert_eq!(observations[0].observed_at.timestamp(), 1_700_000_100);
+    fn parses_a_story_item() {
+        let observation = parse_item(&item_fixture(), received()).unwrap().unwrap();
+        assert_eq!(observation.metric, "story_score");
+        assert_eq!(observation.unit, "points");
+        assert_eq!(observation.observed_at, received());
     }
 
     #[test]
-    fn stories_share_one_series_key_so_attention_can_be_tracked() {
-        let observations = parse(&fixture(), received()).unwrap();
-        let keys: Vec<String> = observations.iter().map(|o| o.series_key()).collect();
-        assert!(keys.iter().all(|k| k == &keys[0]), "{keys:?}");
+    fn the_story_id_is_the_record_identity() {
+        let observation = parse_item(&item_fixture(), received()).unwrap().unwrap();
+        assert_eq!(observation.identity.as_deref(), Some("41000001"));
+        assert!(observation.raw.locator.starts_with("https://"));
     }
 
     #[test]
-    fn the_story_title_is_kept_for_explanation() {
-        let observations = parse(&fixture(), received()).unwrap();
-        assert_eq!(
-            observations[0].attributes.get("title").map(String::as_str),
-            Some("Show HN: A tiny deterministic signal engine in Rust")
-        );
-        assert!(observations[0].raw.locator.starts_with("https://"));
+    fn comments_and_dead_items_are_skipped() {
+        let comment = br#"{"id":1,"type":"comment","score":5,"time":1700000000}"#;
+        assert!(parse_item(comment, received()).unwrap().is_none());
+        let dead =
+            br#"{"id":1,"type":"story","title":"t","score":5,"time":1700000000,"dead":true}"#;
+        assert!(parse_item(dead, received()).unwrap().is_none());
+        let no_score = br#"{"id":1,"type":"story","title":"t","time":1700000000}"#;
+        assert!(parse_item(no_score, received()).unwrap().is_none());
     }
 
     #[test]
-    fn a_story_without_points_is_skipped() {
-        let body = br#"{"hits":[{"objectID":"1","title":"t","created_at_i":1700000000,
-            "points":null,"_tags":["story"]}]}"#;
-        assert!(parse(body, received()).unwrap().is_empty());
+    fn the_top_story_list_parses() {
+        let ids = parse_ids(b"[41000001,41000002,41000003]").unwrap();
+        assert_eq!(ids, vec![41000001, 41000002, 41000003]);
+    }
+
+    #[test]
+    fn the_universe_keeps_known_ids_and_fills_the_rest() {
+        // Two tracked ids stay; the universe is topped up from the candidates.
+        let current = vec![10, 11];
+        let candidates = vec![11, 12, 13, 14];
+        let next = next_universe(&current, &candidates, 4);
+        assert_eq!(next, vec![10, 11, 12, 13]);
+    }
+
+    #[test]
+    fn the_universe_never_exceeds_its_size() {
+        let current: Vec<i64> = (0..30).collect();
+        let next = next_universe(&current, &(100..200).collect::<Vec<_>>(), 30);
+        assert_eq!(next.len(), 30);
+        assert_eq!(next, current, "a full universe is not churned");
     }
 
     #[test]
     fn malformed_payload_is_a_parse_error() {
         assert!(matches!(
-            parse(b"nope", received()),
+            parse_item(b"nope", received()),
             Err(CollectorError::Parse(_))
         ));
+        assert!(parse_ids(b"nope").is_err());
     }
 
     #[test]
-    fn stories_sharing_a_creation_second_stay_distinct() {
-        // Two stories posted in the same second must not collapse into one.
-        let body = br#"{"hits":[
-            {"objectID":"1","title":"a","created_at_i":1700000100,"points":10,"_tags":["story"]},
-            {"objectID":"2","title":"b","created_at_i":1700000100,"points":20,"_tags":["story"]}
-        ]}"#;
-        let observations = parse(body, received()).unwrap();
-        assert_eq!(observations.len(), 2);
-        assert_ne!(observations[0].id, observations[1].id);
-        assert_eq!(observations[0].series_key(), observations[1].series_key());
-    }
-
-    #[test]
-    fn catalog_entry_needs_no_auth() {
+    fn the_catalog_declares_a_fixed_universe_and_no_auth() {
         let source = source();
         assert_eq!(source.authentication, wse_model::AuthKind::None);
-        assert_eq!(source.cost, wse_model::Cost::Free);
+        assert_eq!(
+            source.measurement,
+            wse_model::MeasurementSemantics::FixedUniverse
+        );
+        assert_eq!(source.tier, wse_model::SourceTier::Tier3);
+        assert!(source.feeds_lenses.contains(&"lens_software".to_string()));
     }
 }

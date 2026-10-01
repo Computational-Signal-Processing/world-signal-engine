@@ -113,7 +113,16 @@ priority            lower is more important
 enabled
 collector_type      which collector implementation reads this
 parameters          free-form extras
+tier                provenance: institutional, independent, community, exploratory
+measurement         whether the emitted quantity is a comparable time series
+feeds_lenses        lens ids this source is intended to feed
 ```
+
+`tier` is provenance, not importance. `measurement` is the honesty field: a
+source whose population churns between collections is marked
+`unstable_population` and the engine stores its observations for evidence but
+never detects on them. `feeds_lenses` declares coverage, so a lens with no
+connected source can be reported rather than silently shown empty.
 
 ## SourceHealth
 

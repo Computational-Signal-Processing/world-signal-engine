@@ -351,6 +351,19 @@ impl<S: Store> Engine<S> {
         let mut new_count = 0usize;
         let mut candidates = Vec::new();
 
+        // Which sources emit a quantity that may be read as a world change.
+        // A source whose population churns between collections (a top-N
+        // search result) is stored for evidence but never detected on: its
+        // aggregate is membership churn, not a change in the world. The
+        // judgement is declared in the catalog, not hard-coded here.
+        let comparable: HashMap<String, bool> = self
+            .store
+            .all_sources()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| (s.id.as_str().to_string(), s.measurement.is_comparable()))
+            .collect();
+
         for observation in observations {
             // De-duplication happens before anything else: the same payload
             // collected twice must not produce a second observation.
@@ -366,19 +379,29 @@ impl<S: Store> Engine<S> {
             self.metrics.observations_total += 1;
             new_count += 1;
 
-            let series_key = observation.series_key();
-            let tracker = self.trackers.entry(series_key.clone()).or_insert_with(|| {
-                SeriesTracker::from_observation(&observation, self.config.detector.clone())
-            });
-            tracker.push_observation(&observation);
+            let detectable = comparable
+                .get(observation.source_id.as_str())
+                .copied()
+                // An unknown source (a test, a replay of an unregistered feed)
+                // is treated as measurable: the catalog is the place to mark a
+                // source as unstable, and absence of an entry is not a verdict.
+                .unwrap_or(true);
 
-            candidates.extend(wse_detection::anomaly::detect_anomaly(tracker));
-            candidates.extend(wse_detection::early::detect_early_signal(tracker));
+            if detectable {
+                let series_key = observation.series_key();
+                let tracker = self.trackers.entry(series_key.clone()).or_insert_with(|| {
+                    SeriesTracker::from_observation(&observation, self.config.detector.clone())
+                });
+                tracker.push_observation(&observation);
 
-            let baseline = tracker.baseline_before_latest();
-            let _ = self
-                .store
-                .put_baseline(&series_key, observation.observed_at, baseline);
+                candidates.extend(wse_detection::anomaly::detect_anomaly(tracker));
+                candidates.extend(wse_detection::early::detect_early_signal(tracker));
+
+                let baseline = tracker.baseline_before_latest();
+                let _ = self
+                    .store
+                    .put_baseline(&series_key, observation.observed_at, baseline);
+            }
 
             if let Err(err) = self.store.put_observation(observation) {
                 tracing::error!(error = %err, "failed to store observation");

@@ -1,8 +1,9 @@
 # Space and near-Earth object signals.
 #
-# `space` is the category the NASA collector emits.
+# `space` is the category the NASA NEO and NOAA geomagnetic-index collectors
+# emit: near-Earth objects and geomagnetic disturbance.
 id: lens_space
 name: SPACE
-description: "Space weather and near-Earth objects, from NASA."
+description: "Space weather and near-Earth objects, from NASA and NOAA."
 categories:
   - space

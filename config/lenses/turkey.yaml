@@ -3,6 +3,9 @@
 # The bounding box covers the country. A signal with no location is never
 # excluded by a box — the engine does not know where it happened, and hiding it
 # would be dropping data rather than filtering it.
+#
+# Fed by any source whose observations carry a location inside the box; today
+# that is the USGS global earthquake feed and the AFAD Turkey earthquake feed.
 id: lens_turkey
 name: TURKEY
 description: "Signals located in or about Turkey, selected by geography."
