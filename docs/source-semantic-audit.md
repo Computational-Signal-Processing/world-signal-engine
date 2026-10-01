@@ -1,0 +1,692 @@
+# Source semantic audit
+
+A per-source audit of the 13 connected sources. It answers, for each source,
+what one observation *means* — and, more importantly, what the resulting time
+series does **not** mean even though the pipeline will happily compute on it.
+
+This is not a restatement of [SOURCE_CATALOG.md](../SOURCE_CATALOG.md). Every
+claim below was reached by reading the collector implementation and its fixture
+and tracing the value through:
+
+```text
+SOURCE -> COLLECTOR -> NORMALIZATION -> OBSERVATION -> STORAGE -> BASELINE -> DETECTION
+```
+
+Audit run: 2026-09-30, `main` @ `399c880`, Rust 1.88.0.
+
+Legend for detection eligibility:
+
+| Class | Meaning |
+| --- | --- |
+| **DETECTABLE** | The series is a real measurement of a stable subject; anomaly/early detection is meaningful as-is. |
+| **DETECTABLE_WITH_CONSTRAINTS** | Detectable, but only under a stated condition (cadence, aggregation, or de-duplication) that must hold. |
+| **EVIDENCE_ONLY** | The value is real and worth storing for drill-down and convergence, but its own series is not a trustworthy basis for an anomaly. |
+| **NOT_DETECTABLE** | The series does not mean what detection would assume. Detection must not run. |
+
+## Cross-cutting finding: observation identity is derived from the whole payload
+
+The single most important semantic bug in the network is in the *shared* id
+derivation, not in any one collector. It is documented here once and referenced
+by each affected source.
+
+`ObservationId::deterministic` seeds the id with the **whole-body payload hash**:
+
+```text
+series_key | observed_at | payload_hash | identity
+```
+
+For a *single-record* source this is harmless: the body changes only when the
+record changes. But for every source that returns a **multi-record window or
+feed**, the body changes whenever *any* record in it changes, so the payload
+hash changes, so **the ids of the records that did not change are re-minted**.
+
+The dedup check in `Engine::ingest_observations` is `contains_observation(id)`.
+Because the id changed, the "unchanged" record is not recognised as a duplicate
+and is ingested as a brand-new observation. It is then pushed into the rolling
+window as a *second* point at the *same* `observed_at` (the window dedups on
+nothing — see `RollingWindow::push`), which double-counts and distorts the
+baseline.
+
+Reproduced by probe (each currently fails against `main`):
+
+| Source | Probe | Result |
+| --- | --- | --- |
+| USGS | same quake, feed with one extra quake | id changed `obs_8293…` → `obs_4aff…` |
+| AFAD | same event, window slid by one | id changed `obs_0f3e…` → `obs_3cbb…` |
+| ECB | same rate, `lastNObservations=7` slid | id changed `obs_8064…` → `obs_2195…` |
+| NOAA Kp | same 3-hourly point, window slid | id changed `obs_7815…` → `obs_09db…` |
+| GDELT | same bucket, 1-day window slid | id changed `obs_7f50…` → `obs_3c4b…` |
+
+Impact by source character:
+
+- **Append-only event feeds** (USGS, AFAD, NASA NEO): every re-poll of the same
+  quake re-inserts it. On a 60-second poll over a 1-hour feed, a single
+  earthquake can be counted up to ~60 times. This is a direct, silent corruption
+  of the magnitude series.
+- **Sliding aggregate windows** (ECB, NOAA Kp, GDELT): every retained point is
+  re-minted each poll. The window fills with duplicates of the same timestamp.
+- **Whole-catalog snapshots** (CISA KEV, Crossref, arXiv): the observation is
+  *one* value per collection timestamped at collection time, so a fresh id per
+  poll is correct. These are **not** affected.
+
+The fix is to derive the id from the *record*, not the payload: seed the hash
+with the record's stable key (`event_id`, `time_tag`, `date`, story/repo id) via
+the existing `identity` mechanism, or hash only the record's own bytes. That is
+a change to the id-derivation contract and must be made deliberately, with a
+regression test per affected source, before any fix is proposed.
+
+## Cross-cutting finding: `feeds_lenses` is declared but not enforced
+
+`Source::feeds_lenses` is checked by `crates/cli/tests/lens_coverage.rs` for
+*existence* (a source may not name a lens that does not exist), but it is
+**never consulted at runtime**. A signal's lens matches are computed by
+`Lens::matches` from the signal's **category, entities, keywords and location** —
+not from `feeds_lenses`. So a source's declared lens coverage and the lens a
+signal actually lands in can disagree, and the coverage test cannot see it.
+
+Concretely: `nasa_eonet` declares `feeds_lenses: ["lens_earth"]` but its source
+category is `earth`, while `lens_earth` filters on `categories: [geophysics,
+environment, weather]`. EONET's signals therefore **never appear in EARTH**,
+despite the declaration. (NWS declares `lens_earth` with category `weather`,
+which does match — so the network is half-right by accident.)
+
+This is a semantic bug: the catalog asserts a coverage property the engine does
+not implement, and the test that guards coverage checks the wrong thing. The fix
+is either to make `feeds_lenses` authoritative for matching, or to make the
+coverage test assert category/entity/keyword agreement between each source and
+its declared lenses. A regression spec for the EONET case is committed in
+`crates/cli/tests/lens_coverage.rs`.
+
+## 1. usgs_earthquakes — USGS Earthquake Feed
+
+**Collector:** `crates/sources/src/usgs.rs`, poll `all_hour.geojson` every 60s.
+**Observation:** one earthquake. `metric=earthquake_magnitude`, `unit=magnitude`,
+entity `region_<place-after-last-comma>`, value = magnitude, `observed_at` =
+quake time (source), location = epicentre.
+
+1. **What one observation represents:** a single seismic event's magnitude.
+2. **Type:** event (geophysical), with a physical quantity attached.
+3. **Population stable?** Yes. Earthquakes are events that happened; they never
+   un-happen. A new quake is a new record.
+4. **Aggregate usable for anomaly detection?** Only after de-duplication. As
+   implemented, no (see cross-cutting finding): re-polls duplicate quakes.
+5. **What an increase means:** more seismic energy released, in that region, in
+   the feed's 1-hour window — *if* de-duplicated.
+6. **False increases:** (a) the payload-hash id bug re-inserting the same quake
+   on every poll; (b) the region key is the free-text `place` after the last
+   comma, so USGS re-phrasing a location splits or merges regions; (c) the feed
+   is "past hour" only, so a quiet hour followed by a busy hour is a window
+   artifact, not a world change.
+7. **Appropriate baseline:** rolling statistics over magnitude *per region*,
+   ideally with a rate term (count per hour). Mean/σ of magnitude is weakly
+   meaningful; magnitude is already log-scaled.
+8. **Temporal resolution:** event time, irregular; poll every 60s over a 1h
+   rolling feed.
+9. **Independent?** Yes — a distinct seismic network. Overlaps AFAD for Turkey
+   (see §13).
+10. **Can two sources represent the same event?** Yes — a Turkey quake appears in
+    both USGS and AFAD. Different event ids, so they are never merged; this is a
+    convergence case, not a dedup case.
+11. **Lenses:** EARTH, TURKEY.
+12. **Never infer:** that a *magnitude* rise is a rise in *activity* (magnitude
+    is not frequency); that "no observations this hour" means "no earthquakes"
+    (the feed is a window, and a failed poll is not a quiet planet).
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: per-record id
+de-duplication must be fixed first.
+
+## 2. afad_earthquakes — AFAD Turkey Earthquake Catalogue
+
+**Collector:** `crates/sources/src/afad.rs`, a filter window per poll.
+**Observation:** one earthquake, entity `province_<province>`,
+`metric=earthquake_magnitude`, `observed_at` = local time − 3h (source).
+
+1. **What one observation represents:** a single AFAD catalogue event.
+2. **Type:** event (geophysical), regional.
+3. **Population stable?** Yes — events are historical facts.
+4. **Aggregate usable?** Only after de-duplication. `with_identity(event_id)` is
+   set, but the payload hash still seeds the id, so the same event re-collected
+   in a slid window gets a new id (probe-confirmed).
+5. **What an increase means:** more recorded seismicity in Turkish provinces.
+6. **False increases:** (a) the id bug; (b) AFAD's window overlapping between
+   polls; (c) `isEventUpdate=true` rows — a revised magnitude for an existing
+   event is parsed as a *new* observation, so a correction can look like
+   activity. This is a genuine semantic gap: updates should supersede, not
+   append.
+7. **Appropriate baseline:** per-province rolling statistics; province is a
+   stable administrative key, which is better than USGS's free-text region.
+8. **Temporal resolution:** event time (UTC+3 → UTC), window-based polling.
+9. **Independent?** Yes, and complementary to USGS. Institutional (AFAD) vs
+   international (USGS) networks — a good convergence pair for TURKEY.
+10. **Same real-world event as another source?** Yes, with USGS (Turkey quakes).
+11. **Lenses:** TURKEY, EARTH.
+12. **Never infer:** that a province's rise is a national rise (provinces are
+    independent series); that an `isEventUpdate` row is a new earthquake.
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraints: per-record id
+de-duplication, and event-update semantics.
+
+## 3. nasa_neo — NASA Near-Earth Object Feed
+
+**Collector:** `crates/sources/src/nasa.rs`, daily feed (DEMO_KEY or `NASA_API_KEY`).
+**Observation:** one close approach. Entity is **`neo_class_all`** (the class,
+not the object); `metric=neo_miss_distance`, `unit=km`.
+
+1. **What one observation represents:** a single asteroid's close approach, as a
+   miss distance in km.
+2. **Type:** physical measurement of an event.
+3. **Population stable?** Yes.
+4. **Aggregate usable?** Weakly. The entity collapses *all* objects into one
+   series, so the series interleaves miss distances of unrelated rocks.
+5. **What an increase means:** nothing physically coherent — a larger value
+   means an object that happened to pass farther away.
+6. **False increases:** (a) an object that passed far away today; (b) the feed's
+   date window; (c) near-zero distances are the *interesting* values, but the
+   detector's default direction is symmetric, so it would flag a *far* pass as
+   anomalous.
+7. **Appropriate baseline:** none for raw distance. The meaningful series is
+   *count of approaches below a distance threshold per day*, or per-object
+   distance (object ids are stable but never recur).
+8. **Temporal resolution:** per-approach epoch.
+9. **Independent?** Yes.
+10. **Same event as another source?** No.
+11. **Lenses:** SPACE.
+12. **Never infer:** that a rising `neo_miss_distance` is a threat; that "closer"
+    equals "more dangerous" without size; anything about a single object from the
+    pooled class series.
+
+**Eligibility: EVIDENCE_ONLY** — the value is a real approach and is worth
+storing, but the pooled `neo_class_all` series is not a coherent anomaly target.
+
+## 4. nws_alerts — NWS Active Weather Alerts
+
+**Collector:** `crates/sources/src/nws.rs`, active-alert snapshot every 600s.
+**Observation:** count of *active* alerts, per severity (`dimension=severity`),
+nationally (`weather_united_states`) and per state (`weather_us_<code>`).
+
+1. **What one observation represents:** how many alerts of a severity are active
+   right now, nationally or in a state.
+2. **Type:** activity proxy / snapshot count of a live state.
+3. **Population stable?** Yes *as a snapshot* — the set is re-counted each poll,
+   not sampled.
+4. **Aggregate usable?** Yes. It is a true gauge: it can rise and fall.
+5. **What an increase means:** more people currently under a hazard of that
+   severity.
+6. **False increases:** (a) NWS bulk-issuing alerts for one weather system (a
+   single storm names dozens of counties → the national count jumps without the
+   world getting worse); (b) alert *expiry* and *re-issue* churn; (c) a state
+   code parse miss would drop or move counts.
+7. **Appropriate baseline:** rolling mean/σ of the count *per severity* (the
+   severity dimension already separates the series). Extreme/Severe are the
+   series worth watching.
+8. **Temporal resolution:** snapshot at poll time (10 min).
+9. **Independent?** Yes.
+10. **Same event as another source?** Possibly overlaps EONET (a storm appears in
+    both as an NWS alert and an EONET storm event) and USGS (an earthquake can
+    trigger alerts). Not mergeable — different granularity.
+11. **Lenses:** none configured today (category `weather` is claimed by the
+    unfed AGRICULTURE lens, and EARTH lists `weather` but has no bbox). **Gap:**
+    NWS is a Tier-1 real-time source that reaches the WORLD view but no domain
+    lens.
+12. **Never infer:** that the national count is a sum of human impact; that a
+    zero count is calm if the collector failed (rule 29 — a failed poll is not a
+    zero count).
+
+**Eligibility: DETECTABLE** — the strongest "true gauge" in the network.
+
+## 5. nasa_eonet — NASA EONET Natural Events
+
+**Collector:** `crates/sources/src/eonet.rs`, open-events snapshot every 1800s.
+**Observation:** count of open events per category (`dimension=category`), entity
+`natural_<category>`, `observed_at` = **collection time**.
+
+1. **What one observation represents:** how many natural events of a category
+   are currently open.
+2. **Type:** activity proxy / snapshot count.
+3. **Population stable?** Yes as a snapshot; the category set is fixed in code so
+   a category falling to zero stays visible.
+4. **Aggregate usable?** Yes.
+5. **What an increase means:** more open events of that category (e.g. more open
+   wildfires).
+6. **False increases:** (a) EONET's reporting lag — a fire that started hours ago
+   may be added late, so the count jumps on *ingestion*, not on ignition; (b)
+   closure latency makes the count sticky; (c) a category with a single long-lived
+   event dominates the count.
+7. **Appropriate baseline:** rolling statistics per category; watch the
+   *derivative* (new events per interval) more than the level.
+8. **Temporal resolution:** snapshot at poll time (30 min). Because `observed_at`
+   is collection time, the series is well-formed (no payload-hash duplication).
+9. **Independent?** Yes.
+10. **Same event as another source?** Yes — overlaps NWS (storms) and GDELT
+    (news about wildfires/storms). Convergence only.
+11. **Lenses:** EARTH.
+12. **Never infer:** that an open-event count is a count of *new* events; that a
+    late addition is a new ignition.
+
+**Eligibility: DETECTABLE**
+
+## 6. gdelt_news_volume — GDELT News Volume
+
+**Collector:** `crates/sources/src/gdelt.rs`, `timelinevol` for a fixed query
+(`oil supply`) over `timespan=1d`, every 900s.
+**Observation:** share of global news coverage matching the query, per 15-min
+bucket. Entity `topic_oil supply`.
+
+1. **What one observation represents:** the fraction of world news coverage, in
+   one time bucket, that matched "oil supply".
+2. **Type:** news activity (a *proxy* for attention, not for oil supply).
+3. **Population stable?** The *query* is fixed, but GDELT's global corpus and its
+   indexing lag are not; the corpus is continuously revised.
+4. **Aggregate usable?** Yes for *attention*, with constraints. Each poll
+   re-fetches the whole 1-day window, so it is affected by the payload-hash id
+   bug (probe-confirmed).
+5. **What an increase means:** a larger share of news coverage is about the
+   tracked topic.
+6. **False increases:** (a) the id bug re-ingesting the whole day each poll; (b)
+   GDELT's own coverage sparsity for a topic at a given hour (the denominator is
+   "all news", which itself varies); (c) rate limiting returns a **plain-text
+   200** — the collector correctly rejects this as a parse error, which is the
+   one place the "no data ≠ zero" rule is well handled; (d) a query that is too
+   broad drifts with unrelated news.
+7. **Appropriate baseline:** rolling statistics over the share, but *attention*
+   baselines are spiky; a percentile/EWMA view is more honest than a z-score.
+8. **Temporal resolution:** 15-minute buckets, 1-day window, 15-minute poll.
+9. **Independent?** Yes as a feed, but it is the *least* independent in spirit:
+   news volume about a topic is downstream of the events other sources measure
+   directly.
+10. **Same event as another source?** Frequently — this is the classic
+    convergence partner for EONET/NWS/USGS.
+11. **Lenses:** GLOBAL EVENTS.
+12. **Never infer:** that rising coverage means the underlying condition worsened
+    (coverage can rise because of *discussion*); that a fall means improvement;
+    that the topic's series is about "oil" — it is about news *mentioning* oil
+    supply.
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: id de-duplication,
+and it should be treated as an *attention* series, never as the phenomenon.
+
+## 7. hackernews_frontpage — Hacker News Front Page
+
+**Collector:** `crates/sources/src/hackernews.rs`, top-stories list then per-item
+fetch, every 600s. `measurement: fixed_universe`, tier 3.
+
+1. **What one observation represents:** the current score (points) of one tracked
+   story, by durable story id.
+2. **Type:** platform behavior (attention on a link).
+3. **Population stable?** **By construction only.** The *code* intends a fixed
+   universe (`next_universe` keeps known ids and tops up), but the *collector*
+   does not call it: it takes the current `topstories` head-30 each poll. So the
+   population actually churns every collection — the doc comment's promise and
+   the code disagree.
+4. **Aggregate usable?** No. As collected, the set is a different 30 stories each
+   poll, so the summed score is membership churn.
+5. **What an increase means:** nothing stable — a new story entered the sample.
+6. **False increases:** membership change (dominant), a story's score climbing
+   naturally, and time-of-day variation in the top list.
+7. **Appropriate baseline:** none for the current implementation. The intended
+   fixed-universe series (score of a stable id over time) would be a real
+   per-story series and *is* detectable per story.
+8. **Temporal resolution:** 10-minute poll; `observed_at` = collection time.
+9. **Independent?** Yes.
+10. **Same event as another source?** Occasionally (a story about a GDELT topic).
+11. **Lenses:** SOFTWARE.
+12. **Never infer:** that the series is "developer attention" in general — it is
+    the score of whichever stories the top list happened to contain.
+
+**Eligibility: EVIDENCE_ONLY** (as implemented). Note the mismatch: the catalog
+declares `fixed_universe` and the engine therefore *detects* on it, but the
+collector does not honour it. Either the collector must use `next_universe` or
+the catalog must declare `unstable_population`. This is a **catalog/implementation
+contradiction**, not merely a missing feature.
+
+## 8. github_rust_activity — GitHub Rust Repository Universe
+
+**Collector:** `crates/sources/src/github.rs`, one request per repo in a
+16-repo `UNIVERSE` constant, every 3600s. `measurement: fixed_universe`, tier 3.
+
+1. **What one observation represents:** the star count of one named repository,
+   by `identity = owner/name`.
+2. **Type:** platform behavior (attention on a project).
+3. **Population stable?** **Yes, genuinely** — the universe is a hard-coded
+   constant, re-measured each poll. This one *does* honour the contract.
+4. **Aggregate usable?** Yes, and it is the well-built half of the pair.
+5. **What an increase means:** the tracked projects gained stars.
+6. **False increases:** (a) a star-bot wave on one repo; (b) the *one-time*
+   ~1527σ cold-start already recorded in `docs/reality-audit.md` — the first
+   point against an empty/zero baseline; (c) `observed_at` = collection time, so
+   a poll delay shifts the point, not its value.
+7. **Appropriate baseline:** rolling statistics per repository (`repo_stars` with
+   `identity` = repo). Star counts are near-monotonic, so the *derivative* is the
+   interesting series; a level z-score will mostly fire on cold start.
+8. **Temporal resolution:** hourly, `observed_at` = collection time.
+9. **Independent?** Yes.
+10. **Same event as another source?** Weakly, with Hacker News (a repo trending
+    on HN may also gain stars). Convergence only.
+11. **Lenses:** SOFTWARE.
+12. **Never infer:** that a star rise is adoption or usage; that the aggregate is
+    "the Rust ecosystem" — it is 16 chosen projects; that a level change is a
+    world change rather than the one-time baseline gap.
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: the first observation
+per repo must establish a baseline (cold-start guard) before a level deviation is
+meaningful.
+
+## 9. cisa_kev — CISA Known Exploited Vulnerabilities
+
+**Collector:** `crates/sources/src/cisa_kev.rs`, whole catalog, every 86400s.
+**Two observations per poll:** `kev_added` (count added in trailing 7 days) and
+`kev_catalog_total` (catalog size). Entity `cyber_kev`.
+
+1. **What one observation represents:** `kev_added` = vulnerabilities added to
+   the catalog in the last 7 days; `kev_catalog_total` = size of the catalog.
+2. **Type:** registry activity (an authoritative institutional list).
+3. **Population stable?** Yes — the catalog is append-only and authoritative.
+4. **Aggregate usable?** Yes for both.
+5. **What an increase means:** `kev_added` rising = more vulnerabilities newly
+   *known to be exploited*; `kev_catalog_total` rising = the catalog grew.
+6. **False increases:** (a) CISA batch-adds (one big ingestion day looks like a
+   spike); (b) `kev_added` is a **trailing 7-day window sampled daily**, so
+   consecutive values overlap by 6 days — the series is heavily autocorrelated
+   and a daily z-score is misleading; (c) `kev_catalog_total` is monotonic, so a
+   level z-score only ever fires upward.
+7. **Appropriate baseline:** for `kev_added`, a *weekly* baseline (compare week
+   to week, not day to day) because the window overlaps; for
+   `kev_catalog_total`, the *first difference* (additions per day), not the level.
+8. **Temporal resolution:** daily poll; `observed_at` = collection time.
+9. **Independent?** Yes.
+10. **Same event as another source?** No.
+11. **Lenses:** CYBER.
+12. **Never infer:** that `kev_added` rising is a same-day surge (it is a 7-day
+    sum); that `kev_catalog_total` ever measuring "activity" — it is a
+    cumulative level; that a quiet catalog means a quiet threat landscape (KEV
+    only lists *confirmed* exploitation).
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: `kev_added` must be
+baselined weekly (window overlap); `kev_catalog_total` only as a differenced
+series.
+
+## 10. ecb_exchange_rates — ECB Euro Reference Rates
+
+**Collector:** `crates/sources/src/ecb.rs`, `D.USD.EUR.SP00.A`,
+`lastNObservations=7`, every 86400s.
+**Observation:** one daily reference rate; entity `fx_usd_eur`,
+`metric=exchange_rate`, `observed_at` = the SDMX date.
+
+1. **What one observation represents:** the official USD/EUR reference rate for
+   one business day.
+2. **Type:** physical/institutional measurement (an official fixing).
+3. **Population stable?** Yes — it is the same published series every day.
+4. **Aggregate usable?** Yes, but it is affected by the payload-hash id bug
+   (probe-confirmed): the 7-day window is re-minted each poll.
+5. **What an increase means:** the euro strengthened against the dollar that day.
+6. **False increases:** (a) the id bug re-inserting the window; (b) the ECB
+   publishes on TARGET business days only — weekends/holidays are **absent**, not
+   zero, so the series has gaps that a naive time-based baseline misreads; (c)
+   the rate is a *fixing*, not a live market price.
+7. **Appropriate baseline:** rolling statistics over the daily rate, but the
+   detector should be *gap-aware* (missing business days must not read as
+   staleness). For finance, a relative-change baseline is more natural than a
+   level z-score.
+8. **Temporal resolution:** daily, business days only.
+9. **Independent?** Yes — the only market source present.
+10. **Same event as another source?** No.
+11. **Lenses:** FINANCE.
+12. **Never infer:** that a missing day is a flat day; that this single USD/EUR
+    pair is "the markets"; that a reference-rate move equals a tradable move.
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraints: id de-duplication and
+business-day gap handling.
+
+## 11. crossref_works — Crossref Scholarly Works
+
+**Collector:** `crates/sources/src/crossref.rs`, five fixed topics, `rows=0`
+`total-results` over a `WINDOW_DAYS = 2` created-date window, every 86400s.
+**Observation:** count of works registered in the window, per topic
+(`research_<slug>`).
+
+1. **What one observation represents:** how many works matching the topic were
+   *registered with Crossref* in the trailing 2 days.
+2. **Type:** registry activity (metadata registration).
+3. **Population stable?** Yes — fixed topic, fixed window length.
+4. **Aggregate usable?** Yes.
+5. **What an increase means:** more works registered — but note *registration* is
+   not *publication*.
+6. **False increases:** (a) registration lag — publishers deposit in batches, so
+   a batch day spikes; (b) the query is `query.bibliographic`, a fuzzy match, so
+   a topic's count can drift with wording; (c) **window overlap**: a daily poll
+   over a 2-day window means consecutive values share a day (weaker overlap than
+   KEV, but real); (d) the window is `from-created-date` to *today*, so the
+   newest day is always partially deposited — the most recent point is
+   structurally depressed.
+7. **Appropriate baseline:** weekly or longer, and the *first difference*;
+   a daily z-score on a 2-day overlapping count is noisy.
+8. **Temporal resolution:** daily poll, 2-day window.
+9. **Independent?** Yes, but overlaps arXiv (see §12).
+10. **Same event as another source?** Yes — a preprint often becomes a Crossref
+    work. **This is the strongest same-event pair in the network.**
+11. **Lenses:** SCIENCE, AI.
+12. **Never infer:** that a count is *publication* (it is registration); that a
+    single day's count is stable (partial deposit); that AI-topic growth is
+    global research growth.
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraint: window-overlap-aware
+baseline and awareness that the latest point is partially deposited.
+
+## 12. arxiv_submissions — arXiv Preprint Velocity
+
+**Collector:** `crates/sources/src/arxiv.rs`, four fixed categories, `max_results=1`
+to read `opensearch:totalResults`, every 86400s.
+**Observation:** the **cumulative total** number of preprints in a category,
+entity `arxiv_<slug>`, `metric=preprint_total`, `observed_at` = collection time.
+
+1. **What one observation represents:** the total number of preprints ever in
+   that arXiv category.
+2. **Type:** registry activity (a cumulative level).
+3. **Population stable?** Yes — the category is fixed.
+4. **Aggregate usable?** **Not as a level.** It is a near-monotonic cumulative
+   count; a level z-score on it is close to meaningless (it will slowly trend up
+   and rarely deviate).
+5. **What an increase means:** the category grew — but the *doc comment claims a
+   velocity* ("differenced over a fixed window it becomes a submission-velocity
+   series") while the **code never differences it**. The stored metric is the
+   total, not the velocity. This is a doc/implementation mismatch.
+6. **False increases:** (a) arXiv's daily bulk announcement — all of a day's
+   submissions appear at once, so the difference is a step, not a rate; (b) the
+   total only moves when arXiv indexes, so the derivative is a batch signal.
+7. **Appropriate baseline:** the **first difference** (new preprints per day) or
+   a per-day delta; the level itself should never be z-scored.
+8. **Temporal resolution:** daily poll; cumulative level.
+9. **Independent?** Partly — it overlaps Crossref (preprints deposited as works).
+10. **Same event as another source?** Yes, with Crossref (§11).
+11. **Lenses:** SCIENCE, AI.
+12. **Never infer:** that the stored value is a *rate*; that a rise is a research
+    surge (it is a cumulative count that only ever rises).
+
+**Eligibility: EVIDENCE_ONLY** as stored (a monotonic level is not an anomaly
+target). It becomes DETECTABLE_WITH_CONSTRAINTS only if the collector emits the
+*difference* instead of the total.
+
+## 13. noaa_kp_index — NOAA Planetary K-index
+
+**Collector:** `crates/sources/src/noaa_kp.rs`, 3-hourly Kp product, every 3600s.
+**Observation:** one 3-hourly Kp value; entity `geomagnetic_kp`,
+`observed_at` = the point's `time_tag`.
+
+1. **What one observation represents:** the planetary geomagnetic Kp index for
+   one 3-hour interval.
+2. **Type:** physical measurement (official space-weather index).
+3. **Population stable?** Yes.
+4. **Aggregate usable?** Yes, after de-duplication — the product is a rolling
+   window, so the payload-hash id bug re-mints every retained point each poll
+   (probe-confirmed).
+5. **What an increase means:** a geomagnetic storm is developing (affects
+   satellites, grids, radio).
+6. **False increases:** (a) the id bug duplicating the window; (b) Kp is a
+   bounded 0–9 quasi-log scale, so a σ-based z-score on it is not linear in
+   physical severity; (c) the product is revised after the fact, so a re-poll may
+   legitimately change a value (a revision, not a new storm).
+7. **Appropriate baseline:** rolling statistics on the Kp level are reasonable;
+   the Kp scale's boundedness means a percentile/EWMA view is preferable to a raw
+   z-score. The 3-hourly cadence against an hourly poll means ~1/3 of polls add
+   nothing new.
+8. **Temporal resolution:** 3-hourly, polled hourly.
+9. **Independent?** Yes.
+10. **Same event as another source?** No.
+11. **Lenses:** SPACE.
+12. **Never infer:** that a Kp rise measured in σ maps linearly to impact; that
+    an hourly poll is hourly *resolution*.
+
+**Eligibility: DETECTABLE_WITH_CONSTRAINTS** — constraints: id de-duplication and
+bounded-scale-aware baselining.
+
+---
+
+# 1. SOURCE SEMANTIC MATRIX
+
+| Source | One observation is… | Type | Population stable | Aggregatable | `observed_at` | Cadence | Identity bug |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| usgs_earthquakes | one quake's magnitude | event (physical) | yes | after dedup | quake time | 60s / 1h feed | **yes** |
+| afad_earthquakes | one AFAD event | event (physical) | yes | after dedup | local−3h | window poll | **yes** |
+| nasa_neo | one close approach (km) | physical event | yes | weakly | approach epoch | daily | yes |
+| nws_alerts | active alerts per severity | gauge/snapshot | yes | yes | collection time | 600s | no |
+| nasa_eonet | open events per category | gauge/snapshot | yes | yes | collection time | 1800s | no |
+| gdelt_news_volume | news share per bucket | news activity | corpus churns | yes (attention) | bucket time | 900s / 1d | **yes** |
+| hackernews_frontpage | one story's score | platform behavior | **no (as coded)** | no | collection time | 600s | no |
+| github_rust_activity | one repo's stars | platform behavior | yes (constant) | yes | collection time | 3600s | no |
+| cisa_kev | 7-day additions / catalog size | registry activity | yes | yes | collection time | 86400s | no |
+| ecb_exchange_rates | one day's reference rate | institutional measure | yes | yes | SDMX date | 86400s | **yes** |
+| crossref_works | works registered in 2d | registry activity | yes | yes | collection time | 86400s | no |
+| arxiv_submissions | cumulative category total | registry activity | yes | **not as level** | collection time | 86400s | no |
+| noaa_kp_index | one 3-hourly Kp value | physical measure | yes | after dedup | point time | 3600s / 3h | **yes** |
+
+# 2. DETECTION ELIGIBILITY MATRIX
+
+| Source | Eligibility | Condition |
+| --- | --- | --- |
+| nws_alerts | **DETECTABLE** | — |
+| nasa_eonet | **DETECTABLE** | — |
+| usgs_earthquakes | DETECTABLE_WITH_CONSTRAINTS | fix per-record id dedup |
+| afad_earthquakes | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; handle `isEventUpdate` |
+| gdelt_news_volume | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; treat as attention, not phenomenon |
+| ecb_exchange_rates | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; business-day gaps |
+| noaa_kp_index | DETECTABLE_WITH_CONSTRAINTS | fix id dedup; bounded-scale baseline |
+| cisa_kev | DETECTABLE_WITH_CONSTRAINTS | weekly baseline for `kev_added`; difference the total |
+| crossref_works | DETECTABLE_WITH_CONSTRAINTS | window-overlap baseline; latest point partial |
+| github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
+| nasa_neo | EVIDENCE_ONLY | pooled class series not coherent |
+| arxiv_submissions | EVIDENCE_ONLY | monotonic level; needs differencing |
+| hackernews_frontpage | EVIDENCE_ONLY | population churns as coded; catalog says otherwise |
+
+# 3. CROSS-SOURCE INDEPENDENCE MATRIX
+
+`I` = independent sensors of different things. `O` = overlaps (may describe the
+same real-world event; convergence, never merge).
+
+| | usgs | afad | neo | nws | eonet | gdelt | hn | gh | kev | ecb | cross | arxiv | kp |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| usgs | — | O | I | O | O | O | I | I | I | I | I | I | I |
+| afad | O | — | I | I | O | O | I | I | I | I | I | I | I |
+| neo | I | I | — | I | I | I | I | I | I | I | I | I | I |
+| nws | O | I | I | — | O | O | I | I | I | I | I | I | I |
+| eonet | O | O | I | O | — | O | I | I | I | I | I | I | I |
+| gdelt | O | O | I | O | O | — | O | I | I | I | I | I | I |
+| hn | I | I | I | I | I | O | — | O | I | I | I | I | I |
+| gh | I | I | I | I | I | I | O | — | I | I | I | I | I |
+| kev | I | I | I | I | I | I | I | I | — | I | I | I | I |
+| ecb | I | I | I | I | I | I | I | I | I | — | I | I | I |
+| cross | I | I | I | I | I | I | I | I | I | I | — | O | I |
+| arxiv | I | I | I | I | I | I | I | I | I | I | O | — | I |
+| kp | I | I | I | I | I | I | I | I | I | I | I | I | — |
+
+Notable: **Crossref ↔ arXiv** is the strongest same-event pair (a preprint
+becomes a work), and **USGS ↔ AFAD** the strongest geophysical pair. **GDELT** is
+an `O` against almost every event source by nature — it reports *on* them.
+
+# 4. TOP 10 SEMANTIC RISKS
+
+1. **Payload-hash observation ids re-mint unchanged records** (USGS, AFAD, ECB,
+   NOAA Kp, GDELT). Silent duplication of event feeds and sliding windows;
+   corrupts baselines. Probe-confirmed for all five.
+2. **Hacker News catalog/implementation contradiction.** Catalog says
+   `fixed_universe`, so the engine *detects*; the collector samples the current
+   top-30 each poll, so the population churns. The engine detects on a series the
+   source does not actually provide.
+3. **arXiv stores a cumulative level where the doc claims a velocity.** A
+   monotonic total is not an anomaly target; the intended series is never
+   computed.
+4. **NASA NEO pools all objects into `neo_class_all`.** The series interleaves
+   unrelated rocks' miss distances; a *far* pass can be flagged as an anomaly.
+5. **CISA `kev_added` is a trailing 7-day sum sampled daily.** Consecutive points
+   overlap by 6 days; a daily z-score is structurally misleading.
+6. **AFAD `isEventUpdate` rows are appended as new events.** A magnitude
+   correction looks like new seismic activity.
+7. **Crossref latest-day partial deposit.** The newest point is structurally
+   depressed because deposits lag; a "drop" is an artifact.
+8. **ECB business-day gaps.** Weekends/holidays are absent, not zero; a
+   time-based baseline misreads the gap.
+9. **GitHub cold-start level deviation.** Star counts are near-monotonic and
+   start from an empty baseline (~1527σ already recorded). Level z-scores mostly
+   fire on cold start, not on world change.
+10. **NWS/EONET national counts are batch-driven.** One weather system or one
+    EONET ingestion can move a national count without the world changing.
+11. **`feeds_lenses` is declared but never enforced.** Lens matching uses the
+    signal's category/entity/keyword, so EONET declares EARTH yet its signals
+    never reach it. The coverage test checks existence, not reachability.
+
+# 5. REQUIRED FIXES
+
+Ordered by risk. Each is documented above and needs a regression test before the
+fix (per the project rule: document, then a minimal failing test, then fix).
+
+| # | Fix | Scope | Test to add first |
+| --- | --- | --- | --- |
+| F1 | Derive observation ids from the **record key**, not the payload hash (seed with `event_id`/`time_tag`/`date`, or hash the record's own bytes) | `crates/model/src/ids.rs`, `observation.rs`, + per-source `parse` | the five probes in this audit, promoted to regression tests |
+| F2 | Make Hacker News honour `fixed_universe`: persist and reuse the universe via `next_universe`, or declare `unstable_population` | `crates/sources/src/collectors.rs` (+ state) or `hackernews.rs` | universe stability across two polls |
+| F3 | Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total | `crates/sources/src/arxiv.rs` | two polls → delta metric |
+| F4 | Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance | `crates/sources/src/nasa.rs` | distance-threshold count |
+| F5 | Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline | detector config or source cadence | overlapping-window baseline test |
+| F6 | Supersede AFAD events with `isEventUpdate=true` rather than appending | `crates/sources/src/afad.rs` | update replaces, not adds |
+| F7 | Mark the Crossref latest point as partial (quality flag) or shift the window back a day | `crates/sources/src/crossref.rs` | partial-deposit flag |
+| F8 | Handle business-day gaps for ECB (absence ≠ zero) | `crates/sources/src/ecb.rs` / baseline | gap-aware baseline test |
+| F9 | Cold-start guard: no level deviation before a per-repo baseline exists | `crates/detection/src/anomaly.rs` or GitHub config | first-point no-signal test |
+| F10 | Add a domain lens (or explicit membership) for NWS/EONET so Tier-1 real-time sources reach a domain view | `config/lenses/*` | lens-coverage test update |
+| F11 | Make `feeds_lenses` enforced (or make the coverage test assert category/entity agreement), so a declared lens is one the source's signals actually reach | `crates/cli/tests/lens_coverage.rs` and/or `crates/signals` | the EONET spec in `lens_coverage.rs` |
+
+F1 is the only fix that touches the shared id contract; it should land first and
+alone, because every other source's regression suite depends on stable ids.
+
+# 6. SOURCES READY FOR REAL SIGNAL DETECTION
+
+Meaningful today, no fix required:
+
+- **nws_alerts** — a true gauge with a per-severity dimension.
+- **nasa_eonet** — a true gauge with a per-category dimension.
+
+Meaningful after the named constraint is met (all hinge on F1 first):
+
+- usgs_earthquakes, afad_earthquakes, ecb_exchange_rates, noaa_kp_index,
+  gdelt_news_volume (F1);
+- cisa_kev (F5), crossref_works (F7), github_rust_activity (F9).
+
+# 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
+
+- **hackernews_frontpage** — as implemented; its population churns. Evidence for
+  SOFTWARE and for convergence, not its own anomaly. (Becomes detectable per
+  story only if F2 is done properly.)
+- **arxiv_submissions** — a monotonic level is not an anomaly target; evidence
+  for SCIENCE/AI and for convergence with Crossref until F3.
+- **nasa_neo** — the pooled class series is not coherent; evidence for SPACE and
+  for drill-down until F4.
+
+---
+
+## Method and limits
+
+- Every source was read from its collector module and fixture; the id bug was
+  confirmed by executing probes, not by inspection alone.
+- The probes are committed as ignored regression specs in
+  `crates/sources/tests/semantic_regression.rs` (run them with
+  `cargo test -p wse-sources --test semantic_regression -- --ignored`). All six
+  currently fail, which is the point: each fix turns one green.
+- No source was added, no lens was added, no UI was changed, and Phase 13 was
+  not started.

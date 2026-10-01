@@ -105,3 +105,43 @@ fn the_core_lenses_are_covered() {
         assert!(fed.contains(id), "{id} must be fed by at least one source");
     }
 }
+
+/// F11 — `feeds_lenses` is a declaration the engine does not enforce. A source's
+/// declared lens is matched against the *signal's* category/entity/keyword, not
+/// against `feeds_lenses`, so a source can declare a lens its signals never
+/// reach. `nasa_eonet` is exactly that case: it declares `lens_earth` but emits
+/// category `earth`, while `lens_earth` filters on `[geophysics, environment,
+/// weather]`. This spec asserts the two agree; see docs/source-semantic-audit.md.
+#[test]
+#[ignore = "F11: feeds_lenses is declared but not enforced at runtime; see docs/source-semantic-audit.md"]
+fn a_declared_lens_actually_matches_the_sources_signals() {
+    let catalog = wse_config::load_lenses(lenses_dir()).expect("lens config loads");
+    for source in wse_sources::catalog() {
+        for lens_id in &source.feeds_lenses {
+            let lens = catalog
+                .lenses
+                .iter()
+                .find(|l| l.id.as_str() == lens_id)
+                .expect("declared lens exists");
+            // A universal lens (no filters) matches everything.
+            let universal = lens.categories.is_empty()
+                && lens.entities.is_empty()
+                && lens.keywords.is_empty()
+                && lens.bbox.is_none();
+            if universal {
+                continue;
+            }
+            let category_ok = lens.categories.is_empty()
+                || lens
+                    .categories
+                    .iter()
+                    .any(|c| c.eq_ignore_ascii_case(&source.category));
+            assert!(
+                category_ok,
+                "{} declares {lens_id}, but its category {:?} is not among that \
+                 lens's categories {:?}, so its signals never reach the lens",
+                source.id, source.category, lens.categories
+            );
+        }
+    }
+}
