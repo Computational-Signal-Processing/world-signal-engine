@@ -112,7 +112,7 @@ and "a world watch you can open".
 6. Be honest about cold-start baselines (finding 6).
 7. Prove the live path with an automated acceptance test (finding 8).
 
-Findings 9 and 10 are left as documented limitations rather than faked.
+Finding 10 is left as a documented limitation rather than faked.
 
 ## H. Follow-up status (2026-10-01, after productization)
 
@@ -126,7 +126,7 @@ Findings 9 and 10 are left as documented limitations rather than faked.
 | 6 | Cold-start degenerate baseline | FIXED (CAP-2D) | GitHub's pooled baseline is gone: each repository is its own series (`repo` dimension), so a first appearance is judged against that repository's own history. See `docs/decisions/0020-github-per-repo-series.md`. |
 | 7 | Coverage is 4 narrow domains | IMPROVED | 13 sources across 9 categories: geophysics ×2, space ×2, weather, earth, global events, cyber, finance, science ×2, technology ×2. See *Source network* below. |
 | 8 | No acceptance test for the live SSE → world path | FIXED | `a_live_signal_frame_triggers_a_world_refresh` drives the real path over a socket: a world one run away from a signal, a live SSE reader attached, then a `signal` frame must arrive and the re-fetch it triggers must report the new signal (`active_signals` 3 → 4). The wire-contract test pins the frame shape; this proves a real signal produces a real refresh. |
-| 9 | `IMPACT` has no producer | OPEN (documented) | |
+| 9 | `IMPACT` has no producer | FIXED | The shipped `config/impact/systemic.yaml` declares a scope (`finance`, `cyber`, entity `Hormuz`); the CLI loads it into `SignalConfig` for both `demo` and `serve`. `impact_scope.rs` proves a finance spike produces an `IMPACT` signal whose reason names the term, an in-scope entity is IMPACT without a listed category, and an out-of-scope `earth` spike is not. |
 | 10 | No labelled ground truth | OPEN (documented) | |
 
 ### New sources added

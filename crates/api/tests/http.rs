@@ -8,7 +8,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use tokio::net::TcpListener;
 
@@ -1017,4 +1017,96 @@ async fn the_control_plane_requires_a_key_when_one_is_configured() {
     )
     .await;
     assert_eq!(status, 200);
+}
+
+/// IMPACT reaches the served surface, with a checkable reason.
+///
+/// The type is produced by the signal engine (see `impact_scope.rs`); this
+/// proves it survives the last hop, so a person reading `/signals` sees it and
+/// can see *why*. A finance source is driven to a spike; the served feed must
+/// carry an `IMPACT` signal whose reason names the matched scope term.
+#[tokio::test]
+async fn an_impact_signal_is_served_with_its_reason() {
+    let base = serve_impact().await;
+
+    let (status, page) = get_json(&base, "/signals?type=IMPACT").await;
+    assert_eq!(status, 200);
+    let items = page["items"].as_array().unwrap();
+    assert!(
+        !items.is_empty(),
+        "the finance spike must serve an IMPACT signal: {page}"
+    );
+    let signal = &items[0];
+    let reasons = signal["reasons"].as_array().unwrap();
+    assert!(
+        reasons
+            .iter()
+            .any(|r| r.as_str().unwrap_or("").contains("impact scope")),
+        "the served IMPACT signal must carry a checkable reason: {signal}"
+    );
+}
+
+/// Serve an engine holding the shipped impact scope, after driving a finance
+/// spike through it. The synthetic world has no in-scope category, so the
+/// in-scope source is registered and fed directly.
+async fn serve_impact() -> String {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let impact = wse_config::load_impact(root.join("config/impact")).expect("impact loads");
+    let lenses = wse_config::load_lenses(root.join("config/lenses"))
+        .expect("shipped lenses load")
+        .lenses;
+
+    let origin = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+    let mut engine = Engine::new(EngineConfig {
+        detector: wse_detection::DetectorConfig::synthetic(),
+        signal: wse_signals::SignalConfig {
+            now_window_seconds: i64::MAX,
+            impact_categories: impact.scope.categories,
+            impact_entities: impact.scope.entities,
+            ..wse_signals::SignalConfig::default()
+        },
+        lenses,
+        ..EngineConfig::default()
+    });
+    engine
+        .register_source(
+            Source::new(
+                wse_model::SourceId::new("finance_probe"),
+                "Finance Probe",
+                "test",
+            )
+            .with_category("finance"),
+        )
+        .unwrap();
+
+    let mut feed = |value: f64, at: DateTime<Utc>| {
+        let mut o = wse_model::Observation::new(
+            wse_model::SourceId::new("finance_probe"),
+            Some(wse_model::EntityId::new("fx_usd_eur")),
+            "exchange_rate",
+            value,
+            "rate",
+            at,
+            wse_model::RawReference::new("probe:exchange_rate", format!("probe:{value}")),
+        );
+        o.received_at = at;
+        engine.ingest_observations(vec![o]);
+    };
+    for i in 0..12 {
+        let at = origin + chrono::Duration::seconds(i * 600);
+        feed(if i % 2 == 0 { 1.0 } else { 1.1 }, at);
+    }
+    feed(5.0, origin + chrono::Duration::seconds(12 * 600));
+
+    let state = AppState::new(engine);
+    let app = router_with_web_dir(
+        state,
+        "/nonexistent-web-dir-for-tests",
+        wse_api::SecurityConfig::default(),
+    );
+    serve_app(app).await
 }

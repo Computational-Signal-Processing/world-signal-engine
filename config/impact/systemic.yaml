@@ -1,0 +1,25 @@
+# Impact scope: what counts as a systemic change.
+#
+# A signal whose category or entity is named here is marked IMPACT, in addition
+# to whatever other types it has. This is the fifth signal type and the only one
+# the engine could not previously produce: the mechanism existed, but no scope
+# was ever declared, so IMPACT was unreachable in a served engine.
+#
+# This is a declaration, not a score. The signal's reason names the term that
+# matched ("touches configured impact scope: finance"), so the reader can see
+# why — the engine never says "this is important", only "this is in scope".
+#
+# Entities are matched by canonical segment, so `Hormuz` matches an entity like
+# `region_hormuz`. Add a term only when it names a real systemic domain; a scope
+# that lists everything is the same as having no scope.
+categories:
+  # Financial and market conditions transmit across the economy.
+  - finance
+  # Exploited-vulnerability and infrastructure compromise propagate at scale.
+  - cyber
+
+entities:
+  # The Strait of Hormuz is a global energy chokepoint. No connected source emits
+  # it yet, so it is forward-looking: connecting an energy or shipping source is
+  # a collector and a catalog entry, with no impact-scope work to do.
+  - Hormuz

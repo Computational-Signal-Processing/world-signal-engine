@@ -2,19 +2,21 @@
 //!
 //! Loads configuration from the filesystem.
 //!
-//! Lenses are configuration, not code: adding one is a new YAML file under
-//! `config/lenses/`, with no Rust changes. This crate is what makes that true.
+//! Lenses and the impact scope are configuration, not code: adding one is a new
+//! YAML file under `config/lenses/` or `config/impact/`, with no Rust changes.
+//! This crate is what makes that true.
 //!
 //! ## Failure policy
 //!
-//! A lens is a *view*. Losing one must never take down collection or detection
-//! (brief §36), so the loader is deliberately tolerant:
+//! A lens is a *view* and the impact scope is a *declaration*; losing either
+//! must never take down collection or detection (brief §36), so the loaders are
+//! deliberately tolerant:
 //!
-//! - A missing directory is not an error. No lenses configured is a valid state
-//!   — the world dataset is complete without them.
-//! - A malformed file is skipped, recorded in [`LensCatalog::problems`], and the
-//!   remaining files still load. One bad lens does not lose the other eight.
-//! - Only being unable to read the directory at all is an [`ConfigError`].
+//! - A missing directory is not an error. No lenses (or no impact scope)
+//!   configured is a valid state — the world dataset is complete without them.
+//! - A malformed file is skipped, recorded in the catalog's `problems`, and the
+//!   remaining files still load. One bad file does not lose the others.
+//! - Only being unable to read the directory at all is a [`ConfigError`].
 //!
 //! Problems are reported rather than swallowed. Tolerating a bad file is not the
 //! same as pretending it was fine — an operator needs to know a lens silently
@@ -25,6 +27,10 @@ use std::path::Path;
 
 use wse_model::lens::Lens;
 use wse_model::LensId;
+
+mod impact;
+
+pub use impact::{load_impact, ImpactCatalog, ImpactScope};
 
 /// Something went wrong badly enough that no configuration could be read.
 #[derive(Debug, thiserror::Error)]

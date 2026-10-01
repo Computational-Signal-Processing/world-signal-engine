@@ -26,3 +26,5 @@ tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "sy
 reqwest = { workspace = true }
 wse-collector = { path = "../collector" }
 wse-config = { path = "../config" }
+wse-signals = { path = "../signals" }
+wse-detection = { path = "../detection" }

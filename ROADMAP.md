@@ -29,6 +29,9 @@ Candidates grouped by entity, window and direction, with lifecycle.
 
 ### Phase 6 — Signal engine
 Five signal types, evidence references, explainability, seven quality dimensions.
+Done. `IMPACT` is produced from the shipped `config/impact/systemic.yaml` scope
+(a systemic category or entity), and its reason names the matched term; see
+`docs/decisions/0022-*`.
 
 ### Phase 7 — First real collectors
 USGS, NASA NEO, GDELT, Hacker News, GitHub. Each with a checked-in fixture and

@@ -186,7 +186,7 @@ impl SignalEngine {
 
             signal.title = title_for(&signal, event);
             signal.summary = summarize(&signal);
-            signal.reasons = reasons_for(&signal, &event_candidates);
+            signal.reasons = reasons_for(&signal, &event_candidates, self.impact_match(&signal));
             self.assign_lens_matches(&mut signal);
             signal.quality = quality_for(&signal, &event_candidates);
             // The human-facing layer. It reads the signal's own record, so it
@@ -307,21 +307,49 @@ impl SignalEngine {
     }
 
     fn has_impact(&self, signal: &Signal) -> bool {
-        let category_hit = signal.categories.iter().any(|c| {
-            self.config
+        self.impact_match(signal).is_some()
+    }
+
+    /// The configured scope term this signal falls in, if any.
+    ///
+    /// Returns the term itself so the signal's reason can name it. "touches
+    /// configured impact scope: finance" is checkable; "touches a configured
+    /// scope" is not.
+    fn impact_match(&self, signal: &Signal) -> Option<ImpactMatch> {
+        for category in &signal.categories {
+            if let Some(term) = self
+                .config
                 .impact_categories
                 .iter()
-                .any(|want| want.eq_ignore_ascii_case(c))
-        });
-        let entity_hit = signal.entities.iter().any(|e| {
-            let segments = entity_segments(e.as_str());
-            self.config.impact_entities.iter().any(|want| {
+                .find(|want| want.eq_ignore_ascii_case(category))
+            {
+                return Some(ImpactMatch {
+                    term: term.clone(),
+                    kind: "category",
+                });
+            }
+        }
+        for entity in &signal.entities {
+            let segments = entity_segments(entity.as_str());
+            if let Some(term) = self.config.impact_entities.iter().find(|want| {
                 let wanted = wse_model::canonicalize(want);
                 !wanted.is_empty() && segments.contains(&wanted)
-            })
-        });
-        category_hit || entity_hit
+            }) {
+                return Some(ImpactMatch {
+                    term: term.clone(),
+                    kind: "entity",
+                });
+            }
+        }
+        None
     }
+}
+
+/// The configured impact-scope term a signal matched, and how.
+#[derive(Debug, Clone)]
+struct ImpactMatch {
+    term: String,
+    kind: &'static str,
 }
 
 /// Split an entity id into canonical, comparable segments.
@@ -475,7 +503,11 @@ pub fn summarize(signal: &Signal) -> String {
 }
 
 /// Explicit, machine-checkable reasons the signal exists.
-fn reasons_for(signal: &Signal, candidates: &[&wse_model::AnomalyCandidate]) -> Vec<String> {
+fn reasons_for(
+    signal: &Signal,
+    candidates: &[&wse_model::AnomalyCandidate],
+    impact: Option<ImpactMatch>,
+) -> Vec<String> {
     let mut reasons = Vec::new();
     if signal.has_type(SignalType::Anomaly) {
         let best = candidates
@@ -514,11 +546,15 @@ fn reasons_for(signal: &Signal, candidates: &[&wse_model::AnomalyCandidate]) -> 
         reasons.push("change observed within the current window".to_string());
     }
     if signal.has_type(SignalType::Impact) {
-        reasons.push(format!(
-            "touches configured impact scope ({} categories, {} entities)",
-            signal.categories.len(),
-            signal.entities.len()
-        ));
+        match impact {
+            Some(m) => reasons.push(format!(
+                "touches configured impact scope: {} {}",
+                m.kind, m.term
+            )),
+            // The type is set from the same match, so this is unreachable; a
+            // bare reason is still better than none if it ever is.
+            None => reasons.push("touches a configured impact scope".to_string()),
+        }
     }
     reasons
 }

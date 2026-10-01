@@ -70,10 +70,12 @@ event. ✅
 
 ### Phase 6 — Signal engine
 
-Five signal types observed in live output: `NOW`, `ANOMALY`, `EARLY_SIGNAL`
-(from `demo` and `serve`), and `CONVERGENCE` (Phase 11). `IMPACT` exists as a
-type; no collector currently emits an impact-scored signal. Seven quality
-dimensions are present on `SignalQuality`. ⚠️ IMPACT unexercised end to end.
+Five signal types are produced end to end: `NOW`, `ANOMALY`, `EARLY_SIGNAL`
+(from `demo` and `serve`), `CONVERGENCE` (Phase 11) and `IMPACT` (Phase 6
+completion). IMPACT is produced from the shipped `config/impact/systemic.yaml`
+scope — a finance or cyber signal, or one on a named systemic entity, is marked
+IMPACT and its reason names the matched term. Seven quality dimensions are
+present on `SignalQuality`. ✅
 
 ### Phase 7 — First real collectors
 
@@ -208,21 +210,19 @@ plus the browser UI.
 
 ## Known limitations
 
-1. **`IMPACT` has no producer.** The type exists and is tested as a type, but no
-   collector or detector emits an impact-scored signal. It is not a defect in
-   what is built; it is an unexercised path. Left as-is rather than faked.
-2. **`config/sources/` and `config/detectors/` are empty.** The source catalog
+1. **`config/sources/` and `config/detectors/` are empty.** The source catalog
    lives in Rust (`crates/sources`) and the detector config in code. The
    directories from the original layout are placeholders. Not load-bearing; the
-   lens directory *is* used (`config/lenses/*.yaml`).
-3. **`tests/integration`, `tests/detection`, `tests/collectors` are empty.**
+   lens directory *is* used (`config/lenses/*.yaml`), and so is the impact scope
+   (`config/impact/*.yaml`).
+2. **`tests/integration`, `tests/detection`, `tests/collectors` are empty.**
    Integration coverage lives beside the crates (`crates/api/tests`,
    `crates/engine/tests`) and in each crate's unit tests. The empty directories
    are leftovers from the planned layout.
-4. **No labelled history for the real sources.** Backtesting works and is
+3. **No labelled history for the real sources.** Backtesting works and is
    measured, but its ground truth so far is hand-made. This is the same
    limitation the roadmap already records under Phase 10.
-5. **The activity stream is per-process.** It is an in-memory ring buffer, not a
+4. **The activity stream is per-process.** It is an in-memory ring buffer, not a
    durable log, and a restart starts it empty. That is deliberate — activity is
    operational telemetry, not data. What matters (observations, events, signals,
    source health) is in the store and survives.

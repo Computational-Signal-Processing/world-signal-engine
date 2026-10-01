@@ -170,16 +170,52 @@ fn configured_lenses() -> Vec<wse_model::lens::Lens> {
         .unwrap_or_default()
 }
 
+/// The impact scope a served engine declares.
+///
+/// Without it `IMPACT` is unreachable: the mechanism exists but no scope is
+/// configured, so no signal is ever in scope. Loading the shipped scope is what
+/// makes the fifth signal type produce. A missing directory is an empty scope,
+/// not an error (a scope is a declaration, not load-bearing).
+fn configured_impact() -> (Vec<String>, Vec<String>) {
+    let catalog = wse_config::load_impact("config/impact").unwrap_or_default();
+    (catalog.scope.categories, catalog.scope.entities)
+}
+
 /// A permissive engine configuration for synthetic data.
 ///
 /// The dense, well-behaved series the demo world generates are what
 /// `DetectorConfig::synthetic()` is tuned for, so this stays the demo profile.
 fn synthetic_engine_config() -> EngineConfig {
+    let (impact_categories, impact_entities) = configured_impact();
     EngineConfig {
         detector: DetectorConfig::synthetic(),
         event: EventConfig::default(),
         signal: SignalConfig {
             now_window_seconds: i64::MAX,
+            impact_categories,
+            impact_entities,
+            ..SignalConfig::default()
+        },
+        convergence: ConvergenceConfig::related(),
+        lenses: configured_lenses(),
+    }
+}
+
+/// The engine configuration for a real-world instance.
+///
+/// A normal `serve` and a one-shot `collect` are the same monitor, so they share
+/// this profile: the production detector thresholds (the synthetic ones are a
+/// demo calibration), the shipped lens catalog, and the impact scope. Without
+/// the scope `IMPACT` is unreachable; without the lenses no signal is
+/// lens-filterable. What `collect` reports is then what `serve` would surface.
+fn production_engine_config() -> EngineConfig {
+    let (impact_categories, impact_entities) = configured_impact();
+    EngineConfig {
+        detector: DetectorConfig::default(),
+        event: EventConfig::default(),
+        signal: SignalConfig {
+            impact_categories,
+            impact_entities,
             ..SignalConfig::default()
         },
         convergence: ConvergenceConfig::related(),
@@ -189,23 +225,12 @@ fn synthetic_engine_config() -> EngineConfig {
 
 /// The engine configuration for a served instance.
 ///
-/// A normal `serve` is a real-world monitor, so it must run the production
-/// detector profile: the synthetic thresholds (`min_samples = 10`, an early
-/// signal with no required persistence span) are a demo calibration and would
-/// report real feeds as if they were the demo world. `--synthetic` drives the
-/// demo world and keeps the synthetic profile.
-///
 /// Shared by the in-memory and persistent paths so both behave identically.
 fn serve_engine_config(synthetic: bool) -> EngineConfig {
     if synthetic {
-        return synthetic_engine_config();
-    }
-    EngineConfig {
-        detector: DetectorConfig::default(),
-        event: EventConfig::default(),
-        signal: SignalConfig::default(),
-        convergence: ConvergenceConfig::related(),
-        lenses: configured_lenses(),
+        synthetic_engine_config()
+    } else {
+        production_engine_config()
     }
 }
 
@@ -461,7 +486,9 @@ async fn collect(
     json: bool,
     out: Option<std::path::PathBuf>,
 ) -> Result<()> {
-    let mut engine = Engine::new(EngineConfig::default());
+    // The same profile a served instance runs, so `collect` reports what `serve`
+    // would surface — including IMPACT and lens routing.
+    let mut engine = Engine::new(production_engine_config());
 
     let catalog: Vec<_> = if only.is_empty() {
         wse_sources::catalog()

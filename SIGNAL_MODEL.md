@@ -24,7 +24,7 @@ expected.
 | `ANOMALY` | A clear departure from normal behaviour. |
 | `EARLY_SIGNAL` | Small, but persistent, directional and accelerating. |
 | `CONVERGENCE` | Independent sources pointing at the same change. |
-| `IMPACT` | A change with meaningful potential effect for a lens or entity. |
+| `IMPACT` | A change in a declared impact scope (a systemic category or entity). |
 
 Types are conveyed in the UI by icon, label, shape, typography, timeline and
 state. Colour alone never carries the type.

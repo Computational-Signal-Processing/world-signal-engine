@@ -284,6 +284,34 @@ stored. Detection always runs on the full dataset; lenses filter the result.
 - Lenses are not part of a signal's identity. `lens_matches` is not hashed into
   `Signal::stable_id`, so adding a lens does not rewrite existing signal ids.
 
+## Impact scope (IMPACT, the fifth signal type)
+
+`IMPACT` means "this change is in a declared systemic scope". It is a
+declaration, not a score — the engine never says a change is *important*, only
+that it is *in scope* (brief §2, §43).
+
+- The scope is YAML under `config/impact/`, loaded by `wse-config::load_impact`
+  with the same tolerant failure policy as lenses (missing dir = empty scope,
+  malformed file skipped and reported). `SignalConfig::impact_categories` /
+  `impact_entities` carry it into `SignalEngine`.
+- `SignalEngine::impact_match` returns the term that matched, and the signal's
+  reason names it (`touches configured impact scope: category finance`). A
+  boolean would have made the claim uncheckable.
+- Impact is **additive**: `assign_types` sets each type from its own condition,
+  so a finance spike is `ANOMALY` *and* `IMPACT`. Never make one replace another.
+- The CLI loads the scope for both `demo` and `serve` (`production_engine_config`
+  / `synthetic_engine_config`). An empty scope makes IMPACT unreachable — the
+  failure this replaced was a type that was unit-tested but never producible by a
+  running engine.
+- Entities match by canonical segment, so `Hormuz` matches `region_hormuz`.
+  Adding a term is a config edit, not a Rust change (§37).
+
+`crates/cli/tests/impact_scope.rs` proves production (finance spike → IMPACT,
+reason names the term; in-scope entity without a listed category; out-of-scope
+`earth` spike is detected but not IMPACT), and
+`crates/api/tests/http.rs::an_impact_signal_is_served_with_its_reason` proves it
+survives to the served feed. See `docs/decisions/0022-*`.
+
 ## Convergence ordering (Phase 11, still load-bearing)
 
 - `detect_convergence` sorts by strength, then first_seen, then `group_key`, and

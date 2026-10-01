@@ -1845,8 +1845,10 @@ dependencies = [
  "tracing",
  "wse-collector",
  "wse-config",
+ "wse-detection",
  "wse-engine",
  "wse-model",
+ "wse-signals",
  "wse-storage",
 ]
 
