@@ -163,7 +163,10 @@ impl SignalEngine {
 
             let mut signal = Signal::new(event.id.clone(), event.first_seen);
             signal.series_key = dominant_series(&event_candidates);
-            signal.id = Signal::stable_id(&event.id, &signal.series_key, event.direction);
+            // The signal's identity is the event, not the dominant series: the
+            // series can change between cycles while the event persists, and
+            // keying on it would mint a new signal for one ongoing change.
+            signal.id = Signal::stable_id(&event.id, event.direction);
             signal.last_updated = event.last_seen;
             signal.duration_seconds = event.duration_seconds();
             signal.entities = event.entities.clone();

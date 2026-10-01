@@ -136,10 +136,17 @@ NORMAL
 
 ## Persistence and identity
 
-A signal's identity is its `series_key` together with its `direction`. This means
-a signal that keeps being confirmed is *updated* — `last_updated` moves, evidence
-accumulates, duration grows — rather than being re-emitted every cycle. A signal
-that stops being confirmed stops being updated, and its state resolves.
+A signal's identity is its `event_id` together with its `direction` (see
+`docs/decisions/0012`). An event is one ongoing change, and its id is stable
+across cycles, so a signal that keeps being confirmed is *updated* —
+`last_updated` moves, evidence accumulates, duration grows — rather than being
+re-emitted every cycle. A signal that stops being confirmed stops being updated,
+and its state resolves.
+
+`series_key` is *not* part of the identity. An event's candidates can come from
+several series as sources converge, and the dominant one can change between
+cycles; keying on it would fork one change into a new signal whenever that
+happened. The series names what a reader is looking at, not what the signal is.
 
 ## Lifecycle
 

@@ -233,9 +233,12 @@ pub struct Signal {
     pub direction: CandidateDirection,
     /// Explainability: why the engine emitted this signal.
     pub reasons: Vec<String>,
-    /// The series this signal is about. Together with `direction` it forms the
-    /// signal's identity, which is what makes a signal *persistent* across
-    /// collection cycles rather than a new one every minute.
+    /// The series this signal is about — for display, not identity.
+    ///
+    /// The signal's identity is `event_id` + `direction` (see [`Self::stable_id`]);
+    /// this names the series a reader is looking at. It is not hashed into the id
+    /// because an event's dominant series can change between cycles as sources
+    /// converge, and keying on it would fork one change into a new signal.
     pub series_key: String,
     /// Where this signal is in its life.
     ///
@@ -288,17 +291,18 @@ impl Signal {
     /// Using a deterministic id (rather than a random UUID) means re-forming
     /// the same signal after a restart updates the existing record instead of
     /// creating a duplicate.
-    pub fn stable_id(
-        event_id: &EventId,
-        series_key: &str,
-        direction: CandidateDirection,
-    ) -> SignalId {
-        let hash = crate::ids::fnv1a_hex(&format!(
-            "{}|{}|{}",
-            event_id.as_str(),
-            series_key,
-            direction.as_str()
-        ));
+    ///
+    /// The identity is the **event** plus its direction, not the series. An
+    /// event is one ongoing change (`group_key` + start time), and its id is
+    /// already stable across cycles. The series is *not*: an event accumulates
+    /// candidates from several series as independent sources converge, and the
+    /// "dominant" one (the most recently observed) can differ from cycle to
+    /// cycle. Keying the signal on it made one ongoing change mint a new signal
+    /// id whenever the dominant series flipped — the engine then failed to merge
+    /// and stored a duplicate, leaving the original frozen. The event id is the
+    /// stable thing; the series is display, not identity.
+    pub fn stable_id(event_id: &EventId, direction: CandidateDirection) -> SignalId {
+        let hash = crate::ids::fnv1a_hex(&format!("{}|{}", event_id.as_str(), direction.as_str()));
         SignalId::new(format!("sig_{hash}"))
     }
 
@@ -387,5 +391,21 @@ mod tests {
         let json = serde_json::to_string(&s).unwrap();
         let back: Signal = serde_json::from_str(&json).unwrap();
         assert_eq!(back, s);
+    }
+
+    #[test]
+    fn stable_id_depends_only_on_event_and_direction() {
+        let event = EventId::new("evt_1");
+        // Same event and direction -> same id, however the signal is described.
+        let a = Signal::stable_id(&event, CandidateDirection::Up);
+        let b = Signal::stable_id(&event, CandidateDirection::Up);
+        assert_eq!(a, b);
+
+        // Direction and event are both part of it.
+        assert_ne!(a, Signal::stable_id(&event, CandidateDirection::Down));
+        assert_ne!(
+            a,
+            Signal::stable_id(&EventId::new("evt_2"), CandidateDirection::Up)
+        );
     }
 }

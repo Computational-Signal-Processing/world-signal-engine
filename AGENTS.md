@@ -68,8 +68,11 @@ No network or credentials are needed to run it.
    from its own baseline/deviation/method/duration. Never write "the AI found
    this important".
 5. **No single importance score.** Signal quality stays seven dimensions.
-6. **A signal's identity is `series_key` + `direction`.** That is what makes it
-   persist across cycles instead of re-emitting every minute.
+6. **A signal's identity is `event_id` + `direction`.** Not the series. An event
+   is one ongoing change and its id is stable; its candidates can come from
+   several series and the "dominant" one can flip between cycles. Keying on the
+   series made one change mint a new signal id, so the merge missed and the
+   engine stored a duplicate while the first froze. `series_key` is display.
 7. **Sources are independent.** One broken collector must not affect another.
 8. **Storage stays behind traits.** Do not reach for a concrete database from
    engine code.

@@ -234,12 +234,14 @@ lens_matches[]
 quality             the quality dimensions, not one score
 direction
 reasons[]           why the engine emitted this
-series_key          identity, so a signal persists across cycles
+series_key          the series a reader is looking at (display, not identity)
 ```
 
-`series_key` plus `direction` is the signal's identity. That is what makes a
-signal *persistent* — updated as new evidence arrives — rather than a fresh
-signal every collection cycle.
+`event_id` plus `direction` is the signal's identity (see
+`docs/decisions/0012`). That is what makes a signal *persistent* — updated as new
+evidence arrives — rather than a fresh signal every collection cycle. The series
+is not part of it: an event's dominant series can change between cycles as
+sources converge, and keying on it would fork one change into a new signal.
 
 ## Quality
 
