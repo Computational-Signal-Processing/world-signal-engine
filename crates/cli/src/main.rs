@@ -163,10 +163,17 @@ enum Command {
     },
 }
 
+/// The lens catalog a served engine matches against.
+fn configured_lenses() -> Vec<wse_model::lens::Lens> {
+    wse_config::load_lenses("config/lenses")
+        .map(|catalog| catalog.lenses)
+        .unwrap_or_default()
+}
+
 /// A permissive engine configuration for synthetic data.
-/// The engine configuration used for a served instance.
 ///
-/// Shared by the in-memory and persistent paths so both behave identically.
+/// The dense, well-behaved series the demo world generates are what
+/// `DetectorConfig::synthetic()` is tuned for, so this stays the demo profile.
 fn synthetic_engine_config() -> EngineConfig {
     EngineConfig {
         detector: DetectorConfig::synthetic(),
@@ -176,9 +183,29 @@ fn synthetic_engine_config() -> EngineConfig {
             ..SignalConfig::default()
         },
         convergence: ConvergenceConfig::related(),
-        lenses: wse_config::load_lenses("config/lenses")
-            .map(|catalog| catalog.lenses)
-            .unwrap_or_default(),
+        lenses: configured_lenses(),
+    }
+}
+
+/// The engine configuration for a served instance.
+///
+/// A normal `serve` is a real-world monitor, so it must run the production
+/// detector profile: the synthetic thresholds (`min_samples = 10`, an early
+/// signal with no required persistence span) are a demo calibration and would
+/// report real feeds as if they were the demo world. `--synthetic` drives the
+/// demo world and keeps the synthetic profile.
+///
+/// Shared by the in-memory and persistent paths so both behave identically.
+fn serve_engine_config(synthetic: bool) -> EngineConfig {
+    if synthetic {
+        return synthetic_engine_config();
+    }
+    EngineConfig {
+        detector: DetectorConfig::default(),
+        event: EventConfig::default(),
+        signal: SignalConfig::default(),
+        convergence: ConvergenceConfig::related(),
+        lenses: configured_lenses(),
     }
 }
 
@@ -872,7 +899,7 @@ async fn serve(options: ServeOptions) -> Result<()> {
     #[cfg(feature = "sqlite")]
     if let Some(dir) = &data_dir {
         let store = open_sqlite(dir)?;
-        let mut engine = Engine::with_store(synthetic_engine_config(), store);
+        let mut engine = Engine::with_store(serve_engine_config(synthetic), store);
         register_catalog(&mut engine)?;
         if synthetic {
             let world = SyntheticWorld::acceptance(origin());
@@ -903,7 +930,7 @@ async fn serve(options: ServeOptions) -> Result<()> {
     // flag is accepted for CLI compatibility rather than silently ignored.
     let _ = rehydrate_history;
 
-    let mut engine = synthetic_engine();
+    let mut engine = Engine::new(serve_engine_config(synthetic));
     register_catalog(&mut engine)?;
     if synthetic {
         let world = SyntheticWorld::acceptance(origin());
@@ -1225,5 +1252,44 @@ mod tests {
         catalog.sort();
         collectors.sort();
         assert_eq!(catalog, collectors);
+    }
+
+    #[test]
+    fn a_live_serve_uses_the_production_detector_profile() {
+        // `serve` selects its config through this function; the test calls the
+        // same one, so it exercises the real selection rather than a copy.
+        let live = serve_engine_config(false);
+
+        // The demo calibration must not leak into a real serve.
+        assert_eq!(live.detector, DetectorConfig::default());
+        assert_ne!(live.detector, DetectorConfig::synthetic());
+
+        // Assert the production values themselves, so an edit to either profile
+        // is caught here rather than only by the inequality above.
+        assert!(
+            live.detector.min_samples >= 20,
+            "a live serve must not judge deviation on the demo's 10 samples"
+        );
+        assert!(
+            live.detector.early_signal_min_duration_seconds > 0,
+            "a live serve must require an early signal to persist over real time"
+        );
+        assert!(
+            live.signal.now_window_seconds < i64::MAX,
+            "a live serve must not render every signal as NOW"
+        );
+    }
+
+    #[test]
+    fn synthetic_mode_keeps_the_synthetic_profile() {
+        // The demo world stays on the demo calibration.
+        let synthetic = serve_engine_config(true);
+        assert_eq!(synthetic.detector, DetectorConfig::synthetic());
+        assert_eq!(synthetic.signal.now_window_seconds, i64::MAX);
+        assert_ne!(
+            synthetic.detector,
+            DetectorConfig::default(),
+            "synthetic mode must stay distinct from the production profile"
+        );
     }
 }

@@ -290,6 +290,15 @@ See [docs/deployment.md](docs/deployment.md) for the operational story and
 - **`serve` is generic over the store.** `run_served<S: Store>` drives both the
   in-memory and the SQLite backend. Do not reintroduce a per-backend copy of the
   serving logic; a change to collection or retention must reach both.
+- **A live `serve` runs the production detector profile.** `serve_engine_config`
+  is the only place the served engine's config is chosen: `--synthetic` keeps
+  `DetectorConfig::synthetic()` (`min_samples = 10`, no required early-signal
+  persistence), a normal serve uses `DetectorConfig::default()` and
+  `SignalConfig::default()`. The synthetic thresholds are a demo calibration —
+  using them on real feeds reports the world as if it were the demo world, and
+  `now_window_seconds: i64::MAX` renders every signal as NOW. Guarded by
+  `a_live_serve_uses_the_production_detector_profile`; do not hard-code a config
+  inside `serve` again.
 - **`--data-dir` selects SQLite; without it the engine is in memory.** With it,
   observations, events, signals, source health and baselines survive a restart.
   `--rehydrate-history N` (default 500) replays the N most recent observations
