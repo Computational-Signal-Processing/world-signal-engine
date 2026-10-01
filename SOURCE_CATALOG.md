@@ -187,9 +187,12 @@ is the fix: pin the members, then the count means something.
 - **License:** public API, no key required
 - **Entities:** `software_ecosystem`
 - **Notes:** a proxy for developer attention. `measurement: fixed_universe`: the
-  collector tracks a fixed set of story ids resolved from the top-story list, so
-  a story's score is comparable across collections. Story scores make a usable
-  time series for the technology lens.
+  collector commits a fixed set of story ids on its first resolution and reuses
+  them, so a story's score is comparable across collections. A tracked story that
+  leaves the front page is kept; its slot is refilled only when a story is
+  genuinely gone (404). Story scores make a usable time series for the technology
+  lens. See
+  [docs/decisions/0016-hackernews-committed-universe.md](docs/decisions/0016-hackernews-committed-universe.md).
 
 ### ecb_exchange_rates
 

@@ -1,9 +1,8 @@
 //! Regression specs for the semantic bugs found in `docs/source-semantic-audit.md`.
 //!
-//! The F1 specs (per-record observation identity) are active: they pass under
-//! the record-key contract and fail without it. The F2 spec is still `#[ignore]`
-//! because F2 has not been implemented; run it with
-//! `cargo test -p wse-sources --test semantic_regression -- --ignored`.
+//! All specs are active: they pass under the fixed contracts (per-record
+//! observation identity for F1, a committed universe for F2) and fail without
+//! them.
 
 use chrono::{DateTime, Utc};
 
@@ -217,14 +216,12 @@ fn usgs_a_revised_magnitude_keeps_identity() {
     assert_eq!(original.series_key(), revised.series_key());
 }
 
-/// F2 — the catalog declares Hacker News a `fixed_universe`, but the collector
-/// samples the current top-30 each poll, so the population churns between
-/// collections. A fixed universe must re-measure the *same* story ids; here the
-/// top list changes completely between two polls, and the second poll must still
-/// re-measure the ids the first poll committed to (or the catalog must stop
-/// claiming `fixed_universe`).
+/// F2 — the catalog declares Hacker News a `fixed_universe`, so the collector
+/// must re-measure the *same* story ids every poll. The top list changes
+/// completely between the two polls here; the second poll must still re-measure
+/// the ids the first poll committed to. A story leaving the front page is not a
+/// world change and must not churn the universe.
 #[tokio::test]
-#[ignore = "F2: catalog says fixed_universe, collector churns the top-30; see docs/source-semantic-audit.md"]
 async fn hackernews_re_measures_a_stable_universe_across_polls() {
     use std::sync::{Arc, Mutex};
     use wse_collector::{CollectionMode, Collector};

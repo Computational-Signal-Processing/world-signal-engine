@@ -9,7 +9,7 @@
 //! records as source health. A collector that reaches its source and finds no
 //! records returns `Ok` with zero observations. The two are never conflated.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -435,9 +435,17 @@ impl Collector for GitHubCollector {
 /// Hacker News is collected in two steps: resolve the fixed universe from the
 /// top-story list, then fetch each tracked item. The item ids are durable, so a
 /// story's score stays comparable across collections.
+///
+/// The universe is **carried across collections** in `universe`. It is resolved
+/// once and then held: a story leaving the front page does not replace it,
+/// because that would make the series move with membership rather than with
+/// attention. A slot is freed only when a tracked item no longer resolves.
 #[derive(Clone)]
 pub struct HackerNewsCollector {
     context: CollectorContext,
+    /// The committed universe, shared by clones. Empty until the first
+    /// successful resolution.
+    universe: Arc<Mutex<Vec<i64>>>,
 }
 
 impl HackerNewsCollector {
@@ -446,7 +454,10 @@ impl HackerNewsCollector {
     }
 
     pub fn with_context(context: CollectorContext) -> Self {
-        Self { context }
+        Self {
+            context,
+            universe: Arc::new(Mutex::new(Vec::new())),
+        }
     }
 
     pub fn top_request(&self) -> Request {
@@ -455,6 +466,11 @@ impl HackerNewsCollector {
 
     pub fn item_request(&self, id: i64) -> Request {
         Request::get(hackernews::ITEM_ENDPOINT.replace("{id}", &id.to_string()))
+    }
+
+    /// The ids currently committed to the universe, for tests and inspection.
+    pub fn tracked(&self) -> Vec<i64> {
+        self.universe.lock().map(|u| u.clone()).unwrap_or_default()
     }
 }
 
@@ -476,26 +492,36 @@ impl Collector for HackerNewsCollector {
         let started_at = self.context.now();
         let mut result = CollectionResult::new(self.source_id());
 
-        // The fixed universe is the first `UNIVERSE_SIZE` ids of the top-story
-        // list. Reusing the same ids each collection is what makes the series
-        // comparable; only a story leaving the top list opens a slot.
+        // The top-story list is read every collection, but only as the source of
+        // *candidates* for the fixed universe — never as the universe itself.
         let top_request = self.top_request();
         let top_body = self
             .context
             .transport
             .fetch(&top_request)
             .map_err(|e| CollectorError::Transport(e.message))?;
-        let ids = hackernews::parse_ids(&top_body)?;
+        let candidates = hackernews::parse_ids(&top_body)?;
         result.raw_payloads.push(RawPayload::new(
             top_request.url.clone(),
             top_body,
             "application/json",
         ));
 
-        for id in ids.into_iter().take(hackernews::UNIVERSE_SIZE) {
-            let request = self.item_request(id);
+        // Measure the ids we already committed to, plus any candidate needed to
+        // fill a free slot. Reusing the same ids every collection is what makes
+        // the series comparable; a story leaving the top list does not evict it.
+        let current = self.tracked();
+        let targets =
+            hackernews::next_universe(&current, &current, &candidates, hackernews::UNIVERSE_SIZE);
+
+        let mut resolved: Vec<i64> = Vec::new();
+        for id in &targets {
+            let request = self.item_request(*id);
             match self.context.transport.fetch(&request) {
                 Ok(body) => {
+                    // A story that still resolves keeps its slot even if it has
+                    // gone quiet (parses to `None`, e.g. dead/no score).
+                    resolved.push(*id);
                     result.records_received += 1;
                     match hackernews::parse_item(&body, started_at)? {
                         Some(observation) => {
@@ -510,8 +536,24 @@ impl Collector for HackerNewsCollector {
                         "application/json",
                     ));
                 }
-                Err(err) => result.errors.push(format!("item {id}: {}", err.message)),
+                Err(err) => {
+                    // A story that is genuinely gone (404) frees its slot. Any
+                    // other failure is transient: hold the slot so a network
+                    // blip is never read as "the story disappeared".
+                    if err.status != Some(404) {
+                        resolved.push(*id);
+                    }
+                    result.errors.push(format!("item {id}: {}", err.message));
+                }
             }
+        }
+
+        // Commit the universe: ids that resolved are kept, gone ids are dropped
+        // and their slots refilled from this cycle's candidates.
+        let next =
+            hackernews::next_universe(&current, &resolved, &candidates, hackernews::UNIVERSE_SIZE);
+        if let Ok(mut universe) = self.universe.lock() {
+            *universe = next;
         }
 
         result.started_at = Some(started_at);
@@ -980,6 +1022,77 @@ mod tests {
         assert_eq!(result.observations.len(), 3);
         assert_eq!(result.observations[0].metric, "story_score");
         assert_eq!(result.raw_payloads.len(), 4);
+    }
+
+    /// A transport whose top-story list changes and whose one chosen item can
+    /// stop resolving, to drive the committed-universe refill path.
+    struct ChurningUniverse {
+        polls: Mutex<usize>,
+        gone: Mutex<std::collections::HashSet<i64>>,
+    }
+
+    impl Transport for ChurningUniverse {
+        fn fetch(&self, request: &Request) -> Result<Vec<u8>, TransportError> {
+            if request.url.contains("topstories") {
+                let mut n = self.polls.lock().unwrap();
+                *n += 1;
+                // Poll 1 offers 1..=3, poll 2 offers a disjoint 4..=6.
+                let ids: Vec<i64> = if *n == 1 {
+                    vec![1, 2, 3]
+                } else {
+                    vec![4, 5, 6]
+                };
+                return Ok(serde_json::to_vec(&ids).unwrap());
+            }
+            let id: i64 = request
+                .url
+                .rsplit('/')
+                .next()
+                .and_then(|s| s.split('.').next())
+                .and_then(|s| s.parse().ok())
+                .expect("item url");
+            if self.gone.lock().unwrap().contains(&id) {
+                return Err(TransportError::with_status(404, "not found"));
+            }
+            let body = serde_json::json!({
+                "id": id, "type": "story", "title": format!("story {id}"),
+                "score": 10.0, "time": 1_700_000_000
+            });
+            Ok(serde_json::to_vec(&body).unwrap())
+        }
+    }
+
+    #[tokio::test]
+    async fn hackernews_universe_is_committed_and_only_refilled_when_a_story_is_gone() {
+        let transport = Arc::new(ChurningUniverse {
+            polls: Mutex::new(0),
+            gone: Mutex::new(std::collections::HashSet::new()),
+        });
+        let collector = HackerNewsCollector::with_context(CollectorContext::new(
+            transport.clone(),
+            Arc::new(LiveClock),
+        ));
+
+        // Poll 1 commits ids 1..=3.
+        collector.collect().await.unwrap();
+        assert_eq!(collector.tracked(), vec![1, 2, 3]);
+
+        // Poll 2 offers a disjoint top list. The committed universe is kept:
+        // a story leaving the front page is not a world change.
+        let second = collector.collect().await.unwrap();
+        assert_eq!(collector.tracked(), vec![1, 2, 3]);
+        let ids: Vec<String> = second
+            .observations
+            .iter()
+            .filter_map(|o| o.identity.clone())
+            .collect();
+        assert_eq!(ids, vec!["1", "2", "3"]);
+
+        // Now story 2 genuinely disappears (404). Its slot is freed and refilled
+        // from the current top list, but the surviving ids are untouched.
+        transport.gone.lock().unwrap().insert(2);
+        collector.collect().await.unwrap();
+        assert_eq!(collector.tracked(), vec![1, 3, 4]);
     }
 
     #[tokio::test]

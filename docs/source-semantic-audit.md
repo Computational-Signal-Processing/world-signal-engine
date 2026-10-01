@@ -369,31 +369,32 @@ fetch, every 600s. `measurement: fixed_universe`, tier 3.
 1. **What one observation represents:** the current score (points) of one tracked
    story, by durable story id.
 2. **Type:** platform behavior (attention on a link).
-3. **Population stable?** **By construction only.** The *code* intends a fixed
-   universe (`next_universe` keeps known ids and tops up), but the *collector*
-   does not call it: it takes the current `topstories` head-30 each poll. So the
-   population actually churns every collection — the doc comment's promise and
-   the code disagree.
-4. **Aggregate usable?** No. As collected, the set is a different 30 stories each
-   poll, so the summed score is membership churn.
-5. **What an increase means:** nothing stable — a new story entered the sample.
-6. **False increases:** membership change (dominant), a story's score climbing
-   naturally, and time-of-day variation in the top list.
-7. **Appropriate baseline:** none for the current implementation. The intended
-   fixed-universe series (score of a stable id over time) would be a real
-   per-story series and *is* detectable per story.
+3. **Population stable?** **Yes (fixed, CAP-2C).** The collector now commits the
+   universe on its first successful resolution and carries it across polls in
+   `HackerNewsCollector::universe`. A tracked story that leaves the front page is
+   **kept** — its score is still a comparable measurement, and evicting it would
+   make the series move with membership rather than with attention. A slot is
+   freed only when an item genuinely disappears (a 404); a transient failure
+   holds the slot, so a network blip is never read as a story vanishing.
+4. **Aggregate usable?** Per story, yes: each tracked id is a real series
+   (score over time). The *sum* across the universe still mixes stories of
+   different ages, so the per-story series is the meaningful one.
+5. **What an increase means:** a known story is gaining attention.
+6. **False increases:** a story's score climbing naturally, and time-of-day
+   variation in the top list (which no longer changes membership).
+7. **Appropriate baseline:** per-story score over time — a real series for each
+   durable story id.
 8. **Temporal resolution:** 10-minute poll; `observed_at` = collection time.
 9. **Independent?** Yes.
 10. **Same event as another source?** Occasionally (a story about a GDELT topic).
 11. **Lenses:** SOFTWARE.
 12. **Never infer:** that the series is "developer attention" in general — it is
-    the score of whichever stories the top list happened to contain.
+    the score of the specific stories committed to the universe.
 
-**Eligibility: EVIDENCE_ONLY** (as implemented). Note the mismatch: the catalog
-declares `fixed_universe` and the engine therefore *detects* on it, but the
-collector does not honour it. Either the collector must use `next_universe` or
-the catalog must declare `unstable_population`. This is a **catalog/implementation
-contradiction**, not merely a missing feature.
+**Eligibility: DETECTABLE** (CAP-2C). The catalog/implementation contradiction
+is resolved: the collector honours `fixed_universe` by committing and reusing the
+universe, so the engine's detection now runs on a stable population. See
+`docs/decisions/0016-hackernews-committed-universe.md`.
 
 ## 8. github_rust_activity — GitHub Rust Repository Universe
 
@@ -620,7 +621,7 @@ bounded-scale-aware baselining.
 | nws_alerts | active alerts per severity | gauge/snapshot | yes | yes | collection time | 600s | no |
 | nasa_eonet | open events per category | gauge/snapshot | yes | yes | collection time | 1800s | no |
 | gdelt_news_volume | news share per bucket | news activity | corpus churns | yes (attention) | bucket time | 900s / 1d | **yes** |
-| hackernews_frontpage | one story's score | platform behavior | **no (as coded)** | no | collection time | 600s | no |
+| hackernews_frontpage | one story's score | platform behavior | yes (fixed, CAP-2C) | no | collection time | 600s | no |
 | github_rust_activity | one repo's stars | platform behavior | yes (constant) | yes | collection time | 3600s | no |
 | cisa_kev | 7-day additions / catalog size | registry activity | yes | yes | collection time | 86400s | no |
 | ecb_exchange_rates | one day's reference rate | institutional measure | yes | yes | SDMX date | 86400s | **yes** |
@@ -644,7 +645,7 @@ bounded-scale-aware baselining.
 | github_rust_activity | DETECTABLE_WITH_CONSTRAINTS | cold-start guard before level deviation |
 | nasa_neo | EVIDENCE_ONLY | pooled class series not coherent |
 | arxiv_submissions | EVIDENCE_ONLY | monotonic level; needs differencing |
-| hackernews_frontpage | EVIDENCE_ONLY | population churns as coded; catalog says otherwise |
+| hackernews_frontpage | **DETECTABLE** | fixed universe committed and reused (CAP-2C) |
 
 # 3. CROSS-SOURCE INDEPENDENCE MATRIX
 
@@ -676,10 +677,10 @@ an `O` against almost every event source by nature — it reports *on* them.
 1. **Payload-hash observation ids re-mint unchanged records** (USGS, AFAD, ECB,
    NOAA Kp, GDELT). Silent duplication of event feeds and sliding windows;
    corrupts baselines. Probe-confirmed for all five.
-2. **Hacker News catalog/implementation contradiction.** Catalog says
-   `fixed_universe`, so the engine *detects*; the collector samples the current
-   top-30 each poll, so the population churns. The engine detects on a series the
-   source does not actually provide.
+2. ~~**Hacker News catalog/implementation contradiction.**~~ **RESOLVED (CAP-2C).**
+   The collector now commits the universe on first resolution and reuses it, so
+   the population no longer churns and the engine detects on the series the
+   catalog declares.
 3. **arXiv stores a cumulative level where the doc claims a velocity.** A
    monotonic total is not an anomaly target; the intended series is never
    computed.
@@ -711,7 +712,7 @@ fix (per the project rule: document, then a minimal failing test, then fix).
 | # | Fix | Scope | Test to add first |
 | --- | --- | --- | --- |
 | F1 | ~~Derive observation ids from the **record key**, not the payload hash~~ **DONE** — ids are now `series_key \| observed_at \| record_key`; the five sources pass `event_id`/`period`/`time_tag`/`series\|date` | `crates/model/src/ids.rs`, `observation.rs`, + per-source `parse` | five probes promoted to active tests in `crates/sources/tests/semantic_regression.rs` |
-| F2 | Make Hacker News honour `fixed_universe`: persist and reuse the universe via `next_universe`, or declare `unstable_population` | `crates/sources/src/collectors.rs` (+ state) or `hackernews.rs` | universe stability across two polls |
+| F2 | ~~Make Hacker News honour `fixed_universe`: persist and reuse the universe via `next_universe`, or declare `unstable_population`~~ **DONE (CAP-2C)** — the collector commits the universe on first resolution, keeps a story that leaves the front page, and refills a slot only on a genuine 404 | `crates/sources/src/collectors.rs`, `crates/sources/src/hackernews.rs` | `crates/sources/tests/semantic_regression.rs`, `crates/sources/src/collectors.rs` tests |
 | F3 | Emit arXiv as a **difference** (`new preprints/day`), not the cumulative total | `crates/sources/src/arxiv.rs` | two polls → delta metric |
 | F4 | Give NASA NEO a coherent series (count below a distance threshold, or per-object) instead of pooled distance | `crates/sources/src/nasa.rs` | distance-threshold count |
 | F5 | Baseline `kev_added` on a weekly cadence / overlapping-window-aware baseline | detector config or source cadence | overlapping-window baseline test |
@@ -741,9 +742,9 @@ Meaningful after the named constraint is met (all hinge on F1 first):
 
 # 7. SOURCES THAT SHOULD ONLY PROVIDE EVIDENCE
 
-- **hackernews_frontpage** — as implemented; its population churns. Evidence for
-  SOFTWARE and for convergence, not its own anomaly. (Becomes detectable per
-  story only if F2 is done properly.)
+- **hackernews_frontpage** — no longer in this category (CAP-2C): the fixed
+  universe is committed and reused, so each tracked story is a real, detectable
+  series. The summed score is still not meaningful — use the per-story series.
 - **arxiv_submissions** — a monotonic level is not an anomaly target; evidence
   for SCIENCE/AI and for convergence with Crossref until F3.
 - **nasa_neo** — the pooled class series is not coherent; evidence for SPACE and
@@ -755,9 +756,9 @@ Meaningful after the named constraint is met (all hinge on F1 first):
 
 - Every source was read from its collector module and fixture; the id bug was
   confirmed by executing probes, not by inspection alone.
-- The probes are committed as ignored regression specs in
-  `crates/sources/tests/semantic_regression.rs` (run them with
-  `cargo test -p wse-sources --test semantic_regression -- --ignored`). All six
-  currently fail, which is the point: each fix turns one green.
+- The probes are committed as regression specs in
+  `crates/sources/tests/semantic_regression.rs`. The F1 probes (identity) and the
+  F2 probe (fixed universe) are now active and green; each fix turned one green,
+  and each fails again if its contract is reverted.
 - No source was added, no lens was added, no UI was changed, and Phase 13 was
   not started.

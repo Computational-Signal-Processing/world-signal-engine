@@ -95,6 +95,15 @@ No network or credentials are needed to run it.
   search result) is stored for evidence but never detected on, because its
   aggregate is membership churn, not a world change. The engine reads this in
   `Engine::ingest_observations`; do not "fix" a churning source by detecting on it.
+- **A `fixed_universe` source must actually fix its universe.** Declaring the
+  tier is not enough: the collector has to commit a member set and re-measure
+  *those* members on every poll. A story leaving a top list is not a world
+  change and must not churn the universe; only a member that is genuinely gone
+  (a 404, not a transient failure) frees its slot. Hacker News carries its
+  universe in collector state (`HackerNewsCollector::universe`), which works
+  because the serve loop builds collectors once and reuses them. See
+  `docs/decisions/0016-hackernews-committed-universe.md`; guarded by
+  `crates/sources/tests/semantic_regression.rs`.
 - **A source declares `feeds_lenses`, and the declaration is enforced.** At
   runtime the engine reads the declarations from the stored catalog and routes a
   signal to the lenses its sources feed, by provenance, unioned with the lens

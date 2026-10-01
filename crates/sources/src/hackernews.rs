@@ -176,19 +176,45 @@ pub fn parse_item(
     Ok(Some(observation))
 }
 
-/// Choose the next fixed universe of story ids.
+/// Choose the next fixed universe of story ids, given what is currently tracked
+/// and what still resolves.
 ///
-/// Ids already tracked are kept (their scores remain comparable across
-/// collections); only enough new ids from `candidates` are admitted to refill
-/// the universe to `size`. Order is preserved so the universe is deterministic.
-pub fn next_universe(current: &[i64], candidates: &[i64], size: usize) -> Vec<i64> {
-    let mut universe: Vec<i64> = current.iter().copied().take(size).collect();
-    let known: std::collections::HashSet<i64> = universe.iter().copied().collect();
+/// A fixed universe is only comparable if its membership is stable, so this is
+/// deliberately *not* "the current top-N". Two rules:
+///
+/// * **The first resolution commits.** An empty `current` commits the first
+///   `size` candidates. That set is the universe from then on.
+/// * **Afterwards, only vacated slots are refilled.** A tracked id that leaves
+///   the front page is **kept** — its score is still a comparable measurement,
+///   and evicting it would make the series move with membership rather than with
+///   attention. An id is dropped only when it is absent from `resolved` (the ids
+///   that still answered this cycle), and its slot is refilled from `candidates`.
+///   The universe never grows past the size it committed to.
+///
+/// The collector passes a story that failed transiently as resolved, and only
+/// omits an id on a genuine 404 (see its `collect`), so only a story that is
+/// truly gone frees its slot.
+pub fn next_universe(
+    current: &[i64],
+    resolved: &[i64],
+    candidates: &[i64],
+    size: usize,
+) -> Vec<i64> {
+    if current.is_empty() {
+        return candidates.iter().copied().take(size).collect();
+    }
+    let live: std::collections::HashSet<i64> = resolved.iter().copied().collect();
+    let mut universe: Vec<i64> = current
+        .iter()
+        .copied()
+        .filter(|id| live.contains(id))
+        .collect();
+    let mut known: std::collections::HashSet<i64> = universe.iter().copied().collect();
     for id in candidates {
-        if universe.len() >= size {
+        if universe.len() >= current.len() {
             break;
         }
-        if !known.contains(id) {
+        if known.insert(*id) {
             universe.push(*id);
         }
     }
@@ -259,20 +285,56 @@ mod tests {
     }
 
     #[test]
-    fn the_universe_keeps_known_ids_and_fills_the_rest() {
-        // Two tracked ids stay; the universe is topped up from the candidates.
+    fn the_universe_keeps_known_ids_and_does_not_grow_past_its_commitment() {
+        // A committed universe of two stays two: candidates do not enlarge it.
         let current = vec![10, 11];
+        let resolved = vec![10, 11];
         let candidates = vec![11, 12, 13, 14];
-        let next = next_universe(&current, &candidates, 4);
-        assert_eq!(next, vec![10, 11, 12, 13]);
+        let next = next_universe(&current, &resolved, &candidates, 4);
+        assert_eq!(next, vec![10, 11]);
+    }
+
+    #[test]
+    fn the_first_resolution_commits_the_universe() {
+        // Nothing tracked yet: the first `size` candidates are committed.
+        let next = next_universe(&[], &[], &[1, 2, 3, 4, 5], 3);
+        assert_eq!(next, vec![1, 2, 3]);
     }
 
     #[test]
     fn the_universe_never_exceeds_its_size() {
         let current: Vec<i64> = (0..30).collect();
-        let next = next_universe(&current, &(100..200).collect::<Vec<_>>(), 30);
+        let next = next_universe(&current, &current, &(100..200).collect::<Vec<_>>(), 30);
         assert_eq!(next.len(), 30);
         assert_eq!(next, current, "a full universe is not churned");
+    }
+
+    #[test]
+    fn a_story_leaving_the_front_page_is_still_measured() {
+        // The core of the fixed-universe contract: a tracked story that is no
+        // longer in the top list must stay in the universe, because its score
+        // is still a comparable measurement. Only the candidates that are not
+        // already tracked may fill a slot, and here there is no free slot.
+        let current = vec![1, 2, 3];
+        let resolved = vec![1, 2, 3];
+        let candidates = vec![4, 5, 6];
+        let next = next_universe(&current, &resolved, &candidates, 3);
+        assert_eq!(
+            next,
+            vec![1, 2, 3],
+            "departure alone must not churn the universe"
+        );
+    }
+
+    #[test]
+    fn a_gone_story_frees_its_slot_for_a_candidate() {
+        // A story that no longer resolves (deleted, dead) is dropped and its
+        // slot is refilled from the candidates.
+        let current = vec![1, 2, 3];
+        let resolved = vec![1, 3];
+        let candidates = vec![4, 5, 6];
+        let next = next_universe(&current, &resolved, &candidates, 3);
+        assert_eq!(next, vec![1, 3, 4]);
     }
 
     #[test]
