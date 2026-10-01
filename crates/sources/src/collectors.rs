@@ -19,7 +19,7 @@ use wse_collector::{
 use wse_model::SourceId;
 use wse_scheduler::{Clock, LiveClock};
 
-use crate::{gdelt, github, hackernews, nasa, usgs};
+use crate::{gdelt, github, hackernews, nasa, nws, usgs};
 
 /// A single HTTP GET, plus the headers the source needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,6 +381,24 @@ http_collector!(
     "application/json"
 );
 
+fn nws_request() -> Request {
+    // The NWS asks callers to identify themselves; a plain User-Agent is the
+    // documented courtesy and needs no key.
+    Request::get(nws::ALERTS_ENDPOINT)
+        .with_header("Accept", "application/geo+json")
+        .with_header("User-Agent", "world-signal-engine/0.1")
+}
+
+http_collector!(
+    /// NWS active weather alerts, polled every 10 minutes.
+    NwsAlertsCollector,
+    nws::source,
+    Schedule::Interval { seconds: 600 },
+    nws_request,
+    nws::parse,
+    "application/geo+json"
+);
+
 /// Build one live collector per catalog entry.
 ///
 /// This is the bridge from the catalog to the pipeline: adding a source means
@@ -392,6 +410,7 @@ pub fn live_collectors() -> Vec<Box<dyn Collector>> {
         Box::new(GdeltCollector::live()),
         Box::new(HackerNewsCollector::live()),
         Box::new(GitHubCollector::live()),
+        Box::new(NwsAlertsCollector::live()),
     ]
 }
 

@@ -20,11 +20,13 @@ pub mod gdelt;
 pub mod github;
 pub mod hackernews;
 pub mod nasa;
+pub mod nws;
 pub mod usgs;
 
 pub use collectors::{
     live_collectors, CollectorContext, GdeltCollector, GitHubCollector, HackerNewsCollector,
-    LiveTransport, NasaNeoCollector, Request, Transport, TransportError, UsgsCollector,
+    LiveTransport, NasaNeoCollector, NwsAlertsCollector, Request, Transport, TransportError,
+    UsgsCollector,
 };
 
 use wse_model::Source;
@@ -40,6 +42,7 @@ pub fn catalog() -> Vec<Source> {
         gdelt::source(),
         hackernews::source(),
         github::source(),
+        nws::source(),
     ]
 }
 

@@ -1,0 +1,100 @@
+{
+  "@context": ["https://geojson.org/geojson-ld/geojson-context.jsonld"],
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.aaaa",
+      "type": "Feature",
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.aaaa",
+        "areaDesc": "Crockett, TX; Sutton, TX",
+        "event": "Severe Thunderstorm Warning",
+        "severity": "Severe",
+        "certainty": "Likely",
+        "urgency": "Immediate",
+        "effective": "2026-09-30T20:01:00-05:00",
+        "onset": "2026-09-30T20:01:00-05:00",
+        "headline": "Severe Thunderstorm Warning issued for Crockett, TX",
+        "senderName": "NWS San Angelo TX",
+        "status": "Actual",
+        "messageType": "Alert"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-100.1, 31.3], [-100.0, 31.3], [-100.0, 31.4], [-100.1, 31.4], [-100.1, 31.3]]]
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.bbbb",
+      "type": "Feature",
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.bbbb",
+        "areaDesc": "Franklin, NE; Harlan, NE",
+        "event": "Tornado Warning",
+        "severity": "Extreme",
+        "certainty": "Observed",
+        "urgency": "Immediate",
+        "effective": "2026-09-30T19:31:00-05:00",
+        "headline": "Tornado Warning issued for Franklin, NE",
+        "senderName": "NWS Hastings NE",
+        "status": "Actual",
+        "messageType": "Alert"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[[-99.0, 40.1], [-98.9, 40.1], [-98.9, 40.2], [-99.0, 40.2], [-99.0, 40.1]]]
+      }
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.cccc",
+      "type": "Feature",
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.cccc",
+        "areaDesc": "Coastal Waters of Cape Cod, MA",
+        "event": "Small Craft Advisory",
+        "severity": "Minor",
+        "certainty": "Likely",
+        "urgency": "Expected",
+        "effective": "2026-09-30T18:00:00-04:00",
+        "headline": "Small Craft Advisory issued",
+        "senderName": "NWS Boston MA",
+        "status": "Actual",
+        "messageType": "Alert"
+      },
+      "geometry": null
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.dddd",
+      "type": "Feature",
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.dddd",
+        "areaDesc": "Somewhere, ZZ",
+        "event": "Test Message",
+        "severity": "Unknown",
+        "certainty": "Unknown",
+        "urgency": "Unknown",
+        "effective": "2026-09-30T17:00:00-05:00",
+        "headline": "Unknown severity alert",
+        "status": "Actual",
+        "messageType": "Alert"
+      },
+      "geometry": null
+    },
+    {
+      "id": "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.eeee",
+      "type": "Feature",
+      "properties": {
+        "id": "urn:oid:2.49.0.1.840.0.eeee",
+        "areaDesc": "Nowhere, CA",
+        "event": "Alert With No Time",
+        "severity": "Moderate",
+        "effective": null,
+        "onset": null,
+        "headline": "An alert with no usable timestamp",
+        "status": "Actual",
+        "messageType": "Alert"
+      },
+      "geometry": null
+    }
+  ]
+}
